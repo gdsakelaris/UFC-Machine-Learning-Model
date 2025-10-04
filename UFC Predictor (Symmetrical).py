@@ -27,6 +27,23 @@ fight_data_path = os.path.join(script_dir, "fight_data.csv")
 if not os.path.exists(fight_data_path):
     print(f"Warning: fight_data.csv not found in script directory: {script_dir}")
 
+"""
+UFC Predictor with Weighted Symmetric Prediction
+
+This predictor includes a weighted symmetric prediction feature that reduces red/blue corner bias.
+The bias occurs because:
+1. Deep learning models use separate embeddings for red vs blue fighters
+2. Feature engineering creates directional differences (red_stat - blue_stat)
+3. The model learns asymmetric patterns based on corner assignment
+
+The weighted symmetric prediction fix:
+1. Runs predictions twice: original order and swapped fighter order
+2. Combines predictions with 55% weight to original, 45% to flipped
+3. Reduces red corner bias while preserving legitimate advantages
+
+This reduces over-reliance on corner assignment while maintaining high accuracy.
+"""
+
 import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog, messagebox
 # Import multiprocessing only when needed
@@ -105,7 +122,6 @@ class AdvancedUFCPredictor:
         self.fighter_style_cache = {}
         self.fighter_encoder = None  # For fighter embeddings
         self.num_fighters = 0
-        self.temperature = 1.0  # Temperature scaling for calibration
         
         # Set all random seeds for maximum reproducibility
         self.set_random_seeds()
@@ -1382,16 +1398,14 @@ class AdvancedUFCPredictor:
                 n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
                 stack_method='predict_proba'  # Use probabilities for stacking
             )
-            # Use Platt scaling for better calibration
             self.winner_model = CalibratedClassifierCV(
-                self.winner_model, method='sigmoid', cv=5
+                self.winner_model, method='isotonic', cv=5
             )
         else:
             # Fallback to single best model
             self.winner_model = base_models[0][1]
-            # Use Platt scaling for better calibration
             self.winner_model = CalibratedClassifierCV(
-                self.winner_model, method='sigmoid', cv=5
+                self.winner_model, method='isotonic', cv=5
             )
 
         print("\nTraining winner prediction model...")
@@ -1622,45 +1636,9 @@ class AdvancedUFCPredictor:
         print(f"\n{'='*80}")
         print(f"Time-Based CV Accuracy: {np.mean(winner_cv_scores):.4f} ± {np.std(winner_cv_scores):.4f}")
         print(f"Test Set Accuracy: {self.winner_model.score(X_test, y_winner_test):.4f}")
-        
-        # Calibrate temperature for better confidence scores
-        self.calibrate_temperature(X_test, y_winner_test)
-        
         print(f"{'='*80}\n")
 
         return feature_columns
-
-    def calibrate_temperature(self, X_val, y_val):
-        """Calibrate temperature scaling for better confidence scores"""
-        try:
-            from scipy.optimize import minimize_scalar
-            
-            def temperature_loss(temp):
-                if temp <= 0:
-                    return float('inf')
-                
-                # Get raw probabilities
-                raw_probs = self.winner_model.calibrated_classifiers_[0].base_estimator.predict_proba(X_val)
-                
-                # Apply temperature scaling
-                scaled_probs = raw_probs / temp
-                scaled_probs = scaled_probs / scaled_probs.sum(axis=1, keepdims=True)
-                
-                # Calculate negative log likelihood
-                eps = 1e-15
-                scaled_probs = np.clip(scaled_probs, eps, 1 - eps)
-                nll = -np.mean(np.log(scaled_probs[np.arange(len(y_val)), y_val]))
-                return nll
-            
-            # Find optimal temperature
-            result = minimize_scalar(temperature_loss, bounds=(0.1, 10.0), method='bounded')
-            self.temperature = result.x
-            
-            print(f"Optimal Temperature: {self.temperature:.3f}")
-            
-        except Exception as e:
-            print(f"Temperature calibration failed: {e}")
-            self.temperature = 1.0
 
     def get_fighter_latest_stats(self, fighter_name):
         """Get latest stats for fighter"""
@@ -2175,26 +2153,107 @@ class AdvancedUFCPredictor:
             f"{winner_prefix}_Decision": dec_prob
         }
 
-    def predict_fight(self, fight_data, feature_columns):
-        """Enhanced fight prediction with comprehensive method adjustments"""
+    def swap_fighter_order(self, fight_data):
+        """Create version with swapped fighter order (r_fighter <-> b_fighter)"""
+        swapped_data = fight_data.copy()
+        
+        # Simply swap the fighter names
+        if 'r_fighter' in swapped_data.columns and 'b_fighter' in swapped_data.columns:
+            swapped_data['r_fighter'] = fight_data['b_fighter']
+            swapped_data['b_fighter'] = fight_data['r_fighter']
+        
+        return swapped_data
+
+    def predict_fight_weighted_symmetric(self, fight_data, feature_columns):
+        """Make weighted symmetric predictions that reduce but don't eliminate red corner bias"""
+        # Ensure consistent random state before prediction
+        self.set_random_seeds()
+        
+        # Original prediction: Fighter A (Red) vs Fighter B (Blue)
+        pred1 = self.predict_fight_internal(fight_data, feature_columns)
+        
+        # Swapped prediction: Fighter B (Red) vs Fighter A (Blue)
+        swapped_fight = self.swap_fighter_order(fight_data)
+        pred2 = self.predict_fight_internal(swapped_fight, feature_columns)
+        
+        # Weighted combination: Slightly more weight to original prediction
+        # This reduces red corner bias while preserving most of the original accuracy
+        original_weight = 0.55  # 55% weight to original prediction
+        flipped_weight = 0.45   # 45% weight to flipped prediction
+        
+        # Calculate weighted probabilities for each fighter
+        # pred1: original_red_fighter (Red) vs original_blue_fighter (Blue)
+        # pred2: original_blue_fighter (Red) vs original_red_fighter (Blue)
+        
+        # Original red fighter's weighted probability
+        red_prob = (pred1['red_prob'] * original_weight) + (pred2['blue_prob'] * flipped_weight)
+        
+        # Original blue fighter's weighted probability  
+        blue_prob = (pred1['blue_prob'] * original_weight) + (pred2['red_prob'] * flipped_weight)
+        
+        # Determine winner based on weighted probabilities
+        if red_prob > blue_prob:
+            winner_name = "Red"
+            winner_confidence = red_prob
+            
+            # Weighted method probabilities for Red fighter
+            red_methods = {}
+            for method in ["Red_KO/TKO", "Red_Submission", "Red_Decision"]:
+                if method in pred1['method_probabilities'] and method in pred2['method_probabilities']:
+                    # Map pred2 blue methods to red methods for averaging
+                    pred2_red_method = method.replace("Red_", "Blue_")
+                    if pred2_red_method in pred2['method_probabilities']:
+                        red_methods[method] = (pred1['method_probabilities'][method] * original_weight + 
+                                             pred2['method_probabilities'][pred2_red_method] * flipped_weight)
+                    else:
+                        red_methods[method] = pred1['method_probabilities'][method] * original_weight
+            final_method_probs = red_methods
+            final_method = max(red_methods, key=red_methods.get) if red_methods else "Red_Decision"
+        else:
+            winner_name = "Blue"
+            winner_confidence = blue_prob
+            
+            # Weighted method probabilities for Blue fighter
+            blue_methods = {}
+            for method in ["Blue_KO/TKO", "Blue_Submission", "Blue_Decision"]:
+                if method in pred1['method_probabilities'] and method in pred2['method_probabilities']:
+                    # Map pred2 red methods to blue methods for averaging
+                    pred2_blue_method = method.replace("Blue_", "Red_")
+                    if pred2_blue_method in pred2['method_probabilities']:
+                        blue_methods[method] = (pred1['method_probabilities'][method] * original_weight + 
+                                              pred2['method_probabilities'][pred2_blue_method] * flipped_weight)
+                    else:
+                        blue_methods[method] = pred1['method_probabilities'][method] * original_weight
+            final_method_probs = blue_methods
+            final_method = max(blue_methods, key=blue_methods.get) if blue_methods else "Blue_Decision"
+        
+        # Normalize method probabilities
+        total = sum(final_method_probs.values())
+        if total > 0:
+            final_method_probs = {k: v / total for k, v in final_method_probs.items()}
+        
+        final_method = max(final_method_probs, key=final_method_probs.get) if final_method_probs else "Decision"
+        
+        return {
+            "winner": winner_name,
+            "winner_confidence": winner_confidence,
+            "red_prob": red_prob,
+            "blue_prob": blue_prob,
+            "method": final_method.split("_")[1] if "_" in final_method else final_method,
+            "method_probabilities": final_method_probs,
+            "combined_method_prob": final_method_probs.get(final_method, 0.0)
+        }
+
+    def predict_fight_internal(self, fight_data, feature_columns):
+        """Internal prediction function (renamed from original predict_fight)"""
         # Ensure consistent random state before prediction
         self.set_random_seeds()
         
         X = fight_data[feature_columns]
         
-        # Get winner prediction based on probabilities
-        raw_proba = self.winner_model.predict_proba(X)[0]
-        
-        # Apply temperature scaling for better calibration
-        if self.temperature != 1.0:
-            scaled_proba = raw_proba / self.temperature
-            scaled_proba = scaled_proba / scaled_proba.sum()
-            winner_proba = scaled_proba
-        else:
-            winner_proba = raw_proba
-        
-        # Determine winner based on probability (Red = 1, Blue = 0)
-        winner_pred = 1 if winner_proba[1] > 0.5 else 0
+        # Get winner prediction
+        winner_proba = self.winner_model.predict_proba(X)[0]
+        winner_pred = self.winner_model.predict(X)[0]
         winner_name = "Red" if winner_pred == 1 else "Blue"
         
         # If deep learning is available, ensemble it with traditional model
@@ -2297,52 +2356,19 @@ class AdvancedUFCPredictor:
 
         final_method = max(final_method_probs, key=final_method_probs.get)
 
-        # Boost confidence based on model agreement and feature strength
-        base_confidence = winner_proba[winner_pred]
-        
-        # Calculate confidence boost factors
-        confidence_boost = 1.0
-        
-        # Boost if probabilities are very high/low (clear decision)
-        if base_confidence > 0.8:
-            confidence_boost = 1.15  # 15% boost for high confidence
-        elif base_confidence > 0.7:
-            confidence_boost = 1.08  # 8% boost for medium-high confidence
-        
-        # Boost based on feature strength (if available)
-        if hasattr(fight_data, 'iloc'):  # DataFrame
-            if 'net_striking_advantage' in fight_data.columns:
-                striking_adv = abs(fight_data['net_striking_advantage'].iloc[0])
-                if striking_adv > 2.0:  # Strong striking advantage
-                    confidence_boost *= 1.05
-            if 'experience_gap' in fight_data.columns:
-                exp_gap = abs(fight_data['experience_gap'].iloc[0])
-                if exp_gap > 10:  # Large experience gap
-                    confidence_boost *= 1.03
-        else:  # Dictionary
-            striking_adv = abs(fight_data.get('net_striking_advantage', 0))
-            if striking_adv > 2.0:
-                confidence_boost *= 1.05
-            exp_gap = abs(fight_data.get('experience_gap', 0))
-            if exp_gap > 10:
-                confidence_boost *= 1.03
-        
-        # Apply confidence boost (cap at 95% to maintain realism)
-        boosted_confidence = min(0.95, base_confidence * confidence_boost)
-        
-        # Use the calibrated probabilities
-        red_prob = winner_proba[1]
-        blue_prob = winner_proba[0]
-        
         return {
             "winner": winner_name,
-            "winner_confidence": boosted_confidence,
-            "red_prob": red_prob,
-            "blue_prob": blue_prob,
+            "winner_confidence": winner_proba[winner_pred],
+            "red_prob": winner_proba[1],
+            "blue_prob": winner_proba[0],
             "method": final_method.split("_")[1],
             "method_probabilities": final_method_probs,
             "combined_method_prob": final_method_probs[final_method]
         }
+
+    def predict_fight(self, fight_data, feature_columns):
+        """Enhanced fight prediction with weighted symmetric bias reduction"""
+        return self.predict_fight_weighted_symmetric(fight_data, feature_columns)
 
     def predict_upcoming_fights(self, upcoming_fights, feature_columns):
         """Predict upcoming fights"""
