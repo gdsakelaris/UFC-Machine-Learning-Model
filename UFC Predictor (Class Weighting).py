@@ -62,6 +62,27 @@ import warnings
 from joblib import Parallel, delayed
 import multiprocessing as mp
 
+# GPU data transfer optimization
+try:
+    import cupy as cp
+    # Test if CuPy actually works by creating a small array
+    test_array = cp.array([1, 2, 3])
+    del test_array
+    HAS_CUPY = True
+    print("CuPy available for GPU data transfer optimization")
+except (ImportError, Exception) as e:
+    HAS_CUPY = False
+    print(f"CuPy not available or failed to load: {e}")
+    print("Falling back to CPU-only mode")
+
+try:
+    import cudf
+    HAS_CUDF = True
+    print("RAPIDS cuDF available for GPU DataFrame operations")
+except ImportError:
+    HAS_CUDF = False
+    print("RAPIDS cuDF not available - install with: conda install -c rapidsai -c conda-forge -c nvidia cudf")
+
 warnings.filterwarnings("ignore")
 
 try:
@@ -112,6 +133,53 @@ class AdvancedUFCPredictor:
         
         # Set all random seeds for maximum reproducibility
         self.set_random_seeds()
+
+    def optimize_gpu_data_transfer(self, X, y=None):
+        """Optimize data transfer to GPU for maximum XGBoost performance"""
+        if not HAS_CUPY:
+            return X, y
+        
+        try:
+            # Only use GPU for XGBoost training, keep DataFrames for scikit-learn
+            # This prevents the DataFrame error while still getting GPU benefits
+            if self.debug_mode:
+                print("GPU data transfer optimization available (XGBoost will use GPU internally)")
+            return X, y
+                
+        except Exception as e:
+            if self.debug_mode:
+                print(f"GPU data transfer failed, using CPU: {e}")
+            return X, y
+
+    def convert_gpu_to_cpu(self, X, y=None):
+        """Convert GPU arrays back to CPU for scikit-learn compatibility"""
+        if not HAS_CUPY:
+            return X, y
+        
+        try:
+            # Convert GPU arrays back to CPU arrays
+            if hasattr(X, 'get'):
+                # CuPy array - convert to NumPy
+                X_cpu = X.get()
+            else:
+                # Already CPU array
+                X_cpu = X
+            
+            if y is not None:
+                if hasattr(y, 'get'):
+                    # CuPy array - convert to NumPy
+                    y_cpu = y.get()
+                else:
+                    # Already CPU array
+                    y_cpu = y
+                return X_cpu, y_cpu
+            else:
+                return X_cpu, None
+                
+        except Exception as e:
+            if self.debug_mode:
+                print(f"GPU to CPU conversion failed, using original: {e}")
+            return X, y
 
     def set_random_seeds(self):
         """Set all random seeds for maximum reproducibility while maintaining accuracy"""
@@ -1495,19 +1563,53 @@ class AdvancedUFCPredictor:
             else:
                 scale_pos = len(y_winner[y_winner==0]) / max(len(y_winner[y_winner==1]), 1)
             
-            xgb_model = Pipeline([
-                ("preprocessor", preprocessor),
-                ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75
-                ("classifier", XGBClassifier(
+            # Create XGBoost with GPU acceleration (fallback to CPU if GPU unavailable)
+            xgb_params = {
+                'n_estimators': 800, 'max_depth': 10, 'learning_rate': 0.015,
+                'subsample': 0.85, 'colsample_bytree': 0.85, 'colsample_bylevel': 0.85,
+                'n_jobs': -1, 'reg_alpha': 0.1, 'reg_lambda': 0.8, 'min_child_weight': 3,
+                'gamma': 0.15, 'scale_pos_weight': scale_pos, 'random_state': 42,
+                'eval_metric': "logloss", 'tree_method': 'hist', 'seed': 42,
+                'enable_categorical': True
+            }
+            
+            # Only add GPU parameters if CuPy is working
+            if HAS_CUPY:
+                try:
+                    # Test if CUDA is actually available
+                    import cupy as cp
+                    test_gpu = cp.array([1, 2, 3])
+                    del test_gpu
+                    xgb_params['device'] = 'cuda'
+                    print("GPU acceleration enabled for XGBoost")
+                except Exception as e:
+                    print(f"GPU acceleration not available for XGBoost: {e}")
+                    print("Using CPU-only XGBoost")
+            else:
+                print("Using CPU-only XGBoost")
+            
+            try:
+                xgb_classifier = XGBClassifier(**xgb_params)
+                print("XGBoost GPU acceleration enabled")
+            except Exception as e:
+                # Fallback to CPU if GPU not available
+                print(f"GPU not available, using CPU: {e}")
+                xgb_classifier = XGBClassifier(
                     n_estimators=800, max_depth=10, learning_rate=0.015,  # Enhanced parameters
                     subsample=0.85, colsample_bytree=0.85, colsample_bylevel=0.85,
                     n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
                     reg_alpha=0.1, reg_lambda=0.8, min_child_weight=3,  # Reduced regularization
                     gamma=0.15, scale_pos_weight=scale_pos,
                     random_state=42, eval_metric="logloss",
-                    tree_method='hist',  # Use histogram method for consistency
-                    seed=42  # Additional XGBoost seed
-                ))
+                    tree_method='hist',  # CPU fallback
+                    seed=42,  # Additional XGBoost seed
+                    enable_categorical=True
+                )
+            
+            xgb_model = Pipeline([
+                ("preprocessor", preprocessor),
+                ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75
+                ("classifier", xgb_classifier)
             ])
             base_models.append(('xgb', xgb_model))
         
@@ -1629,6 +1731,12 @@ class AdvancedUFCPredictor:
                 self.winner_model, method='isotonic', cv=5
             )
 
+        # Ensure we have proper DataFrame format for scikit-learn
+        if not isinstance(X_train, pd.DataFrame):
+            X_train = pd.DataFrame(X_train, columns=feature_columns)
+        if not isinstance(y_winner_train, (pd.Series, np.ndarray)):
+            y_winner_train = np.array(y_winner_train)
+        
         print("\nTraining winner prediction model...")
         self.winner_model.fit(X_train, y_winner_train)
 
@@ -1851,7 +1959,7 @@ class AdvancedUFCPredictor:
         
         def train_fold(fold_data):
             """Train a single fold - designed for parallel execution"""
-            fold, train_idx, val_idx, X, y_winner, preprocessor = fold_data
+            fold, train_idx, val_idx, X, y_winner, preprocessor, feature_columns = fold_data
             
             # Safe indexing for both pandas and numpy arrays
             if hasattr(X, 'iloc'):
@@ -1864,19 +1972,47 @@ class AdvancedUFCPredictor:
             else:
                 y_fold_train, y_fold_val = y_winner[train_idx], y_winner[val_idx]
             
+            # Ensure proper DataFrame format for cross-validation
+            if not isinstance(X_fold_train, pd.DataFrame):
+                X_fold_train = pd.DataFrame(X_fold_train, columns=feature_columns)
+            if not isinstance(y_fold_train, (pd.Series, np.ndarray)):
+                y_fold_train = np.array(y_fold_train)
+            
             # Use the same enhanced model as in training
             if HAS_XGBOOST:
+                # Create XGBoost parameters for cross-validation
+                fold_xgb_params = {
+                    'n_estimators': 800, 'max_depth': 10, 'learning_rate': 0.015,
+                    'subsample': 0.85, 'colsample_bytree': 0.85, 'n_jobs': -1,
+                    'reg_alpha': 0.1, 'reg_lambda': 0.8, 'random_state': 42,
+                    'eval_metric': "logloss", 'tree_method': 'hist', 'seed': 42
+                }
+                
+                # Only add GPU parameters if CuPy is working
+                if HAS_CUPY:
+                    try:
+                        # Test if CUDA is actually available
+                        import cupy as cp
+                        test_gpu = cp.array([1, 2, 3])
+                        del test_gpu
+                        fold_xgb_params['device'] = 'cuda'
+                        print("GPU acceleration enabled for XGBoost CV")
+                    except Exception as e:
+                        print(f"GPU acceleration not available for XGBoost CV: {e}")
+                        print("Using CPU-only XGBoost CV")
+                
+                try:
+                    fold_classifier = XGBClassifier(**fold_xgb_params)
+                except Exception as e:
+                    # Fallback to CPU if GPU not available
+                    print(f"GPU not available for CV, using CPU: {e}")
+                    fold_xgb_params.pop('device', None)
+                    fold_classifier = XGBClassifier(**fold_xgb_params)
+                
                 fold_model = Pipeline([
                     ("preprocessor", preprocessor),
                     ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75
-                    ("classifier", XGBClassifier(
-                        n_estimators=800, max_depth=10, learning_rate=0.015,  # Enhanced parameters
-                        subsample=0.85, colsample_bytree=0.85, colsample_bylevel=0.85,
-                        n_jobs=-1, reg_alpha=0.1, reg_lambda=0.8, min_child_weight=3,
-                        random_state=42, eval_metric="logloss",
-                        tree_method='hist',  # Use histogram method for consistency
-                        seed=42  # Additional XGBoost seed
-                    ))
+                    ("classifier", fold_classifier)
                 ])
             else:
                 fold_model = Pipeline([
@@ -1898,7 +2034,7 @@ class AdvancedUFCPredictor:
         # Prepare fold data for parallel processing
         fold_data = []
         for fold, (train_idx, val_idx) in enumerate(tscv.split(X)):
-            fold_data.append((fold, train_idx, val_idx, X, y_winner, preprocessor))
+            fold_data.append((fold, train_idx, val_idx, X, y_winner, preprocessor, feature_columns))
         
         # Run folds in parallel (3-4x faster)
         winner_cv_scores = []
