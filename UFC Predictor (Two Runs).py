@@ -27,23 +27,6 @@ fight_data_path = os.path.join(script_dir, "fight_data.csv")
 if not os.path.exists(fight_data_path):
     print(f"Warning: fight_data.csv not found in script directory: {script_dir}")
 
-"""
-UFC Predictor with Weighted Symmetric Prediction
-
-This predictor includes a weighted symmetric prediction feature that reduces red/blue corner bias.
-The bias occurs because:
-1. Deep learning models use separate embeddings for red vs blue fighters
-2. Feature engineering creates directional differences (red_stat - blue_stat)
-3. The model learns asymmetric patterns based on corner assignment
-
-The weighted symmetric prediction fix:
-1. Runs predictions twice: original order and swapped fighter order
-2. Combines predictions with 55% weight to original, 45% to flipped
-3. Reduces red corner bias while preserving legitimate advantages
-
-This reduces over-reliance on corner assignment while maintaining high accuracy.
-"""
-
 import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog, messagebox
 # Import multiprocessing only when needed
@@ -2153,115 +2136,121 @@ class AdvancedUFCPredictor:
             f"{winner_prefix}_Decision": dec_prob
         }
 
-    def swap_fighter_order(self, fight_data):
-        """Create version with swapped fighter order (r_fighter <-> b_fighter)"""
-        swapped_data = fight_data.copy()
-        
-        # Simply swap the fighter names
-        if 'r_fighter' in swapped_data.columns and 'b_fighter' in swapped_data.columns:
-            swapped_data['r_fighter'] = fight_data['b_fighter']
-            swapped_data['b_fighter'] = fight_data['r_fighter']
-        
-        return swapped_data
+    def swap_fight_data(self, fight_data):
+        """Swap red and blue corner data to eliminate bias"""
+        if hasattr(fight_data, 'iloc'):  # DataFrame
+            swapped_data = fight_data.copy()
+            
+            # Swap fighter names
+            if 'r_fighter' in swapped_data.columns and 'b_fighter' in swapped_data.columns:
+                swapped_data['r_fighter'], swapped_data['b_fighter'] = swapped_data['b_fighter'], swapped_data['r_fighter']
+            
+            # Swap all red/blue prefixed columns
+            for col in swapped_data.columns:
+                if col.startswith('r_') and not col.endswith('_diff'):
+                    b_col = col.replace('r_', 'b_', 1)
+                    if b_col in swapped_data.columns:
+                        swapped_data[col], swapped_data[b_col] = swapped_data[b_col], swapped_data[col]
+            
+            # Negate all difference columns (since we swapped the order)
+            for col in swapped_data.columns:
+                if col.endswith('_diff') or col.endswith('_diff_corrected'):
+                    swapped_data[col] = -swapped_data[col]
+            
+            # Swap total fights
+            if 'r_total_fights' in swapped_data.columns and 'b_total_fights' in swapped_data.columns:
+                swapped_data['r_total_fights'], swapped_data['b_total_fights'] = swapped_data['b_total_fights'], swapped_data['r_total_fights']
+            
+            return swapped_data
+        else:  # Dictionary
+            swapped_data = fight_data.copy()
+            
+            # Swap fighter names
+            if 'r_fighter' in swapped_data and 'b_fighter' in swapped_data:
+                swapped_data['r_fighter'], swapped_data['b_fighter'] = swapped_data['b_fighter'], swapped_data['r_fighter']
+            
+            # Swap all red/blue prefixed keys
+            keys_to_swap = []
+            for key in swapped_data.keys():
+                if key.startswith('r_') and not key.endswith('_diff'):
+                    b_key = key.replace('r_', 'b_', 1)
+                    if b_key in swapped_data:
+                        keys_to_swap.append((key, b_key))
+            
+            for r_key, b_key in keys_to_swap:
+                swapped_data[r_key], swapped_data[b_key] = swapped_data[b_key], swapped_data[r_key]
+            
+            # Negate all difference columns
+            for key in swapped_data.keys():
+                if key.endswith('_diff') or key.endswith('_diff_corrected'):
+                    swapped_data[key] = -swapped_data[key]
+            
+            # Swap total fights
+            if 'r_total_fights' in swapped_data and 'b_total_fights' in swapped_data:
+                swapped_data['r_total_fights'], swapped_data['b_total_fights'] = swapped_data['b_total_fights'], swapped_data['r_total_fights']
+            
+            return swapped_data
 
-    def predict_fight_weighted_symmetric(self, fight_data, feature_columns):
-        """Make weighted symmetric predictions that reduce but don't eliminate red corner bias"""
+    def predict_fight(self, fight_data, feature_columns):
+        """Enhanced fight prediction with comprehensive method adjustments and bias correction"""
         # Ensure consistent random state before prediction
         self.set_random_seeds()
         
-        # Original prediction: Fighter A (Red) vs Fighter B (Blue)
-        pred1 = self.predict_fight_internal(fight_data, feature_columns)
+        # Run prediction with original data
+        X = fight_data[feature_columns]
+        winner_proba_original = self.winner_model.predict_proba(X)[0]
+        winner_pred_original = self.winner_model.predict(X)[0]
         
-        # Swapped prediction: Fighter B (Red) vs Fighter A (Blue)
-        swapped_fight = self.swap_fighter_order(fight_data)
-        pred2 = self.predict_fight_internal(swapped_fight, feature_columns)
+        # Run prediction with swapped data to eliminate red corner bias
+        swapped_data = self.swap_fight_data(fight_data)
+        X_swapped = swapped_data[feature_columns]
+        winner_proba_swapped = self.winner_model.predict_proba(X_swapped)[0]
         
-        # Weighted combination: Slightly more weight to original prediction
-        # This reduces red corner bias while preserving most of the original accuracy
-        original_weight = 0.55  # 55% weight to original prediction
-        flipped_weight = 0.45   # 45% weight to flipped prediction
+        # Select the prediction with higher confidence - match manual process
+        red_prob_original = winner_proba_original[1]
+        blue_prob_original = winner_proba_original[0]
+        red_prob_swapped = winner_proba_swapped[1]
+        blue_prob_swapped = winner_proba_swapped[0]
         
-        # Calculate weighted probabilities for each fighter
-        # pred1: original_red_fighter (Red) vs original_blue_fighter (Blue)
-        # pred2: original_blue_fighter (Red) vs original_red_fighter (Blue)
+        # Compare Win% predictions for each fighter across both runs
+        # Red fighter's best Win% is max(red_prob_original, blue_prob_swapped)
+        # Blue fighter's best Win% is max(blue_prob_original, red_prob_swapped)
+        red_fighter_best_prob = max(red_prob_original, blue_prob_swapped)
+        blue_fighter_best_prob = max(blue_prob_original, red_prob_swapped)
         
-        # Original red fighter's weighted probability
-        red_prob = (pred1['red_prob'] * original_weight) + (pred2['blue_prob'] * flipped_weight)
-        
-        # Original blue fighter's weighted probability  
-        blue_prob = (pred1['blue_prob'] * original_weight) + (pred2['red_prob'] * flipped_weight)
-        
-        # Determine winner based on weighted probabilities
-        if red_prob > blue_prob:
+        if red_fighter_best_prob > blue_fighter_best_prob:
             winner_name = "Red"
-            winner_confidence = red_prob
-            
-            # Weighted method probabilities for Red fighter
-            red_methods = {}
-            for method in ["Red_KO/TKO", "Red_Submission", "Red_Decision"]:
-                if method in pred1['method_probabilities'] and method in pred2['method_probabilities']:
-                    # Map pred2 blue methods to red methods for averaging
-                    pred2_red_method = method.replace("Red_", "Blue_")
-                    if pred2_red_method in pred2['method_probabilities']:
-                        red_methods[method] = (pred1['method_probabilities'][method] * original_weight + 
-                                             pred2['method_probabilities'][pred2_red_method] * flipped_weight)
-                    else:
-                        red_methods[method] = pred1['method_probabilities'][method] * original_weight
-            final_method_probs = red_methods
-            final_method = max(red_methods, key=red_methods.get) if red_methods else "Red_Decision"
+            winner_proba = [blue_fighter_best_prob, red_fighter_best_prob]
+            winner_pred = 1
+            # Use original data if red wins in original, swapped data if red wins in swapped
+            if red_prob_original > blue_prob_original:
+                use_original_data = True
+            else:
+                use_original_data = False
         else:
             winner_name = "Blue"
-            winner_confidence = blue_prob
-            
-            # Weighted method probabilities for Blue fighter
-            blue_methods = {}
-            for method in ["Blue_KO/TKO", "Blue_Submission", "Blue_Decision"]:
-                if method in pred1['method_probabilities'] and method in pred2['method_probabilities']:
-                    # Map pred2 red methods to blue methods for averaging
-                    pred2_blue_method = method.replace("Blue_", "Red_")
-                    if pred2_blue_method in pred2['method_probabilities']:
-                        blue_methods[method] = (pred1['method_probabilities'][method] * original_weight + 
-                                              pred2['method_probabilities'][pred2_blue_method] * flipped_weight)
-                    else:
-                        blue_methods[method] = pred1['method_probabilities'][method] * original_weight
-            final_method_probs = blue_methods
-            final_method = max(blue_methods, key=blue_methods.get) if blue_methods else "Blue_Decision"
+            winner_proba = [blue_fighter_best_prob, red_fighter_best_prob]
+            winner_pred = 0
+            # Use original data if blue wins in original, swapped data if blue wins in swapped
+            if blue_prob_original > red_prob_original:
+                use_original_data = True
+            else:
+                use_original_data = False
         
-        # Normalize method probabilities
-        total = sum(final_method_probs.values())
-        if total > 0:
-            final_method_probs = {k: v / total for k, v in final_method_probs.items()}
-        
-        final_method = max(final_method_probs, key=final_method_probs.get) if final_method_probs else "Decision"
-        
-        return {
-            "winner": winner_name,
-            "winner_confidence": winner_confidence,
-            "red_prob": red_prob,
-            "blue_prob": blue_prob,
-            "method": final_method.split("_")[1] if "_" in final_method else final_method,
-            "method_probabilities": final_method_probs,
-            "combined_method_prob": final_method_probs.get(final_method, 0.0)
-        }
-
-    def predict_fight_internal(self, fight_data, feature_columns):
-        """Internal prediction function (renamed from original predict_fight)"""
-        # Ensure consistent random state before prediction
-        self.set_random_seeds()
-        
-        X = fight_data[feature_columns]
-        
-        # Get winner prediction
-        winner_proba = self.winner_model.predict_proba(X)[0]
-        winner_pred = self.winner_model.predict(X)[0]
-        winner_name = "Red" if winner_pred == 1 else "Blue"
+        # Use the appropriate dataset for method prediction
+        if use_original_data:
+            X_for_method = X
+            fight_data_for_method = fight_data
+        else:
+            X_for_method = X_swapped
+            fight_data_for_method = swapped_data
         
         # If deep learning is available, ensemble it with traditional model
         if self.use_deep_learning and self.deep_learning_model and self.fighter_encoder:
             try:
-                # Get fighter encodings
-                r_fighter = fight_data['r_fighter'].values[0] if 'r_fighter' in fight_data else None
-                b_fighter = fight_data['b_fighter'].values[0] if 'b_fighter' in fight_data else None
+                # Get fighter encodings from the data used for method prediction
+                r_fighter = fight_data_for_method['r_fighter'].values[0] if 'r_fighter' in fight_data_for_method else None
+                b_fighter = fight_data_for_method['b_fighter'].values[0] if 'b_fighter' in fight_data_for_method else None
                 
                 if r_fighter and b_fighter and r_fighter in self.fighter_encoder.classes_ and b_fighter in self.fighter_encoder.classes_:
                     r_fighter_encoded = self.fighter_encoder.transform([r_fighter])[0]
@@ -2280,7 +2269,7 @@ class AdvancedUFCPredictor:
                     preprocessor = ColumnTransformer([
                         ("num", numeric_transformer, feature_columns)
                     ])
-                    X_scaled = preprocessor.fit_transform(X)
+                    X_scaled = preprocessor.fit_transform(X_for_method)
                     
                     X_dl = [
                         np.array([r_fighter_encoded]),
@@ -2305,17 +2294,17 @@ class AdvancedUFCPredictor:
         # COMPREHENSIVE METHOD PREDICTION WITH DYNAMIC WEIGHTING
         loser_prefix = "Blue" if winner_name == "Red" else "Red"
         
-        # Get base method probabilities from model
-        method_proba = self.method_model.predict_proba(X)[0]
+        # Get base method probabilities from model using the correct data
+        method_proba = self.method_model.predict_proba(X_for_method)[0]
         method_labels = self.label_encoders["winner_method_encoder"].classes_
         
-        # Get comprehensive method adjustments
+        # Get comprehensive method adjustments using the correct data
         method_adjustments = self.calculate_comprehensive_method_adjustments(
-            fight_data, winner_name, loser_prefix
+            fight_data_for_method, winner_name, loser_prefix
         )
         
-        # Predict method type for dynamic weighting
-        predicted_method_type = self.predict_method_type(fight_data)
+        # Predict method type for dynamic weighting using the correct data
+        predicted_method_type = self.predict_method_type(fight_data_for_method)
         
         # Prepare ML and rule probabilities for weighting
         ml_probs = {}
@@ -2326,9 +2315,9 @@ class AdvancedUFCPredictor:
                 ml_probs[method_name] = method_proba[i]
                 rule_probs[method_name] = method_adjustments.get(label, 0.0)
         
-        # Get dynamic weights based on context and confidence
+        # Get dynamic weights based on context and confidence using the correct data
         weights = self.get_dynamic_method_weights(
-            fight_data, list(ml_probs.values()), list(rule_probs.values()), predicted_method_type
+            fight_data_for_method, list(ml_probs.values()), list(rule_probs.values()), predicted_method_type
         )
         
         # Debug information (can be removed in production)
@@ -2365,10 +2354,6 @@ class AdvancedUFCPredictor:
             "method_probabilities": final_method_probs,
             "combined_method_prob": final_method_probs[final_method]
         }
-
-    def predict_fight(self, fight_data, feature_columns):
-        """Enhanced fight prediction with weighted symmetric bias reduction"""
-        return self.predict_fight_weighted_symmetric(fight_data, feature_columns)
 
     def predict_upcoming_fights(self, upcoming_fights, feature_columns):
         """Predict upcoming fights"""
