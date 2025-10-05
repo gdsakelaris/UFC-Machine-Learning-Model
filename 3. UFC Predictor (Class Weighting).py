@@ -62,27 +62,6 @@ import warnings
 from joblib import Parallel, delayed
 import multiprocessing as mp
 
-# GPU data transfer optimization
-try:
-    import cupy as cp
-    # Test if CuPy actually works by creating a small array
-    test_array = cp.array([1, 2, 3])
-    del test_array
-    HAS_CUPY = True
-    print("CuPy available for GPU data transfer optimization")
-except (ImportError, Exception) as e:
-    HAS_CUPY = False
-    print(f"CuPy not available or failed to load: {e}")
-    print("Falling back to CPU-only mode")
-
-try:
-    import cudf
-    HAS_CUDF = True
-    print("RAPIDS cuDF available for GPU DataFrame operations")
-except ImportError:
-    HAS_CUDF = False
-    print("RAPIDS cuDF not available - install with: conda install -c rapidsai -c conda-forge -c nvidia cudf")
-
 warnings.filterwarnings("ignore")
 
 try:
@@ -133,53 +112,6 @@ class AdvancedUFCPredictor:
         
         # Set all random seeds for maximum reproducibility
         self.set_random_seeds()
-
-    def optimize_gpu_data_transfer(self, X, y=None):
-        """Optimize data transfer to GPU for maximum XGBoost performance"""
-        if not HAS_CUPY:
-            return X, y
-        
-        try:
-            # Only use GPU for XGBoost training, keep DataFrames for scikit-learn
-            # This prevents the DataFrame error while still getting GPU benefits
-            if self.debug_mode:
-                print("GPU data transfer optimization available (XGBoost will use GPU internally)")
-            return X, y
-                
-        except Exception as e:
-            if self.debug_mode:
-                print(f"GPU data transfer failed, using CPU: {e}")
-            return X, y
-
-    def convert_gpu_to_cpu(self, X, y=None):
-        """Convert GPU arrays back to CPU for scikit-learn compatibility"""
-        if not HAS_CUPY:
-            return X, y
-        
-        try:
-            # Convert GPU arrays back to CPU arrays
-            if hasattr(X, 'get'):
-                # CuPy array - convert to NumPy
-                X_cpu = X.get()
-            else:
-                # Already CPU array
-                X_cpu = X
-            
-            if y is not None:
-                if hasattr(y, 'get'):
-                    # CuPy array - convert to NumPy
-                    y_cpu = y.get()
-                else:
-                    # Already CPU array
-                    y_cpu = y
-                return X_cpu, y_cpu
-            else:
-                return X_cpu, None
-                
-        except Exception as e:
-            if self.debug_mode:
-                print(f"GPU to CPU conversion failed, using original: {e}")
-            return X, y
 
     def set_random_seeds(self):
         """Set all random seeds for maximum reproducibility while maintaining accuracy"""
@@ -1563,53 +1495,19 @@ class AdvancedUFCPredictor:
             else:
                 scale_pos = len(y_winner[y_winner==0]) / max(len(y_winner[y_winner==1]), 1)
             
-            # Create XGBoost with GPU acceleration (fallback to CPU if GPU unavailable)
-            xgb_params = {
-                'n_estimators': 800, 'max_depth': 10, 'learning_rate': 0.015,
-                'subsample': 0.85, 'colsample_bytree': 0.85, 'colsample_bylevel': 0.85,
-                'n_jobs': -1, 'reg_alpha': 0.1, 'reg_lambda': 0.8, 'min_child_weight': 3,
-                'gamma': 0.15, 'scale_pos_weight': scale_pos, 'random_state': 42,
-                'eval_metric': "logloss", 'tree_method': 'hist', 'seed': 42,
-                'enable_categorical': True
-            }
-            
-            # Only add GPU parameters if CuPy is working
-            if HAS_CUPY:
-                try:
-                    # Test if CUDA is actually available
-                    import cupy as cp
-                    test_gpu = cp.array([1, 2, 3])
-                    del test_gpu
-                    xgb_params['device'] = 'cuda'
-                    print("GPU acceleration enabled for XGBoost")
-                except Exception as e:
-                    print(f"GPU acceleration not available for XGBoost: {e}")
-                    print("Using CPU-only XGBoost")
-            else:
-                print("Using CPU-only XGBoost")
-            
-            try:
-                xgb_classifier = XGBClassifier(**xgb_params)
-                print("XGBoost GPU acceleration enabled")
-            except Exception as e:
-                # Fallback to CPU if GPU not available
-                print(f"GPU not available, using CPU: {e}")
-                xgb_classifier = XGBClassifier(
-                    n_estimators=800, max_depth=10, learning_rate=0.015,  # Enhanced parameters
-                    subsample=0.85, colsample_bytree=0.85, colsample_bylevel=0.85,
-                    n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
-                    reg_alpha=0.1, reg_lambda=0.8, min_child_weight=3,  # Reduced regularization
-                    gamma=0.15, scale_pos_weight=scale_pos,
-                    random_state=42, eval_metric="logloss",
-                    tree_method='hist',  # CPU fallback
-                    seed=42,  # Additional XGBoost seed
-                    enable_categorical=True
-                )
-            
             xgb_model = Pipeline([
                 ("preprocessor", preprocessor),
-                ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75
-                ("classifier", xgb_classifier)
+                ("feature_selector", SelectPercentile(f_classif, percentile=75)),  # Baseline
+                ("classifier", XGBClassifier(
+                    n_estimators=600, max_depth=8, learning_rate=0.02,  # Baseline parameters
+                    subsample=0.8, colsample_bytree=0.8, colsample_bylevel=0.8,
+                    n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
+                    reg_alpha=0.2, reg_lambda=1.0, min_child_weight=4,  # Baseline regularization
+                    gamma=0.15, scale_pos_weight=scale_pos,
+                    random_state=42, eval_metric="logloss",
+                    tree_method='hist',  # Use histogram method for consistency
+                    seed=42  # Additional XGBoost seed
+                ))
             ])
             base_models.append(('xgb', xgb_model))
         
@@ -1617,11 +1515,11 @@ class AdvancedUFCPredictor:
             print("✓ LightGBM available")
             lgbm_model = Pipeline([
                 ("preprocessor", preprocessor),
-                ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75
+                ("feature_selector", SelectPercentile(f_classif, percentile=75)),  # Baseline
                 ("classifier", LGBMClassifier(
-                    n_estimators=800, max_depth=10, learning_rate=0.015,  # Enhanced parameters
-                    num_leaves=80, subsample=0.85, colsample_bytree=0.85,
-                    reg_alpha=0.1, reg_lambda=0.8, min_child_weight=3,  # Reduced regularization
+                    n_estimators=600, max_depth=8, learning_rate=0.02,  # Baseline parameters
+                    num_leaves=60, subsample=0.8, colsample_bytree=0.8,
+                    reg_alpha=0.2, reg_lambda=1.0, min_child_weight=4,  # Baseline regularization
                     random_state=42, verbose=-1
                 ))
             ])
@@ -1631,10 +1529,10 @@ class AdvancedUFCPredictor:
             print("✓ CatBoost available")
             catboost_model = Pipeline([
                 ("preprocessor", preprocessor),
-                ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75
+                ("feature_selector", SelectPercentile(f_classif, percentile=75)),  # Baseline
                 ("classifier", CatBoostClassifier(
-                    iterations=800, depth=10, learning_rate=0.015,  # Enhanced parameters
-                    l2_leaf_reg=0.5, random_state=42, verbose=0  # Reduced regularization
+                    iterations=600, depth=8, learning_rate=0.02,  # Baseline parameters
+                    l2_leaf_reg=1.0, random_state=42, verbose=0  # Baseline regularization
                 ))
             ])
             base_models.append(('catboost', catboost_model))
@@ -1643,10 +1541,10 @@ class AdvancedUFCPredictor:
         print("✓ Random Forest available")
         rf_model = Pipeline([
             ("preprocessor", preprocessor),
-            ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75
+            ("feature_selector", SelectPercentile(f_classif, percentile=75)),  # Baseline
             ("classifier", RandomForestClassifier(
-                n_estimators=800, max_depth=25, min_samples_split=6,  # Enhanced parameters
-                min_samples_leaf=2, random_state=42, n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
+                n_estimators=600, max_depth=20, min_samples_split=8,  # Baseline parameters
+                min_samples_leaf=3, random_state=42, n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
                 class_weight=self.class_weight if hasattr(self, 'class_weight') else 'balanced'
             ))
         ])
@@ -1657,7 +1555,7 @@ class AdvancedUFCPredictor:
             print("✓ Neural Network enabled")
             nn_model = Pipeline([
                 ("preprocessor", preprocessor),
-                ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75
+                ("feature_selector", SelectPercentile(f_classif, percentile=75)),  # Baseline
                 ("classifier", MLPClassifier(
                     hidden_layer_sizes=(256, 128, 64), activation='relu',
                     solver='adam', alpha=0.001, batch_size=32,
@@ -1717,7 +1615,7 @@ class AdvancedUFCPredictor:
             self.winner_model = StackingClassifier(
                 estimators=base_models,
                 final_estimator=voting_meta,
-                cv=7,  # Increased CV folds for better generalization
+                cv=5,  # Baseline CV folds
                 n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
                 stack_method='predict_proba'  # Use probabilities for stacking
             )
@@ -1731,12 +1629,6 @@ class AdvancedUFCPredictor:
                 self.winner_model, method='isotonic', cv=5
             )
 
-        # Ensure we have proper DataFrame format for scikit-learn
-        if not isinstance(X_train, pd.DataFrame):
-            X_train = pd.DataFrame(X_train, columns=feature_columns)
-        if not isinstance(y_winner_train, (pd.Series, np.ndarray)):
-            y_winner_train = np.array(y_winner_train)
-        
         print("\nTraining winner prediction model...")
         self.winner_model.fit(X_train, y_winner_train)
 
@@ -1756,12 +1648,12 @@ class AdvancedUFCPredictor:
         if HAS_XGBOOST:
             xgb_method = Pipeline([
                 ("preprocessor", preprocessor),
-                ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75
+                ("feature_selector", SelectPercentile(f_classif, percentile=75)),  # Baseline
                 ("classifier", XGBClassifier(
-                    n_estimators=800, max_depth=10, learning_rate=0.015,  # Enhanced parameters
-                    subsample=0.85, colsample_bytree=0.85,
+                    n_estimators=600, max_depth=8, learning_rate=0.025,  # Baseline parameters
+                    subsample=0.85, colsample_bytree=0.8,
                     n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
-                    reg_alpha=0.1, reg_lambda=0.8,  # Reduced regularization
+                    reg_alpha=0.2, reg_lambda=1.0,  # Baseline regularization
                     random_state=42, objective="multi:softprob",
                     tree_method='hist',  # Use histogram method for consistency
                     seed=42  # Additional XGBoost seed
@@ -1773,11 +1665,11 @@ class AdvancedUFCPredictor:
         if HAS_LIGHTGBM:
             lgbm_method = Pipeline([
                 ("preprocessor", preprocessor),
-                ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75
+                ("feature_selector", SelectPercentile(f_classif, percentile=75)),  # Baseline
                 ("classifier", LGBMClassifier(
-                    n_estimators=800, max_depth=10, learning_rate=0.015,  # Enhanced parameters
-                    num_leaves=80, subsample=0.85, colsample_bytree=0.85,
-                    reg_alpha=0.1, reg_lambda=0.8,  # Reduced regularization
+                    n_estimators=600, max_depth=8, learning_rate=0.025,  # Baseline parameters
+                    num_leaves=50, subsample=0.85, colsample_bytree=0.8,
+                    reg_alpha=0.2, reg_lambda=1.0,  # Baseline regularization
                     random_state=42, verbose=-1
                 ))
             ])
@@ -1786,10 +1678,10 @@ class AdvancedUFCPredictor:
         # Random Forest method model
         rf_method = Pipeline([
             ("preprocessor", preprocessor),
-            ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75
+            ("feature_selector", SelectPercentile(f_classif, percentile=75)),  # Baseline
             ("classifier", RandomForestClassifier(
-                n_estimators=800, max_depth=25,  # Enhanced parameters
-                min_samples_split=6, min_samples_leaf=2,
+                n_estimators=600, max_depth=20,  # Baseline parameters
+                min_samples_split=8, min_samples_leaf=3,
                 random_state=42, n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
                 class_weight=self.class_weight if hasattr(self, 'class_weight') else 'balanced'
             ))
@@ -1799,7 +1691,7 @@ class AdvancedUFCPredictor:
         # Neural Network method model
         nn_method = Pipeline([
             ("preprocessor", preprocessor),
-            ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75
+            ("feature_selector", SelectPercentile(f_classif, percentile=75)),  # Baseline
             ("classifier", MLPClassifier(
                 hidden_layer_sizes=(128, 64, 32), activation='relu',
                 solver='adam', alpha=0.001, batch_size=32,
@@ -1954,12 +1846,12 @@ class AdvancedUFCPredictor:
             print(f"  Winner Accuracy: {dl_results[3]:.4f}")
             print(f"  Method Accuracy: {dl_results[4]:.4f}")
 
-        # Enhanced Time-based cross-validation with parallel processing
-        tscv = TimeSeriesSplit(n_splits=7)  # Increased from 5 to 7
+        # Time-based cross-validation
+        tscv = TimeSeriesSplit(n_splits=5)  # Baseline
         
         def train_fold(fold_data):
             """Train a single fold - designed for parallel execution"""
-            fold, train_idx, val_idx, X, y_winner, preprocessor, feature_columns = fold_data
+            fold, train_idx, val_idx, X, y_winner, preprocessor = fold_data
             
             # Safe indexing for both pandas and numpy arrays
             if hasattr(X, 'iloc'):
@@ -1972,55 +1864,27 @@ class AdvancedUFCPredictor:
             else:
                 y_fold_train, y_fold_val = y_winner[train_idx], y_winner[val_idx]
             
-            # Ensure proper DataFrame format for cross-validation
-            if not isinstance(X_fold_train, pd.DataFrame):
-                X_fold_train = pd.DataFrame(X_fold_train, columns=feature_columns)
-            if not isinstance(y_fold_train, (pd.Series, np.ndarray)):
-                y_fold_train = np.array(y_fold_train)
-            
             # Use the same enhanced model as in training
             if HAS_XGBOOST:
-                # Create XGBoost parameters for cross-validation
-                fold_xgb_params = {
-                    'n_estimators': 800, 'max_depth': 10, 'learning_rate': 0.015,
-                    'subsample': 0.85, 'colsample_bytree': 0.85, 'n_jobs': -1,
-                    'reg_alpha': 0.1, 'reg_lambda': 0.8, 'random_state': 42,
-                    'eval_metric': "logloss", 'tree_method': 'hist', 'seed': 42
-                }
-                
-                # Only add GPU parameters if CuPy is working
-                if HAS_CUPY:
-                    try:
-                        # Test if CUDA is actually available
-                        import cupy as cp
-                        test_gpu = cp.array([1, 2, 3])
-                        del test_gpu
-                        fold_xgb_params['device'] = 'cuda'
-                        print("GPU acceleration enabled for XGBoost CV")
-                    except Exception as e:
-                        print(f"GPU acceleration not available for XGBoost CV: {e}")
-                        print("Using CPU-only XGBoost CV")
-                
-                try:
-                    fold_classifier = XGBClassifier(**fold_xgb_params)
-                except Exception as e:
-                    # Fallback to CPU if GPU not available
-                    print(f"GPU not available for CV, using CPU: {e}")
-                    fold_xgb_params.pop('device', None)
-                    fold_classifier = XGBClassifier(**fold_xgb_params)
-                
                 fold_model = Pipeline([
                     ("preprocessor", preprocessor),
-                    ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75
-                    ("classifier", fold_classifier)
+                    ("feature_selector", SelectPercentile(f_classif, percentile=75)),  # Baseline
+                    ("classifier", XGBClassifier(
+                        n_estimators=800, max_depth=10, learning_rate=0.015,  # Enhanced parameters
+                        subsample=0.85, colsample_bytree=0.85, colsample_bylevel=0.85,
+                        n_jobs=-1, reg_alpha=0.1, reg_lambda=0.8, min_child_weight=3,
+                        random_state=42, eval_metric="logloss",
+                        tree_method='hist',  # Use histogram method for consistency
+                        seed=42  # Additional XGBoost seed
+                    ))
                 ])
             else:
                 fold_model = Pipeline([
                     ("preprocessor", preprocessor),
-                    ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75
+                    ("feature_selector", SelectPercentile(f_classif, percentile=75)),  # Baseline
                     ("classifier", RandomForestClassifier(
-                        n_estimators=800, max_depth=25, min_samples_split=6,  # Enhanced parameters
-                        min_samples_leaf=2, random_state=42, n_jobs=-1,
+                        n_estimators=600, max_depth=20, min_samples_split=8,  # Baseline parameters
+                        min_samples_leaf=3, random_state=42, n_jobs=-1,
                         class_weight=self.class_weight if hasattr(self, 'class_weight') else 'balanced'
                     ))
                 ])
@@ -2034,7 +1898,7 @@ class AdvancedUFCPredictor:
         # Prepare fold data for parallel processing
         fold_data = []
         for fold, (train_idx, val_idx) in enumerate(tscv.split(X)):
-            fold_data.append((fold, train_idx, val_idx, X, y_winner, preprocessor, feature_columns))
+            fold_data.append((fold, train_idx, val_idx, X, y_winner, preprocessor))
         
         # Run folds in parallel (3-4x faster)
         winner_cv_scores = []

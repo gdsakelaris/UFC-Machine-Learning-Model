@@ -1260,12 +1260,12 @@ class AdvancedUFCPredictor:
             scale_pos = len(y_winner[y_winner==0]) / max(len(y_winner[y_winner==1]), 1)
             xgb_model = Pipeline([
                 ("preprocessor", preprocessor),
-                ("feature_selector", SelectPercentile(f_classif, percentile=75)),
+                ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75 to 85
                 ("classifier", XGBClassifier(
-                    n_estimators=600, max_depth=8, learning_rate=0.02,
-                    subsample=0.8, colsample_bytree=0.8, colsample_bylevel=0.8,
+                    n_estimators=800, max_depth=10, learning_rate=0.015,  # Enhanced parameters
+                    subsample=0.85, colsample_bytree=0.85, colsample_bylevel=0.85,  # Enhanced parameters
                     n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
-                    reg_alpha=0.2, reg_lambda=1.0, min_child_weight=4,
+                    reg_alpha=0.1, reg_lambda=0.8, min_child_weight=3,  # Enhanced parameters
                     gamma=0.15, scale_pos_weight=scale_pos,
                     random_state=42, eval_metric="logloss",
                     tree_method='hist',  # Use histogram method for consistency
@@ -1278,11 +1278,11 @@ class AdvancedUFCPredictor:
             print("✓ LightGBM available")
             lgbm_model = Pipeline([
                 ("preprocessor", preprocessor),
-                ("feature_selector", SelectPercentile(f_classif, percentile=75)),
+                ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75 to 85
                 ("classifier", LGBMClassifier(
-                    n_estimators=600, max_depth=8, learning_rate=0.02,
-                    num_leaves=60, subsample=0.8, colsample_bytree=0.8,
-                    reg_alpha=0.2, reg_lambda=1.0, min_child_weight=4,
+                    n_estimators=800, max_depth=10, learning_rate=0.015,  # Enhanced parameters
+                    num_leaves=80, subsample=0.85, colsample_bytree=0.85,  # Enhanced parameters
+                    reg_alpha=0.1, reg_lambda=0.8, min_child_weight=3,  # Enhanced parameters
                     random_state=42, verbose=-1
                 ))
             ])
@@ -1292,10 +1292,10 @@ class AdvancedUFCPredictor:
             print("✓ CatBoost available")
             catboost_model = Pipeline([
                 ("preprocessor", preprocessor),
-                ("feature_selector", SelectPercentile(f_classif, percentile=75)),
+                ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75 to 85
                 ("classifier", CatBoostClassifier(
-                    iterations=600, depth=8, learning_rate=0.02,
-                    l2_leaf_reg=1.0, random_state=42, verbose=0
+                    iterations=800, depth=10, learning_rate=0.015,  # Enhanced parameters
+                    l2_leaf_reg=0.5, random_state=42, verbose=0  # Enhanced parameters
                 ))
             ])
             base_models.append(('catboost', catboost_model))
@@ -1304,10 +1304,10 @@ class AdvancedUFCPredictor:
         print("✓ Random Forest available")
         rf_model = Pipeline([
             ("preprocessor", preprocessor),
-            ("feature_selector", SelectPercentile(f_classif, percentile=75)),
+            ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75 to 85
             ("classifier", RandomForestClassifier(
-                n_estimators=600, max_depth=20, min_samples_split=8,
-                min_samples_leaf=3, random_state=42, n_jobs=-1  # Use all CPU cores for faster training (causes multiple windows in .exe)
+                n_estimators=800, max_depth=25, min_samples_split=6,  # Enhanced parameters
+                min_samples_leaf=2, random_state=42, n_jobs=-1  # Enhanced parameters
             ))
         ])
         base_models.append(('rf', rf_model))
@@ -1317,7 +1317,7 @@ class AdvancedUFCPredictor:
             print("✓ Neural Network enabled")
             nn_model = Pipeline([
                 ("preprocessor", preprocessor),
-                ("feature_selector", SelectPercentile(f_classif, percentile=75)),
+                ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75 to 85
                 ("classifier", MLPClassifier(
                     hidden_layer_sizes=(256, 128, 64), activation='relu',
                     solver='adam', alpha=0.001, batch_size=32,
@@ -1410,12 +1410,12 @@ class AdvancedUFCPredictor:
         if HAS_XGBOOST:
             xgb_method = Pipeline([
                 ("preprocessor", preprocessor),
-                ("feature_selector", SelectPercentile(f_classif, percentile=75)),
+                ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75 to 85
                 ("classifier", XGBClassifier(
-                    n_estimators=600, max_depth=8, learning_rate=0.025,
-                    subsample=0.85, colsample_bytree=0.8,
+                    n_estimators=800, max_depth=10, learning_rate=0.015,  # Enhanced parameters
+                    subsample=0.85, colsample_bytree=0.85,  # Enhanced parameters
                     n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
-                    reg_alpha=0.2, reg_lambda=1.0,
+                    reg_alpha=0.1, reg_lambda=0.8,  # Enhanced parameters
                     random_state=42, objective="multi:softprob",
                     tree_method='hist',  # Use histogram method for consistency
                     seed=42  # Additional XGBoost seed
@@ -1427,11 +1427,11 @@ class AdvancedUFCPredictor:
         if HAS_LIGHTGBM:
             lgbm_method = Pipeline([
                 ("preprocessor", preprocessor),
-                ("feature_selector", SelectPercentile(f_classif, percentile=75)),
+                ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75 to 85
                 ("classifier", LGBMClassifier(
-                    n_estimators=600, max_depth=8, learning_rate=0.025,
-                    num_leaves=50, subsample=0.85, colsample_bytree=0.8,
-                    reg_alpha=0.2, reg_lambda=1.0,
+                    n_estimators=800, max_depth=10, learning_rate=0.015,  # Enhanced parameters
+                    num_leaves=80, subsample=0.85, colsample_bytree=0.85,  # Enhanced parameters
+                    reg_alpha=0.1, reg_lambda=0.8,  # Enhanced parameters
                     random_state=42, verbose=-1
                 ))
             ])
@@ -1440,10 +1440,10 @@ class AdvancedUFCPredictor:
         # Random Forest method model
         rf_method = Pipeline([
             ("preprocessor", preprocessor),
-            ("feature_selector", SelectPercentile(f_classif, percentile=75)),
+            ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75 to 85
             ("classifier", RandomForestClassifier(
-                n_estimators=600, max_depth=20,
-                min_samples_split=8, min_samples_leaf=4,
+                n_estimators=800, max_depth=25,  # Enhanced parameters
+                min_samples_split=6, min_samples_leaf=2,  # Enhanced parameters
                 random_state=42, n_jobs=-1  # Use all CPU cores for faster training (causes multiple windows in .exe)
             ))
         ])
@@ -1452,7 +1452,7 @@ class AdvancedUFCPredictor:
         # Neural Network method model
         nn_method = Pipeline([
             ("preprocessor", preprocessor),
-            ("feature_selector", SelectPercentile(f_classif, percentile=75)),
+            ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75 to 85
             ("classifier", MLPClassifier(
                 hidden_layer_sizes=(128, 64, 32), activation='relu',
                 solver='adam', alpha=0.001, batch_size=32,
@@ -1588,7 +1588,7 @@ class AdvancedUFCPredictor:
             print(f"  Method Accuracy: {dl_results[4]:.4f}")
 
         # Time-based cross-validation
-        tscv = TimeSeriesSplit(n_splits=5)
+        tscv = TimeSeriesSplit(n_splits=7)  # Increased from 5 to 7 for better validation
         winner_cv_scores = []
         
         for train_idx, val_idx in tscv.split(X):
@@ -1598,12 +1598,12 @@ class AdvancedUFCPredictor:
             if HAS_XGBOOST:
                 fold_model = Pipeline([
                     ("preprocessor", preprocessor),
-                    ("feature_selector", SelectPercentile(f_classif, percentile=75)),
+                    ("feature_selector", SelectPercentile(f_classif, percentile=85)),  # Increased from 75 to 85
                     ("classifier", XGBClassifier(
-                        n_estimators=600, max_depth=8, learning_rate=0.02,
-                        subsample=0.8, colsample_bytree=0.8,
+                        n_estimators=800, max_depth=10, learning_rate=0.015,  # Enhanced parameters
+                        subsample=0.85, colsample_bytree=0.85,  # Enhanced parameters
                         n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
-                        reg_alpha=0.2, reg_lambda=1.0,
+                        reg_alpha=0.1, reg_lambda=0.8,  # Enhanced parameters
                         random_state=42, eval_metric="logloss",
                         tree_method='hist',  # Use histogram method for consistency
                         seed=42  # Additional XGBoost seed
@@ -2478,7 +2478,7 @@ class UFCPredictorGUI:
         
         self.data_file_path = tk.StringVar(value=fight_data_path)
         self.output_file_path = tk.StringVar(value="UFC_predictions.xlsx")
-        self.use_deep_learning = tk.BooleanVar(value=False)
+        self.use_deep_learning = tk.BooleanVar(value=True)
         self.predictor = None
         self.create_widgets()
         
