@@ -3927,7 +3927,7 @@ class UFCPredictorGUI:
         self.root.minsize(700, 550)
 
         self.data_file_path = tk.StringVar(value=fight_data_path)
-        self.output_file_path = tk.StringVar(value="UFC_predictions_4.xlsx")
+        self.output_file_path = tk.StringVar(value="UFC_predictions_3.xlsx")
         self.use_deep_learning = tk.BooleanVar(value=True)
         self.predictor = None
         self.create_widgets()
