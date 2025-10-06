@@ -5,46 +5,46 @@
 | **Parameter**                            | **exe Base** | **Two Runs** | **Data Augmentation** |
 | ---------------------------------------------- | ------------------ | ------------------ | --------------------------- |
 | **XGBOOST PARAMETERS**                   |                    |                    |                             |
-| **n_estimators**                         | 600                | 600                | 600                         |
-| **max_depth**                            | 8                  | 9                  | 9                           |
-| **learning_rate**                        | 0.025              | 0.02               | 0.02                        |
-| **subsample**                            | 0.85               | 0.85               | 0.85                        |
-| **colsample_bytree**                     | 0.8                | 0.85               | 0.85                        |
-| **colsample_bylevel**                    | 0.8                | 0.85               | 0.85                        |
-| **reg_alpha**                            | 0.2                | 0.15               | 0.15                        |
-| **reg_lambda**                           | 1                  | 0.8                | 0.8                         |
-| **min_child_weight**                     | 4                  | 3                  | 3                           |
-| **gamma**                                | 0.15               | 0.1                | 0.1                         |
+| **n_estimators**                         | 600                | 600                | 400                         |
+| **max_depth**                            | 8                  | 9                  | 7                           |
+| **learning_rate**                        | 0.025              | 0.02               | 0.03                        |
+| **subsample**                            | 0.85               | 0.85               | 0.8                         |
+| **colsample_bytree**                     | 0.8                | 0.85               | 0.8                         |
+| **colsample_bylevel**                    | 0.8                | 0.85               | 0.8                         |
+| **reg_alpha**                            | 0.2                | 0.15               | 0.05                        |
+| **reg_lambda**                           | 1                  | 0.8                | 0.5                         |
+| **min_child_weight**                     | 4                  | 3                  | 2                           |
+| **gamma**                                | 0.15               | 0.1                | 0.2                         |
 | **early_stopping_rounds**                | -                  | -                  | -                           |
 | **LIGHTGBM PARAMETERS**                  |                    |                    |                             |
-| **n_estimators**                         | 600                | 600                | 600                         |
-| **max_depth**                            | 8                  | 9                  | 9                           |
-| **learning_rate**                        | 0.025              | 0.02               | 0.02                        |
-| **num_leaves**                           | 60                 | 60                 | 60                          |
-| **subsample**                            | 0.85               | 0.85               | 0.85                        |
-| **colsample_bytree**                     | 0.8                | 0.85               | 0.85                        |
-| **colsample_bylevel**                    | 0.8                | 0.85               | 0.85                        |
-| **reg_alpha**                            | 0.2                | 0.15               | 0.15                        |
-| **reg_lambda**                           | 1                  | 0.8                | 0.8                         |
-| **min_child_weight**                     | 4                  | 3                  | 3                           |
+| **n_estimators**                         | 600                | 600                | 400                         |
+| **max_depth**                            | 8                  | 9                  | 7                           |
+| **learning_rate**                        | 0.025              | 0.02               | 0.03                        |
+| **num_leaves**                           | 60                 | 60                 | 40                          |
+| **subsample**                            | 0.85               | 0.85               | 0.8                         |
+| **colsample_bytree**                     | 0.8                | 0.85               | 0.8                         |
+| **colsample_bylevel**                    | 0.8                | 0.85               | 0.8                         |
+| **reg_alpha**                            | 0.2                | 0.15               | 0.05                        |
+| **reg_lambda**                           | 1                  | 0.8                | 0.5                         |
+| **min_child_weight**                     | 4                  | 3                  | 2                           |
 | **early_stopping_rounds**                | -                  | -                  | -                           |
 | **CATBOOST PARAMETERS**                  |                    |                    |                             |
-| **iterations**                           | 600                | 600                | 600                         |
-| **depth**                                | 8                  | 9                  | 9                           |
-| **learning_rate**                        | 0.025              | 0.02               | 0.02                        |
-| **l2_leaf_reg**                          | 1                  | 0.8                | 0.8                         |
+| **iterations**                           | 600                | 600                | 400                         |
+| **depth**                                | 8                  | 9                  | 7                           |
+| **learning_rate**                        | 0.025              | 0.02               | 0.03                        |
+| **l2_leaf_reg**                          | 1                  | 0.8                | 0.3                         |
 | **early_stopping_rounds**                | -                  | -                  | -                           |
 | **RANDOM FOREST PARAMETERS**             |                    |                    |                             |
-| **n_estimators**                         | 600                | 600                | 600                         |
-| **max_depth**                            | 20                 | 18                 | 18                          |
-| **min_samples_split**                    | 8                  | 5                  | 5                           |
-| **min_samples_leaf**                     | 2                  | 2                  | 2                           |
+| **n_estimators**                         | 600                | 600                | 500                         |
+| **max_depth**                            | 20                 | 18                 | 12                          |
+| **min_samples_split**                    | 8                  | 5                  | 8                           |
+| **min_samples_leaf**                     | 2                  | 2                  | 3                           |
 | **NEURAL NETWORK PARAMETERS**            |                    |                    |                             |
-| **hidden_layers**                        | (256, 128, 64)     | (256, 128, 64)     | (256, 128, 64)              |
+| **hidden_layers**                        | (256, 128, 64)     | (256, 128, 64)     | (256, 128)                  |
 | **learning_rate**                        | adaptive           | adaptive           | adaptive                    |
-| **max_iter**                             | 500                | 400                | 400                         |
-| **batch_size**                           | 32                 | 32                 | 32                          |
-| **alpha**                                | 0.001              | 0.0005             | 0.0005                      |
+| **max_iter**                             | 500                | 400                | 500                         |
+| **batch_size**                           | 32                 | 32                 | 64                          |
+| **alpha**                                | 0.001              | 0.0005             | 0.001                       |
 | **early_stopping**                       | True               | True               | True                        |
 | **CROSS-VALIDATION & FEATURE SELECTION** |                    |                    |                             |
 | **TimeSeriesSplit folds**                | 5                  | 5                  | 5                           |
@@ -63,16 +63,16 @@
 | **Neural Network Meta layers**           | (64, 32)           | (64, 32)           | (64, 32)                    |
 | **Neural Network Meta max_iter**         | 300                | 300                | 300                         |
 | **METHOD PREDICTION PARAMETERS**         |                    |                    |                             |
-| **XGBoost Method n_estimators**          | 600                | 600                | 600                         |
-| **XGBoost Method max_depth**             | 8                  | 9                  | 9                           |
-| **XGBoost Method learning_rate**         | 0.025              | 0.02               | 0.02                        |
-| **LightGBM Method n_estimators**         | 600                | 600                | 600                         |
-| **LightGBM Method max_depth**            | 8                  | 9                  | 9                           |
-| **LightGBM Method learning_rate**        | 0.025              | 0.02               | 0.02                        |
-| **Random Forest Method n_estimators**    | 600                | 600                | 600                         |
-| **Random Forest Method max_depth**       | 20                 | 18                 | 18                          |
-| **Neural Network Method layers**         | (128, 64, 32)      | (128, 64, 32)      | (128, 64, 32)               |
-| **Neural Network Method max_iter**       | 400                | 400                | 400                         |
+| **XGBoost Method n_estimators**          | 600                | 600                | 400                         |
+| **XGBoost Method max_depth**             | 8                  | 9                  | 7                           |
+| **XGBoost Method learning_rate**         | 0.025              | 0.02               | 0.03                        |
+| **LightGBM Method n_estimators**         | 600                | 600                | 400                         |
+| **LightGBM Method max_depth**            | 8                  | 9                  | 7                           |
+| **LightGBM Method learning_rate**        | 0.025              | 0.02               | 0.03                        |
+| **Random Forest Method n_estimators**    | 600                | 600                | 500                         |
+| **Random Forest Method max_depth**       | 20                 | 18                 | 12                          |
+| **Neural Network Method layers**         | (128, 64, 32)      | (128, 64, 32)      | (128, 64)                   |
+| **Neural Network Method max_iter**       | 400                | 400                | 500                         |
 
 ## **PERFORMANCE OPTIMIZATIONS**
 
