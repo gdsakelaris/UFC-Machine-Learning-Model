@@ -177,8 +177,6 @@ class AdvancedUFCPredictor:
         # Set TensorFlow random seed if available
         if HAS_TENSORFLOW:
             try:
-                import tensorflow as tf
-
                 tf.random.set_seed(42)
                 # Enable deterministic operations for consistency
                 tf.config.experimental.enable_op_determinism()
@@ -2212,7 +2210,10 @@ class AdvancedUFCPredictor:
                         method_map[i] = 5
 
             # Convert to categorical for deep learning
-            from tensorflow.keras.utils import to_categorical
+            try:
+                from tensorflow.keras.utils import to_categorical
+            except ImportError:
+                from keras.utils import to_categorical
 
             y_method_train_dl = to_categorical(
                 [method_map[y] for y in y_method_train], num_classes=6

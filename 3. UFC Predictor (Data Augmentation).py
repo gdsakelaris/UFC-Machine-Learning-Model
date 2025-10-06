@@ -179,6 +179,16 @@ class AdvancedUFCPredictor:
 
         # XGBoost specific random seed settings
         os.environ["XGBOOST_DISABLE_MULTIPROCESSING"] = "1"
+        
+        # GPU device management to prevent conflicts
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+        
+        # Clear GPU memory to prevent conflicts
+        try:
+            import gc
+            gc.collect()
+        except:
+            pass
 
         # Set TensorFlow random seed if available
         if HAS_TENSORFLOW:
@@ -936,15 +946,15 @@ class AdvancedUFCPredictor:
             print(f"Original bias - Red: {red_bias:.3f}, Blue: {1 - red_bias:.3f}")
 
         # ENHANCED AUGMENTATION: More aggressive for data augmentation model
-        bias_threshold = 0.03  # Lower threshold for more augmentation
+        bias_threshold = 0.02  # Even lower threshold for more augmentation
         if abs(red_bias - 0.5) > bias_threshold:
             print(f"Significant bias detected ({abs(red_bias - 0.5):.3f}), applying enhanced augmentation...")
             
             # Create augmented dataset by swapping corners
             df_augmented = self.swap_corners(df)
             
-            # ENHANCED SAMPLING: Use 75% of augmented data for better balance
-            sample_size = int(len(df_augmented) * 0.75)
+            # ENHANCED SAMPLING: Use 90% of augmented data for better balance
+            sample_size = int(len(df_augmented) * 0.90)
             df_augmented_sampled = df_augmented.sample(n=sample_size, random_state=42)
             
             # Additional augmentation for close fights to improve method prediction
@@ -1369,13 +1379,13 @@ class AdvancedUFCPredictor:
             "experience_mismatch",
             "r_total_fights",
             "b_total_fights",
-            # NEW HIGH-IMPACT FEATURES
+            # NEW HIGH-IMPACT FEATURES (only include features that are actually created)
             "ape_index_advantage",
             "stance_matchup_advantage",
             "stance_versatility_advantage",
             "weight_class_factor",
             "ring_rust_factor",
-            "championship_pressure",
+            "championship_pressure_advantage",  # This is the actual feature name
             "momentum_swing",
             "style_clash_severity",
             "power_vs_technique",
@@ -1384,6 +1394,17 @@ class AdvancedUFCPredictor:
             "opponent_quality_gap",
             "recent_opponent_strength",
             "upset_potential",
+            # NEW HIGH-IMPACT WINNER PREDICTION FEATURES
+            "recent_opponent_quality_diff",
+            "finish_rate_diff",
+            "stamina_factor_diff",
+            "pressure_performance_diff",
+            "comeback_ability_diff",
+            "clutch_factor_diff",
+            "recent_trend_diff",
+            "momentum_shift_diff",
+            "form_consistency_diff",
+            "upset_history_diff",
         ]
 
         # Add neutral advantage features
@@ -2099,6 +2120,84 @@ class AdvancedUFCPredictor:
             + (df["b_total_fights"] - df["r_total_fights"]) * 0.2
         )
 
+        # ============================================================================
+        # NEW HIGH-IMPACT WINNER PREDICTION FEATURES
+        # ============================================================================
+        
+        # RECENT OPPONENT QUALITY - Quality of recent opponents
+        df["r_recent_opponent_quality"] = df["r_recent_opponent_strength"] * 0.7 + df["r_wins_corrected"] * 0.3
+        df["b_recent_opponent_quality"] = df["b_recent_opponent_strength"] * 0.7 + df["b_wins_corrected"] * 0.3
+        df["recent_opponent_quality_diff"] = df["r_recent_opponent_quality"] - df["b_recent_opponent_quality"]
+        
+        # FINISH RATE - Recent finishing ability
+        df["r_finish_rate"] = (df["r_ko_rate_corrected"] + df["r_sub_rate_corrected"]) / 2
+        df["b_finish_rate"] = (df["b_ko_rate_corrected"] + df["b_sub_rate_corrected"]) / 2
+        df["finish_rate_diff"] = df["r_finish_rate"] - df["b_finish_rate"]
+        
+        # STAMINA FACTOR - Based on fight duration patterns
+        df["r_stamina_factor"] = np.where(
+            df["r_avg_fight_time"] > 12, 1.2,  # Championship rounds experience
+            np.where(df["r_avg_fight_time"] > 8, 1.0, 0.8)  # Regular vs short fights
+        )
+        df["b_stamina_factor"] = np.where(
+            df["b_avg_fight_time"] > 12, 1.2,
+            np.where(df["b_avg_fight_time"] > 8, 1.0, 0.8)
+        )
+        df["stamina_factor_diff"] = df["r_stamina_factor"] - df["b_stamina_factor"]
+        
+        # PRESSURE PERFORMANCE - Performance in high-stakes fights
+        df["r_pressure_performance"] = np.where(
+            df["is_title_bout"] == 1, df["r_recent_form_corrected"] * 1.2, df["r_recent_form_corrected"]
+        )
+        df["b_pressure_performance"] = np.where(
+            df["is_title_bout"] == 1, df["b_recent_form_corrected"] * 1.2, df["b_recent_form_corrected"]
+        )
+        df["pressure_performance_diff"] = df["r_pressure_performance"] - df["b_pressure_performance"]
+        
+        # COMEBACK ABILITY - Ability to recover from adversity
+        df["r_comeback_ability"] = np.where(
+            df["r_loss_streak_corrected"] > 0, 
+            df["r_recent_form_corrected"] * 0.8,  # Penalty for recent losses
+            df["r_recent_form_corrected"] * 1.1   # Bonus for avoiding losses
+        )
+        df["b_comeback_ability"] = np.where(
+            df["b_loss_streak_corrected"] > 0,
+            df["b_recent_form_corrected"] * 0.8,
+            df["b_recent_form_corrected"] * 1.1
+        )
+        df["comeback_ability_diff"] = df["r_comeback_ability"] - df["b_comeback_ability"]
+        
+        # CLUTCH FACTOR - Performance in close fights
+        df["r_clutch_factor"] = df["r_win_loss_ratio_corrected"] * df["r_recent_form_corrected"]
+        df["b_clutch_factor"] = df["b_win_loss_ratio_corrected"] * df["b_recent_form_corrected"]
+        df["clutch_factor_diff"] = df["r_clutch_factor"] - df["b_clutch_factor"]
+        
+        # RECENT TREND - Performance trajectory over last 3-5 fights
+        df["r_recent_trend"] = df["r_recent_form_corrected"] * df["r_win_streak_corrected"]
+        df["b_recent_trend"] = df["b_recent_form_corrected"] * df["b_win_streak_corrected"]
+        df["recent_trend_diff"] = df["r_recent_trend"] - df["b_recent_trend"]
+        
+        # MOMENTUM SHIFT - Change in performance momentum
+        df["r_momentum_shift"] = df["r_win_streak_corrected"] - df["r_loss_streak_corrected"]
+        df["b_momentum_shift"] = df["b_win_streak_corrected"] - df["b_loss_streak_corrected"]
+        df["momentum_shift_diff"] = df["r_momentum_shift"] - df["b_momentum_shift"]
+        
+        # FORM CONSISTENCY - How consistent recent performance is
+        df["r_form_consistency"] = 1.0 - np.abs(df["r_recent_form_corrected"] - 0.5) * 2  # Closer to 0.5 = more consistent
+        df["b_form_consistency"] = 1.0 - np.abs(df["b_recent_form_corrected"] - 0.5) * 2
+        df["form_consistency_diff"] = df["r_form_consistency"] - df["b_form_consistency"]
+        
+        # UPSET HISTORY - History of causing/being upset
+        df["r_upset_history"] = np.where(
+            df["r_recent_form_corrected"] > 0.7, 1.2,  # Strong favorite
+            np.where(df["r_recent_form_corrected"] < 0.3, 0.8, 1.0)  # Underdog or neutral
+        )
+        df["b_upset_history"] = np.where(
+            df["b_recent_form_corrected"] > 0.7, 1.2,
+            np.where(df["b_recent_form_corrected"] < 0.3, 0.8, 1.0)
+        )
+        df["upset_history_diff"] = df["r_upset_history"] - df["b_upset_history"]
+
         # Add all new features to column list
         feature_columns.extend(
             [
@@ -2259,30 +2358,33 @@ class AdvancedUFCPredictor:
         )
 
         # Build base models for stacking
+        # GPU Usage Strategy:
+        # Sequential execution: XGBoost + LightGBM (GPU) + CatBoost + RandomForest + MLP (CPU)
         base_models = []
-
+        
         if HAS_XGBOOST:
-            print("\n✓ XGBoost available")
+            print("\n✓ XGBoost available (GPU - parallel with LightGBM)")
             # Use balanced weights since data augmentation eliminates bias
             scale_pos = 1.0  # Balanced since we have equal red/blue representation after augmentation
 
-            # Create XGBoost classifier - OPTIMIZED FOR WINNER PREDICTION
+            # Create XGBoost classifier - DRASTICALLY IMPROVED FOR WINNER PREDICTION
             xgb_params = {
-                "n_estimators": 500,  # Slightly more trees for better accuracy
-                "max_depth": 8,       # Optimal depth for winner prediction
-                "learning_rate": 0.025,  # Balanced learning rate
-                "subsample": 0.85,    # Higher subsample for better performance
-                "colsample_bytree": 0.85,  # Higher for better feature usage
-                "colsample_bylevel": 0.85,  # Higher for better feature usage
+                "n_estimators": 1000,  # 500 -> 1000 (much more trees for better accuracy)
+                "max_depth": 10,       # 8 -> 10 (deeper trees for complex patterns)
+                "learning_rate": 0.01,  # 0.025 -> 0.01 (slower learning for better convergence)
+                "subsample": 0.9,      # 0.85 -> 0.9 (higher subsample for better performance)
+                "colsample_bytree": 0.9,  # 0.85 -> 0.9 (higher for better feature usage)
+                "colsample_bylevel": 0.9,  # 0.85 -> 0.9 (higher for better feature usage)
                 "n_jobs": -1,
-                "reg_alpha": 0.1,     # Moderate regularization
-                "reg_lambda": 0.8,    # Moderate regularization
-                "min_child_weight": 3,  # Balanced sensitivity
-                "gamma": 0.1,         # Moderate gamma
+                "reg_alpha": 0.05,     # 0.1 -> 0.05 (less regularization for more complexity)
+                "reg_lambda": 0.5,     # 0.8 -> 0.5 (less regularization for more complexity)
+                "min_child_weight": 2,  # 3 -> 2 (more sensitive to small changes)
+                "gamma": 0.05,         # 0.1 -> 0.05 (less pruning for more complexity)
                 "scale_pos_weight": scale_pos,
                 "random_state": 42,
                 "eval_metric": "logloss",
                 "tree_method": "hist",
+                "device": "cuda",  # GPU acceleration
                 "seed": 42,
                 "enable_categorical": True,
                 "max_delta_step": 1,
@@ -2304,7 +2406,7 @@ class AdvancedUFCPredictor:
             base_models.append(("xgb", xgb_model))
 
         if HAS_LIGHTGBM:
-            print("✓ LightGBM available")
+            print("✓ LightGBM available (GPU - parallel with XGBoost)")
             lgbm_model = Pipeline(
                 [
                     ("preprocessor", preprocessor),
@@ -2315,26 +2417,29 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         LGBMClassifier(
-                            n_estimators=500,  # More trees for better accuracy
-                            max_depth=8,       # Optimal depth for winner prediction
-                            learning_rate=0.025,  # Balanced learning rate
-                            num_leaves=50,     # More leaves for better accuracy
-                            subsample=0.85,    # Higher for better performance
-                            colsample_bytree=0.85,  # Higher for better feature usage
-                            reg_alpha=0.1,     # Moderate regularization
-                            reg_lambda=0.8,    # Moderate regularization
-                            min_child_weight=3,  # Balanced sensitivity
+                            n_estimators=400,  # 500 -> 400 (faster training)
+                            max_depth=7,       # 8 -> 7 (faster training)
+                            learning_rate=0.03,  # 0.025 -> 0.03 (faster convergence)
+                            num_leaves=40,     # 50 -> 40 (faster training)
+                            subsample=0.8,     # 0.85 -> 0.8 (faster training)
+                            colsample_bytree=0.8,  # 0.85 -> 0.8 (faster training)
+                            reg_alpha=0.1,     # Keep same
+                            reg_lambda=0.8,    # Keep same
+                            min_child_weight=3,  # Keep same
+                            device="gpu",      # GPU acceleration
+                            gpu_platform_id=0, # Specify GPU platform
+                            gpu_device_id=0,   # Specify GPU device
                             random_state=42,
                             verbose=-1,
-                            # EARLY STOPPING: Removed - requires validation set in pipeline
                         ),
                     ),
                 ]
             )
             base_models.append(("lgbm", lgbm_model))
 
+        # CPU Models: CatBoost, RandomForest, MLP (parallel with each other and GPU models)
         if HAS_CATBOOST:
-            print("✓ CatBoost available")
+            print("✓ CatBoost available (CPU - parallel with other models)")
             catboost_model = Pipeline(
                 [
                     ("preprocessor", preprocessor),
@@ -2345,18 +2450,26 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         CatBoostClassifier(
-                            iterations=500,  # More iterations for better accuracy
-                            depth=8,         # Optimal depth for winner prediction
-                            learning_rate=0.025,  # Balanced learning rate
-                            l2_leaf_reg=0.8,  # Moderate regularization
+                            iterations=400,  # 500 -> 400 (faster training)
+                            depth=7,         # 8 -> 7 (faster training)
+                            learning_rate=0.03,  # 0.025 -> 0.03 (faster convergence)
+                            l2_leaf_reg=0.8,  # Keep same
+                            task_type="CPU", # Use CPU to avoid persistent GPU conflicts
                             random_state=42,
                             verbose=0,
-                            # EARLY STOPPING: Removed - requires validation set in pipeline
                         ),
                     ),
                 ]
             )
             base_models.append(("catboost", catboost_model))
+
+        # REMOVED ExtraTreesClassifier for faster training
+
+        # REMOVED GradientBoostingClassifier for faster training
+
+        # REMOVED AdaBoostClassifier for faster training
+
+        # REMOVED SVC for faster training
 
         # Random Forest (always available)
         print("✓ Random Forest available")
@@ -2489,18 +2602,80 @@ class AdvancedUFCPredictor:
             weights=meta_weights
         )
 
-        # Stack models with enhanced meta-learner
+        # MULTI-LEVEL STACKING: Level 1 -> Level 2 -> Final Blender
         if self.use_ensemble and len(base_models) > 1:
-            self.winner_model = StackingClassifier(
-                estimators=base_models,
-                final_estimator=voting_meta,
-                cv=5,  # 10 -> 5 folds (2x faster)
-                n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
-                stack_method="predict_proba",  # Use probabilities for stacking
-                passthrough=True,  # Include original features in stacking
+            print("\n🔧 Building multi-level stacking ensemble...")
+            
+            # Level 1: Base models
+            level1_models = base_models
+            
+            # Level 2: Meta-learners (current approach)
+            level2_meta = voting_meta
+            
+            # Level 3: Final blender with more sophisticated approach
+            final_blender = VotingClassifier(
+                estimators=[
+                    ("xgb_final", XGBClassifier(
+                        n_estimators=200,
+                        max_depth=6,
+                        learning_rate=0.1,
+                        subsample=0.8,
+                        colsample_bytree=0.8,
+                        reg_alpha=0.1,
+                        reg_lambda=1.0,
+                        random_state=42,
+                        eval_metric="logloss"
+                    )),
+                    ("lgbm_final", LGBMClassifier(
+                        n_estimators=200,
+                        max_depth=6,
+                        learning_rate=0.1,
+                        num_leaves=31,
+                        subsample=0.8,
+                        colsample_bytree=0.8,
+                        reg_alpha=0.1,
+                        reg_lambda=1.0,
+                        random_state=42,
+                        verbose=-1
+                    )),
+                    ("rf_final", RandomForestClassifier(
+                        n_estimators=300,
+                        max_depth=10,
+                        min_samples_split=4,
+                        min_samples_leaf=2,
+                        random_state=42,
+                        n_jobs=-1
+                    )),
+                    ("lr_final", LogisticRegression(
+                        C=1.0,
+                        max_iter=1000,
+                        random_state=42
+                    ))
+                ],
+                voting="soft",
+                weights=[0.4, 0.3, 0.2, 0.1]  # XGBoost, LightGBM, RandomForest, LogisticRegression
             )
+            
+            # Create the multi-level stacking
+            self.winner_model = StackingClassifier(
+                estimators=level1_models,
+                final_estimator=StackingClassifier(
+                    estimators=[("level2", level2_meta)],
+                    final_estimator=final_blender,
+                    cv=3,  # Fewer folds for final level
+                    n_jobs=-1,
+                    stack_method="predict_proba",
+                    passthrough=False
+                ),
+                cv=5,   # 10 -> 5 folds (faster training)
+                n_jobs=-1,
+                stack_method="predict_proba",
+                passthrough=True,  # Include original features in first level
+            )
+            
+            # Enhanced calibration for the entire stack
             self.winner_model = CalibratedClassifierCV(
-                self.winner_model, method="isotonic", cv=5  # Enhanced calibration
+                self.winner_model, method="isotonic", cv=5  # 10 -> 5 folds (faster training)
             )
         else:
             # Fallback to single best model
@@ -2573,17 +2748,17 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         LGBMClassifier(
-                            n_estimators=600,  # 500 -> 600 (better accuracy)
-                            max_depth=9,     # 8 -> 9 (better accuracy)
-                            learning_rate=0.02,  # 0.025 -> 0.02 (better convergence)
-                            num_leaves=60,   # 50 -> 60 (better accuracy)
-                            subsample=0.85,  # 0.8 -> 0.85 (better accuracy)
-                            colsample_bytree=0.85,  # 0.8 -> 0.85 (better accuracy)
+                            n_estimators=400,  # 600 -> 400 (faster training)
+                            max_depth=7,     # 9 -> 7 (faster training)
+                            learning_rate=0.03,  # 0.02 -> 0.03 (faster convergence)
+                            num_leaves=40,   # 60 -> 40 (faster training)
+                            subsample=0.8,  # 0.85 -> 0.8 (faster training)
+                            colsample_bytree=0.8,  # 0.85 -> 0.8 (faster training)
                             reg_alpha=0.15,
                             reg_lambda=0.8,
+                            device="gpu",    # GPU acceleration
                             random_state=42,
                             verbose=-1,
-                            # early_stopping_rounds=50,  # Removed - requires validation set
                         ),
                     ),
                 ]
@@ -2658,7 +2833,7 @@ class AdvancedUFCPredictor:
 
         # Calibrate the method model
         self.method_model = CalibratedClassifierCV(
-            self.method_model, method="isotonic", cv=5
+            self.method_model, method="isotonic", cv=3  # 5 -> 3 folds (faster training)
         )
 
         self.method_model.fit(X_train, y_method_train)
@@ -2847,6 +3022,7 @@ class AdvancedUFCPredictor:
                     "random_state": 42,
                     "eval_metric": "logloss",
                     "tree_method": "hist",
+                "device": "cuda",  # GPU acceleration
                     "seed": 42,
                 }
 
@@ -4369,6 +4545,6 @@ if __name__ == "__main__":
         # Don't exit, just print the error for debugging
 
 
-# ~ 12 Minutes
-# ✅ Winners correct: 136 / 218 → 62.4%
-# ✅ Winner + method correct: 74 / 218 → 33.9%
+# ~ 13 Minutes
+# ✅ Winners correct: 152 / 218 → 69.7%
+# ✅ Winner + method correct: 81 / 218 → 37.2%
