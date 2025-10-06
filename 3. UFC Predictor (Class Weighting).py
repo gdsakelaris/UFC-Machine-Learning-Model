@@ -1912,21 +1912,21 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=85),
-                    ),  # Increased from 75
+                        SelectPercentile(f_classif, percentile=75),
+                    ),
                     (
                         "classifier",
                         XGBClassifier(
-                            n_estimators=800,
-                            max_depth=10,
-                            learning_rate=0.015,  # Enhanced parameters
+                            n_estimators=500,
+                            max_depth=8,
+                            learning_rate=0.025,
                             subsample=0.85,
                             colsample_bytree=0.85,
                             colsample_bylevel=0.85,
                             n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
-                            reg_alpha=0.1,
-                            reg_lambda=0.8,
-                            min_child_weight=3,  # Reduced regularization
+                            reg_alpha=0.2,
+                            reg_lambda=1,
+                            min_child_weight=4,
                             gamma=0.15,
                             scale_pos_weight=scale_pos,
                             random_state=42,
@@ -1946,20 +1946,20 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=85),
-                    ),  # Increased from 75
+                        SelectPercentile(f_classif, percentile=75),
+                    ),
                     (
                         "classifier",
                         LGBMClassifier(
-                            n_estimators=800,
-                            max_depth=10,
-                            learning_rate=0.015,  # Enhanced parameters
-                            num_leaves=80,
+                            n_estimators=500,
+                            max_depth=8,
+                            learning_rate=0.025,
+                            num_leaves=50,
                             subsample=0.85,
                             colsample_bytree=0.85,
-                            reg_alpha=0.1,
-                            reg_lambda=0.8,
-                            min_child_weight=3,  # Reduced regularization
+                            reg_alpha=0.2,
+                            reg_lambda=1,
+                            min_child_weight=4,
                             random_state=42,
                             verbose=-1,
                         ),
@@ -1975,15 +1975,15 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=85),
-                    ),  # Increased from 75
+                        SelectPercentile(f_classif, percentile=75),
+                    ),
                     (
                         "classifier",
                         CatBoostClassifier(
-                            iterations=800,
-                            depth=10,
-                            learning_rate=0.015,  # Enhanced parameters
-                            l2_leaf_reg=0.5,
+                            iterations=500,
+                            depth=8,
+                            learning_rate=0.025,
+                            l2_leaf_reg=1,
                             random_state=42,
                             verbose=0,  # Reduced regularization
                         ),
@@ -1999,14 +1999,14 @@ class AdvancedUFCPredictor:
                 ("preprocessor", preprocessor),
                 (
                     "feature_selector",
-                    SelectPercentile(f_classif, percentile=85),
-                ),  # Increased from 75
+                    SelectPercentile(f_classif, percentile=75),
+                ),
                 (
                     "classifier",
                     RandomForestClassifier(
-                        n_estimators=800,
-                        max_depth=25,
-                        min_samples_split=6,  # Enhanced parameters
+                        n_estimators=500,
+                        max_depth=15,
+                        min_samples_split=6,
                         min_samples_leaf=2,
                         random_state=42,
                         n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
@@ -2027,18 +2027,18 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=85),
-                    ),  # Increased from 75
+                        SelectPercentile(f_classif, percentile=75),
+                    ),
                     (
                         "classifier",
                         MLPClassifier(
-                            hidden_layer_sizes=(256, 128, 64),
+                            hidden_layer_sizes=(256, 128),
                             activation="relu",
                             solver="adam",
                             alpha=0.001,
                             batch_size=32,
                             learning_rate="adaptive",
-                            max_iter=500,
+                            max_iter=300,
                             early_stopping=True,
                             random_state=42,
                         ),
@@ -2161,19 +2161,19 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=85),
-                    ),  # Increased from 75
+                        SelectPercentile(f_classif, percentile=75),
+                    ),
                     (
                         "classifier",
                         XGBClassifier(
-                            n_estimators=800,
-                            max_depth=10,
-                            learning_rate=0.015,  # Enhanced parameters
+                            n_estimators=500,
+                            max_depth=8,
+                            learning_rate=0.025,
                             subsample=0.85,
                             colsample_bytree=0.85,
                             n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
-                            reg_alpha=0.1,
-                            reg_lambda=0.8,  # Reduced regularization
+                            reg_alpha=0.2,
+                            reg_lambda=1,
                             random_state=42,
                             objective="multi:softprob",
                             tree_method="hist",  # Use histogram method for consistency
@@ -2191,19 +2191,19 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=85),
-                    ),  # Increased from 75
+                        SelectPercentile(f_classif, percentile=75),
+                    ),
                     (
                         "classifier",
                         LGBMClassifier(
-                            n_estimators=800,
-                            max_depth=10,
-                            learning_rate=0.015,  # Enhanced parameters
-                            num_leaves=80,
+                            n_estimators=500,
+                            max_depth=8,
+                            learning_rate=0.025,
+                            num_leaves=50,
                             subsample=0.85,
                             colsample_bytree=0.85,
-                            reg_alpha=0.1,
-                            reg_lambda=0.8,  # Reduced regularization
+                            reg_alpha=0.2,
+                            reg_lambda=1,
                             random_state=42,
                             verbose=-1,
                         ),
@@ -2218,13 +2218,13 @@ class AdvancedUFCPredictor:
                 ("preprocessor", preprocessor),
                 (
                     "feature_selector",
-                    SelectPercentile(f_classif, percentile=85),
-                ),  # Increased from 75
+                    SelectPercentile(f_classif, percentile=75),
+                ),
                 (
                     "classifier",
                     RandomForestClassifier(
-                        n_estimators=800,
-                        max_depth=25,  # Enhanced parameters
+                        n_estimators=500,
+                        max_depth=15,
                         min_samples_split=6,
                         min_samples_leaf=2,
                         random_state=42,
@@ -2244,18 +2244,18 @@ class AdvancedUFCPredictor:
                 ("preprocessor", preprocessor),
                 (
                     "feature_selector",
-                    SelectPercentile(f_classif, percentile=85),
-                ),  # Increased from 75
+                    SelectPercentile(f_classif, percentile=75),
+                ),
                 (
                     "classifier",
                     MLPClassifier(
-                        hidden_layer_sizes=(128, 64, 32),
+                        hidden_layer_sizes=(128, 64),
                         activation="relu",
                         solver="adam",
                         alpha=0.001,
                         batch_size=32,
                         learning_rate="adaptive",
-                        max_iter=400,
+                        max_iter=300,
                         early_stopping=True,
                         random_state=42,
                     ),
@@ -2415,7 +2415,7 @@ class AdvancedUFCPredictor:
             print(f"  Method Accuracy: {dl_results[4]:.4f}")
 
         # Enhanced Time-based cross-validation with parallel processing
-        tscv = TimeSeriesSplit(n_splits=7)  # Increased from 5 to 7
+        tscv = TimeSeriesSplit(n_splits=5)
 
         def train_fold(fold_data):
             """Train a single fold - designed for parallel execution"""
@@ -2447,16 +2447,16 @@ class AdvancedUFCPredictor:
                         (
                             "classifier",
                             XGBClassifier(
-                                n_estimators=800,
-                                max_depth=10,
-                                learning_rate=0.015,  # Enhanced parameters
+                                n_estimators=500,
+                                max_depth=8,
+                                learning_rate=0.025,
                                 subsample=0.85,
                                 colsample_bytree=0.85,
                                 colsample_bylevel=0.85,
                                 n_jobs=-1,
-                                reg_alpha=0.1,
-                                reg_lambda=0.8,
-                                min_child_weight=3,
+                                reg_alpha=0.2,
+                                reg_lambda=1,
+                                min_child_weight=4,
                                 random_state=42,
                                 eval_metric="logloss",
                                 tree_method="hist",  # Use histogram method for consistency
@@ -2476,9 +2476,9 @@ class AdvancedUFCPredictor:
                         (
                             "classifier",
                             RandomForestClassifier(
-                                n_estimators=800,
-                                max_depth=25,
-                                min_samples_split=6,  # Enhanced parameters
+                                n_estimators=500,
+                                max_depth=15,
+                                min_samples_split=6,
                                 min_samples_leaf=2,
                                 random_state=42,
                                 n_jobs=-1,
@@ -3918,6 +3918,6 @@ if __name__ == "__main__":
         # Don't exit, just print the error for debugging
 
 
-# ~ 30 Minutes
+# ~ 8 Minutes
 # ✅ Winners correct: 172 / 218 → 78.9%
-# ✅ Winner + method correct: 101 / 218 → 46.3%
+# ✅ Winner + method correct: 100 / 218 → 45.9%
