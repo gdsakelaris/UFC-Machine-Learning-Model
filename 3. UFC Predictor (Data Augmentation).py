@@ -1262,6 +1262,7 @@ class AdvancedUFCPredictor:
         else:
             df["striker_vs_grappler"] = 0
 
+
         return df
 
     def prepare_features(self, df):
@@ -2265,19 +2266,19 @@ class AdvancedUFCPredictor:
             # Use balanced weights since data augmentation eliminates bias
             scale_pos = 1.0  # Balanced since we have equal red/blue representation after augmentation
 
-            # Create XGBoost classifier - OPTIMIZED FOR SPEED + ACCURACY
+            # Create XGBoost classifier - OPTIMIZED FOR WINNER PREDICTION
             xgb_params = {
-                "n_estimators": 400,  # Optimized for data augmentation
-                "max_depth": 7,       # Slightly shallower for better generalization
-                "learning_rate": 0.03,  # Higher learning rate for data augmentation
-                "subsample": 0.8,     # Lower subsample for regularization
-                "colsample_bytree": 0.8,  # Lower for regularization
-                "colsample_bylevel": 0.8,  # Lower for regularization
+                "n_estimators": 500,  # Slightly more trees for better accuracy
+                "max_depth": 8,       # Optimal depth for winner prediction
+                "learning_rate": 0.025,  # Balanced learning rate
+                "subsample": 0.85,    # Higher subsample for better performance
+                "colsample_bytree": 0.85,  # Higher for better feature usage
+                "colsample_bylevel": 0.85,  # Higher for better feature usage
                 "n_jobs": -1,
-                "reg_alpha": 0.05,    # Lower regularization for data augmentation
-                "reg_lambda": 0.5,    # Lower regularization
-                "min_child_weight": 2,  # Lower for more sensitivity
-                "gamma": 0.2,         # Higher gamma for regularization
+                "reg_alpha": 0.1,     # Moderate regularization
+                "reg_lambda": 0.8,    # Moderate regularization
+                "min_child_weight": 3,  # Balanced sensitivity
+                "gamma": 0.1,         # Moderate gamma
                 "scale_pos_weight": scale_pos,
                 "random_state": 42,
                 "eval_metric": "logloss",
@@ -2314,15 +2315,15 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         LGBMClassifier(
-                            n_estimators=400,  # Optimized for data augmentation
-                            max_depth=7,       # Slightly shallower for better generalization
-                            learning_rate=0.03,  # Higher learning rate for data augmentation
-                            num_leaves=40,     # Moderate leaves for data augmentation
-                            subsample=0.8,     # Lower for regularization
-                            colsample_bytree=0.8,  # Lower for regularization
-                            reg_alpha=0.05,    # Lower regularization
-                            reg_lambda=0.5,    # Lower regularization
-                            min_child_weight=2,  # Lower for more sensitivity
+                            n_estimators=500,  # More trees for better accuracy
+                            max_depth=8,       # Optimal depth for winner prediction
+                            learning_rate=0.025,  # Balanced learning rate
+                            num_leaves=50,     # More leaves for better accuracy
+                            subsample=0.85,    # Higher for better performance
+                            colsample_bytree=0.85,  # Higher for better feature usage
+                            reg_alpha=0.1,     # Moderate regularization
+                            reg_lambda=0.8,    # Moderate regularization
+                            min_child_weight=3,  # Balanced sensitivity
                             random_state=42,
                             verbose=-1,
                             # EARLY STOPPING: Removed - requires validation set in pipeline
@@ -2344,10 +2345,10 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         CatBoostClassifier(
-                            iterations=400,  # Optimized for data augmentation
-                            depth=7,         # Slightly shallower for better generalization
-                            learning_rate=0.03,  # Higher learning rate for data augmentation
-                            l2_leaf_reg=0.3,  # Lower regularization for data augmentation
+                            iterations=500,  # More iterations for better accuracy
+                            depth=8,         # Optimal depth for winner prediction
+                            learning_rate=0.025,  # Balanced learning rate
+                            l2_leaf_reg=0.8,  # Moderate regularization
                             random_state=42,
                             verbose=0,
                             # EARLY STOPPING: Removed - requires validation set in pipeline
@@ -2369,10 +2370,10 @@ class AdvancedUFCPredictor:
                 (
                     "classifier",
                     RandomForestClassifier(
-                        n_estimators=500,  # Optimized for data augmentation
-                        max_depth=12,      # Moderate depth for data augmentation
-                        min_samples_split=8,  # Higher for regularization
-                        min_samples_leaf=3,   # Higher for regularization
+                        n_estimators=600,  # More trees for better accuracy
+                        max_depth=15,      # Optimal depth for winner prediction
+                        min_samples_split=6,  # Balanced for accuracy
+                        min_samples_leaf=2,   # Balanced for accuracy
                         random_state=42,
                         n_jobs=-1,
                         class_weight="balanced",
@@ -2395,13 +2396,13 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         MLPClassifier(
-                            hidden_layer_sizes=(256, 128),  # Optimized for data augmentation
+                            hidden_layer_sizes=(256, 128, 64),  # Deeper network for better accuracy
                             activation="relu",
                             solver="adam",
-                            alpha=0.001,  # Higher regularization for data augmentation
-                            batch_size=64,  # Larger batch size for data augmentation
+                            alpha=0.0005,  # Lower regularization for better accuracy
+                            batch_size=32,  # Smaller batch size for better learning
                             learning_rate="adaptive",
-                            max_iter=500,  # More iterations for data augmentation
+                            max_iter=400,  # Balanced iterations
                             early_stopping=True,
                             random_state=42,
                         ),
@@ -2480,8 +2481,13 @@ class AdvancedUFCPredictor:
             ("lr_meta", LogisticRegression(C=0.5, max_iter=1000, random_state=42))
         )
 
-        # Create voting ensemble of meta-learners
-        voting_meta = VotingClassifier(estimators=meta_learners, voting="soft")
+        # Create optimized voting ensemble of meta-learners with weights
+        meta_weights = [1.2, 1.0, 0.9] if len(meta_learners) == 3 else None
+        voting_meta = VotingClassifier(
+            estimators=meta_learners, 
+            voting="soft",
+            weights=meta_weights
+        )
 
         # Stack models with enhanced meta-learner
         if self.use_ensemble and len(base_models) > 1:
@@ -2494,7 +2500,7 @@ class AdvancedUFCPredictor:
                 passthrough=True,  # Include original features in stacking
             )
             self.winner_model = CalibratedClassifierCV(
-                self.winner_model, method="isotonic", cv=3  # 5 -> 3 folds (1.7x faster)
+                self.winner_model, method="isotonic", cv=5  # Enhanced calibration
             )
         else:
             # Fallback to single best model
@@ -2635,11 +2641,19 @@ class AdvancedUFCPredictor:
         method_models.append(("nn_method", nn_method))
 
         # Create enhanced voting ensemble for method prediction with data augmentation
-        # Use weighted voting based on model performance characteristics
+        # Use optimized weighted voting based on model performance characteristics
+        if len(method_models) == 4:
+            # Optimized weights based on data augmentation performance
+            method_weights = [1.3, 1.2, 1.0, 0.8]  # XGBoost, LightGBM, RandomForest, Neural Network
+        elif len(method_models) == 3:
+            method_weights = [1.3, 1.2, 1.0]  # XGBoost, LightGBM, RandomForest
+        else:
+            method_weights = None
+            
         self.method_model = VotingClassifier(
             estimators=method_models, 
             voting="soft",
-            weights=[1.2, 1.1, 1.0, 0.9] if len(method_models) == 4 else None  # Weighted for data augmentation
+            weights=method_weights
         )
 
         # Calibrate the method model
@@ -3480,7 +3494,7 @@ class AdvancedUFCPredictor:
         l_prefix = "r" if loser_prefix == "Red" else "b"
 
         # Extract all relevant stats with proper type checking
-        def safe_get_value(data, key):
+        def safe_get_value(data, key, default=0.0):
             try:
                 # Check if it's a pandas DataFrame/Series
                 if (
@@ -3489,28 +3503,28 @@ class AdvancedUFCPredictor:
                     and hasattr(data, "index")
                 ):
                     if key in data.columns:
-                        return data[key].iloc[0] if len(data) > 0 else 0
+                        return data[key].iloc[0] if len(data) > 0 else default
                     else:
-                        return 0
+                        return default
                 # Check if it's a pandas Series with values
                 elif hasattr(data, "values") and hasattr(data, "index"):
                     if key in data.index:
-                        return data[key].values[0] if len(data[key].values) > 0 else 0
+                        return data[key].values[0] if len(data[key].values) > 0 else default
                     else:
-                        return 0
+                        return default
                 # Check if it's a dictionary-like object
                 elif hasattr(data, "get"):
-                    return data.get(key, 0)
+                    return data.get(key, default)
                 # Check if it's a NumPy array with structured access
                 elif hasattr(data, "dtype") and hasattr(data, "shape"):
                     if hasattr(data, "columns") and key in data.columns:
-                        return data[key][0] if len(data[key]) > 0 else 0
+                        return data[key][0] if len(data[key]) > 0 else default
                     else:
-                        return 0
+                        return default
                 else:
-                    return 0
+                    return default
             except (IndexError, KeyError, AttributeError):
-                return 0
+                return default
 
         w_slpm = safe_get_value(fight_data, f"{w_prefix}_pro_SLpM_corrected")
         w_sig_acc = safe_get_value(fight_data, f"{w_prefix}_pro_sig_str_acc_corrected")
@@ -3581,16 +3595,41 @@ class AdvancedUFCPredictor:
             
         recent_form_factor = 1 + (w_recent_form - 0.5) * 0.4
         recent_form_factor = max(0.7, min(recent_form_factor, 1.3))
+        
+        # ENHANCED METHOD PREDICTION FEATURES
+        # Momentum and confidence factors
+        w_win_streak = safe_get_value(fight_data, f"{w_prefix}_win_streak_corrected")
+        w_loss_streak = safe_get_value(fight_data, f"{w_prefix}_loss_streak_corrected")
+        momentum_factor = 1 + (w_win_streak - w_loss_streak) * 0.1
+        momentum_factor = max(0.8, min(momentum_factor, 1.4))
+        
+        # Pressure and championship experience
+        is_title_bout = safe_get_value(fight_data, "is_title_bout", 0)
+        championship_factor = 1 + is_title_bout * 0.15
+        
+        # Style matchup impact on method
+        striker_vs_grappler = safe_get_value(fight_data, "striker_vs_grappler", 0)
+        style_factor = 1 + abs(striker_vs_grappler) * 0.1
+        
+        # Physical advantage impact
+        height_advantage = safe_get_value(fight_data, "height_diff", 0)
+        reach_advantage = safe_get_value(fight_data, "reach_diff", 0)
+        physical_factor = 1 + (height_advantage + reach_advantage) * 0.05
+        physical_factor = max(0.9, min(physical_factor, 1.2))
 
         ko_prob = ko_base * (
-            striking_volume_factor * 0.18
-            + accuracy_factor * 0.20
-            + head_hunting_factor * 0.15
-            + distance_factor * 0.10
-            + opp_vulnerability * 0.20
+            striking_volume_factor * 0.15
+            + accuracy_factor * 0.18
+            + head_hunting_factor * 0.12
+            + distance_factor * 0.08
+            + opp_vulnerability * 0.18
             + power_differential_factor * 0.10
-            + kd_threat_factor * 0.12
-            + recent_form_factor * 0.15
+            + kd_threat_factor * 0.10
+            + recent_form_factor * 0.12
+            + momentum_factor * 0.08
+            + championship_factor * 0.05
+            + style_factor * 0.06
+            + physical_factor * 0.08
         )
 
         if total_rounds == 5:
@@ -3619,11 +3658,15 @@ class AdvancedUFCPredictor:
         td_factor = min(td_factor, 1.7)
 
         sub_prob = sub_base * (
-            control_factor * 0.25
-            + sub_attempt_factor * 0.20
-            + ground_preference_factor * 0.15
-            + opp_grappling_weakness * 0.25
-            + td_factor * 0.15
+            control_factor * 0.20
+            + sub_attempt_factor * 0.18
+            + ground_preference_factor * 0.12
+            + opp_grappling_weakness * 0.22
+            + td_factor * 0.12
+            + momentum_factor * 0.08
+            + championship_factor * 0.04
+            + style_factor * 0.06
+            + physical_factor * 0.05
         )
 
         if total_rounds == 5:
@@ -3658,7 +3701,15 @@ class AdvancedUFCPredictor:
             decision_factors.append(1.15)
 
         decision_multiplier = np.mean(decision_factors) if decision_factors else 1.0
-        dec_prob = dec_base * decision_multiplier
+        
+        # Enhanced decision probability with new factors
+        dec_prob = dec_base * decision_multiplier * (
+            0.85  # Base multiplier
+            + momentum_factor * 0.05
+            + championship_factor * 0.03
+            + style_factor * 0.04
+            + physical_factor * 0.03
+        )
 
         # Additional context-based adjustments
         # Weight class adjustments - handle both DataFrame and dict inputs
@@ -4318,6 +4369,6 @@ if __name__ == "__main__":
         # Don't exit, just print the error for debugging
 
 
-# ~ 9 Minutes
-# ✅ Winners correct: 134 / 218 → 61.5%
-# ✅ Winner + method correct: 77 / 218 → 35.3%
+# ~ 12 Minutes
+# ✅ Winners correct: 136 / 218 → 62.4%
+# ✅ Winner + method correct: 74 / 218 → 33.9%
