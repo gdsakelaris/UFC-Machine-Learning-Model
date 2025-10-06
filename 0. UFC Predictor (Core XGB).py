@@ -22,6 +22,7 @@ warnings.filterwarnings("ignore")
 
 try:
     from xgboost import XGBClassifier
+
     HAS_XGBOOST = True
 except ImportError:
     HAS_XGBOOST = False
@@ -29,7 +30,6 @@ except ImportError:
 
 
 class UFCPredictor:
-
     def __init__(self, use_xgboost=True):
         self.winner_model = None
         self.method_model = None
@@ -41,16 +41,16 @@ class UFCPredictor:
         """Calculate current win or loss streak"""
         if not recent_wins:
             return 0
-        
+
         streak = 0
         target = 1 if count_wins else 0
-        
+
         for result in reversed(recent_wins):
             if result == target:
                 streak += 1
             else:
                 break
-        
+
         return streak
 
     def fix_data_leakage(self, df):
@@ -103,19 +103,41 @@ class UFCPredictor:
 
         for prefix in ["r", "b"]:
             for stat in [
-                "wins", "losses", "draws", "win_loss_ratio",
-                "pro_SLpM", "pro_sig_str_acc", "pro_SApM", "pro_str_def",
-                "pro_total_str_pM", "pro_total_str_acc", "pro_total_str_absorbed_pM",
-                "pro_td_avg", "pro_td_acc", "pro_td_def", "pro_sub_avg",
-                "ko_rate", "sub_rate", "dec_rate", "recent_form",
-                "head_pct", "body_pct", "leg_pct",
-                "distance_pct", "clinch_pct", "ground_pct",
-                "win_streak", "loss_streak", "last_3_wins",
-                "days_since_last_fight", "recent_finish_rate", "durability"
+                "wins",
+                "losses",
+                "draws",
+                "win_loss_ratio",
+                "pro_SLpM",
+                "pro_sig_str_acc",
+                "pro_SApM",
+                "pro_str_def",
+                "pro_total_str_pM",
+                "pro_total_str_acc",
+                "pro_total_str_absorbed_pM",
+                "pro_td_avg",
+                "pro_td_acc",
+                "pro_td_def",
+                "pro_sub_avg",
+                "ko_rate",
+                "sub_rate",
+                "dec_rate",
+                "recent_form",
+                "head_pct",
+                "body_pct",
+                "leg_pct",
+                "distance_pct",
+                "clinch_pct",
+                "ground_pct",
+                "win_streak",
+                "loss_streak",
+                "last_3_wins",
+                "days_since_last_fight",
+                "recent_finish_rate",
+                "durability",
             ]:
                 df[f"{prefix}_{stat}_corrected"] = 0.0
-        
-        df['h2h_advantage'] = 0.0
+
+        df["h2h_advantage"] = 0.0
         fighter_h2h = {}
 
         for idx, row in df.iterrows():
@@ -123,15 +145,15 @@ class UFCPredictor:
                 print(f"   Processing fight {idx}/{len(df)}...")
 
             r_fighter, b_fighter = row["r_fighter"], row["b_fighter"]
-            
+
             # Head-to-head tracking
             h2h_key = (r_fighter, b_fighter)
             h2h_key_reverse = (b_fighter, r_fighter)
-            
+
             if h2h_key in fighter_h2h:
-                df.at[idx, 'h2h_advantage'] = fighter_h2h[h2h_key]
+                df.at[idx, "h2h_advantage"] = fighter_h2h[h2h_key]
             elif h2h_key_reverse in fighter_h2h:
-                df.at[idx, 'h2h_advantage'] = -fighter_h2h[h2h_key_reverse]
+                df.at[idx, "h2h_advantage"] = -fighter_h2h[h2h_key_reverse]
 
             if r_fighter not in fighter_stats:
                 fighter_stats[r_fighter] = copy.deepcopy(stats_to_track)
@@ -168,15 +190,15 @@ class UFCPredictor:
 
                 # Recent finish rate
                 if len(stats["recent_finishes"]) > 0:
-                    df.at[idx, f"{prefix}_recent_finish_rate_corrected"] = (
-                        sum(stats["recent_finishes"]) / len(stats["recent_finishes"])
-                    )
+                    df.at[idx, f"{prefix}_recent_finish_rate_corrected"] = sum(
+                        stats["recent_finishes"]
+                    ) / len(stats["recent_finishes"])
 
                 if len(stats["recent_wins"]) > 0:
                     df.at[idx, f"{prefix}_recent_form_corrected"] = sum(
                         stats["recent_wins"]
                     ) / len(stats["recent_wins"])
-                
+
                 # Momentum features
                 df.at[idx, f"{prefix}_win_streak_corrected"] = self.calculate_streak(
                     stats["recent_wins"], True
@@ -185,7 +207,9 @@ class UFCPredictor:
                     stats["recent_wins"], False
                 )
                 df.at[idx, f"{prefix}_last_3_wins_corrected"] = (
-                    sum(stats["recent_wins"][-3:]) if len(stats["recent_wins"]) >= 3 else 0
+                    sum(stats["recent_wins"][-3:])
+                    if len(stats["recent_wins"]) >= 3
+                    else 0
                 )
 
                 # Days since last fight
@@ -198,15 +222,13 @@ class UFCPredictor:
                         stats["sig_str_total"] / stats["fight_time_minutes"]
                     )
                     df.at[idx, f"{prefix}_pro_SApM_corrected"] = (
-                        stats["sig_str_absorbed_total"] / 
-                        stats["fight_time_minutes"]
+                        stats["sig_str_absorbed_total"] / stats["fight_time_minutes"]
                     )
                     df.at[idx, f"{prefix}_pro_total_str_pM_corrected"] = (
                         stats["total_str_landed"] / stats["fight_time_minutes"]
                     )
                     df.at[idx, f"{prefix}_pro_total_str_absorbed_pM_corrected"] = (
-                        stats["total_str_absorbed"] / 
-                        stats["fight_time_minutes"]
+                        stats["total_str_absorbed"] / stats["fight_time_minutes"]
                     )
                     df.at[idx, f"{prefix}_pro_td_avg_corrected"] = (
                         stats["td_total"] / stats["fight_time_minutes"]
@@ -250,8 +272,7 @@ class UFCPredictor:
 
                 if stats["position_fight_count"] > 0:
                     df.at[idx, f"{prefix}_distance_pct_corrected"] = (
-                        stats["distance_pct_sum"] / 
-                        stats["position_fight_count"]
+                        stats["distance_pct_sum"] / stats["position_fight_count"]
                     )
                     df.at[idx, f"{prefix}_clinch_pct_corrected"] = (
                         stats["clinch_pct_sum"] / stats["position_fight_count"]
@@ -283,22 +304,30 @@ class UFCPredictor:
                     fighter_stats[r_fighter][f"{method_cat}_wins"] += 1
                     fighter_stats[r_fighter]["recent_wins"].append(1)
                     fighter_stats[b_fighter]["recent_wins"].append(0)
-                    fighter_stats[r_fighter]["recent_finishes"].append(1 if is_finish else 0)
+                    fighter_stats[r_fighter]["recent_finishes"].append(
+                        1 if is_finish else 0
+                    )
                     fighter_stats[b_fighter]["recent_finishes"].append(0)
                     if is_finish:
                         fighter_stats[b_fighter][f"{method_cat}_losses"] += 1
-                    fighter_h2h[(r_fighter, b_fighter)] = fighter_h2h.get((r_fighter, b_fighter), 0) + 1
+                    fighter_h2h[(r_fighter, b_fighter)] = (
+                        fighter_h2h.get((r_fighter, b_fighter), 0) + 1
+                    )
                 elif row["winner"] == "Blue":
                     fighter_stats[b_fighter]["wins"] += 1
                     fighter_stats[r_fighter]["losses"] += 1
                     fighter_stats[b_fighter][f"{method_cat}_wins"] += 1
                     fighter_stats[b_fighter]["recent_wins"].append(1)
                     fighter_stats[r_fighter]["recent_wins"].append(0)
-                    fighter_stats[b_fighter]["recent_finishes"].append(1 if is_finish else 0)
+                    fighter_stats[b_fighter]["recent_finishes"].append(
+                        1 if is_finish else 0
+                    )
                     fighter_stats[r_fighter]["recent_finishes"].append(0)
                     if is_finish:
                         fighter_stats[r_fighter][f"{method_cat}_losses"] += 1
-                    fighter_h2h[(r_fighter, b_fighter)] = fighter_h2h.get((r_fighter, b_fighter), 0) - 1
+                    fighter_h2h[(r_fighter, b_fighter)] = (
+                        fighter_h2h.get((r_fighter, b_fighter), 0) - 1
+                    )
 
                 for fighter in [r_fighter, b_fighter]:
                     if len(fighter_stats[fighter]["recent_wins"]) > 5:
@@ -306,9 +335,9 @@ class UFCPredictor:
                             "recent_wins"
                         ][-5:]
                     if len(fighter_stats[fighter]["recent_finishes"]) > 3:
-                        fighter_stats[fighter]["recent_finishes"] = fighter_stats[fighter][
-                            "recent_finishes"
-                        ][-3:]
+                        fighter_stats[fighter]["recent_finishes"] = fighter_stats[
+                            fighter
+                        ]["recent_finishes"][-3:]
                     fighter_stats[fighter]["last_fight_date"] = row["event_date"]
 
                 for fighter, f_prefix, opp_prefix in [
@@ -351,7 +380,7 @@ class UFCPredictor:
                         if pd.notna(row[f"{opp_prefix}_sig_str"]):
                             fighter_stats[fighter]["str_def_hits"] += (
                                 row[f"{opp_prefix}_sig_str_att"]
-                                -row[f"{opp_prefix}_sig_str"]
+                                - row[f"{opp_prefix}_sig_str"]
                             )
 
                     if pd.notna(row[f"{opp_prefix}_td_att"]):
@@ -360,8 +389,7 @@ class UFCPredictor:
                         ]
                         if pd.notna(row[f"{opp_prefix}_td"]):
                             fighter_stats[fighter]["td_def_success"] += (
-                                row[f"{opp_prefix}_td_att"] - 
-                                row[f"{opp_prefix}_td"]
+                                row[f"{opp_prefix}_td_att"] - row[f"{opp_prefix}_td"]
                             )
 
                     # Strike location percentages
@@ -407,15 +435,37 @@ class UFCPredictor:
                     fighter_stats[fighter]["fight_count"] += 1
 
         diff_stats = [
-            "wins", "losses", "draws", "win_loss_ratio",
-            "pro_SLpM", "pro_sig_str_acc", "pro_SApM", "pro_str_def",
-            "pro_total_str_pM", "pro_total_str_acc", "pro_total_str_absorbed_pM",
-            "pro_td_avg", "pro_td_acc", "pro_td_def", "pro_sub_avg",
-            "ko_rate", "sub_rate", "dec_rate", "recent_form",
-            "head_pct", "body_pct", "leg_pct",
-            "distance_pct", "clinch_pct", "ground_pct",
-            "win_streak", "loss_streak", "last_3_wins",
-            "days_since_last_fight", "recent_finish_rate", "durability"
+            "wins",
+            "losses",
+            "draws",
+            "win_loss_ratio",
+            "pro_SLpM",
+            "pro_sig_str_acc",
+            "pro_SApM",
+            "pro_str_def",
+            "pro_total_str_pM",
+            "pro_total_str_acc",
+            "pro_total_str_absorbed_pM",
+            "pro_td_avg",
+            "pro_td_acc",
+            "pro_td_def",
+            "pro_sub_avg",
+            "ko_rate",
+            "sub_rate",
+            "dec_rate",
+            "recent_form",
+            "head_pct",
+            "body_pct",
+            "leg_pct",
+            "distance_pct",
+            "clinch_pct",
+            "ground_pct",
+            "win_streak",
+            "loss_streak",
+            "last_3_wins",
+            "days_since_last_fight",
+            "recent_finish_rate",
+            "durability",
         ]
 
         for stat in diff_stats:
@@ -443,8 +493,7 @@ class UFCPredictor:
             "Overturned": "Decision",
         }
 
-        df["method_simple"] = df["method"].map(
-            method_mapping).fillna("Decision")
+        df["method_simple"] = df["method"].map(method_mapping).fillna("Decision")
         df["winner_method_simple"] = df["winner"] + "_" + df["method_simple"]
 
         feature_columns = [
@@ -492,57 +541,57 @@ class UFCPredictor:
         df["net_striking_advantage"] = (
             df["r_pro_SLpM_corrected"] - df["r_pro_SApM_corrected"]
         ) - (df["b_pro_SLpM_corrected"] - df["b_pro_SApM_corrected"])
-        
+
         df["striking_efficiency"] = (
             df["r_pro_SLpM_corrected"] * df["r_pro_sig_str_acc_corrected"]
         ) - (df["b_pro_SLpM_corrected"] * df["b_pro_sig_str_acc_corrected"])
-        
+
         df["defensive_striking"] = (
             df["r_pro_str_def_corrected"] - df["r_pro_SApM_corrected"]
         ) - (df["b_pro_str_def_corrected"] - df["b_pro_SApM_corrected"])
-        
+
         df["grappling_control"] = (
             df["r_pro_td_avg_corrected"] * df["r_pro_td_acc_corrected"]
         ) - (df["b_pro_td_avg_corrected"] * df["b_pro_td_acc_corrected"])
-        
+
         df["grappling_defense"] = (
             df["r_pro_td_def_corrected"] - df["r_pro_sub_avg_corrected"] / 5
         ) - (df["b_pro_td_def_corrected"] - df["b_pro_sub_avg_corrected"] / 5)
-        
+
         df["offensive_output"] = (
             df["r_pro_SLpM_corrected"]
-            +df["r_pro_td_avg_corrected"]
-            +df["r_pro_sub_avg_corrected"]
+            + df["r_pro_td_avg_corrected"]
+            + df["r_pro_sub_avg_corrected"]
         ) - (
             df["b_pro_SLpM_corrected"]
-            +df["b_pro_td_avg_corrected"]
-            +df["b_pro_sub_avg_corrected"]
+            + df["b_pro_td_avg_corrected"]
+            + df["b_pro_sub_avg_corrected"]
         )
-        
+
         df["defensive_composite"] = (
             (df["r_pro_str_def_corrected"] + df["r_pro_td_def_corrected"]) / 2
         ) - ((df["b_pro_str_def_corrected"] + df["b_pro_td_def_corrected"]) / 2)
-        
+
         df["ko_specialist_gap"] = (
             df["r_ko_rate_corrected"] * df["r_pro_SLpM_corrected"]
         ) - (df["b_ko_rate_corrected"] * df["b_pro_SLpM_corrected"])
-        
+
         df["submission_specialist_gap"] = (
             df["r_sub_rate_corrected"] * df["r_pro_sub_avg_corrected"]
         ) - (df["b_sub_rate_corrected"] * df["b_pro_sub_avg_corrected"])
-        
-        df["experience_gap"] = (
-            df["r_wins_corrected"] + df["r_losses_corrected"]
-        ) - (df["b_wins_corrected"] + df["b_losses_corrected"])
-        
+
+        df["experience_gap"] = (df["r_wins_corrected"] + df["r_losses_corrected"]) - (
+            df["b_wins_corrected"] + df["b_losses_corrected"]
+        )
+
         df["skill_momentum"] = (
             df["pro_SLpM_diff_corrected"] * df["recent_form_diff_corrected"]
         )
-        
+
         df["finish_threat"] = (
             df["r_ko_rate_corrected"] + df["r_sub_rate_corrected"]
         ) - (df["b_ko_rate_corrected"] + df["b_sub_rate_corrected"])
-        
+
         df["momentum_advantage"] = (
             df["win_streak_diff_corrected"] - df["loss_streak_diff_corrected"]
         )
@@ -551,15 +600,13 @@ class UFCPredictor:
         df["inactivity_penalty"] = np.where(
             df["days_since_last_fight_diff_corrected"] > 365,
             -1,
-            np.where(df["days_since_last_fight_diff_corrected"] < -365, 1, 0)
+            np.where(df["days_since_last_fight_diff_corrected"] < -365, 1, 0),
         )
 
         # Pace differential
         df["pace_differential"] = (
             df["r_pro_SLpM_corrected"] + df["r_pro_td_avg_corrected"]
-        ) - (
-            df["b_pro_SLpM_corrected"] + df["b_pro_td_avg_corrected"]
-        )
+        ) - (df["b_pro_SLpM_corrected"] + df["b_pro_td_avg_corrected"])
 
         feature_columns.extend(
             [
@@ -584,8 +631,7 @@ class UFCPredictor:
         if "r_stance" in df.columns and "b_stance" in df.columns:
             if "stance_encoder" not in self.label_encoders:
                 self.label_encoders["stance_encoder"] = LabelEncoder()
-                all_stances = pd.concat(
-                    [df["r_stance"], df["b_stance"]]).unique()
+                all_stances = pd.concat([df["r_stance"], df["b_stance"]]).unique()
                 self.label_encoders["stance_encoder"].fit(all_stances)
 
             df["r_stance_encoded"] = self.label_encoders["stance_encoder"].transform(
@@ -647,8 +693,10 @@ class UFCPredictor:
 
         if self.use_xgboost:
             print("\nUsing XGBoost Configuration...")
-            scale_pos = len(y_winner[y_winner==0]) / max(len(y_winner[y_winner==1]), 1)
-            
+            scale_pos = len(y_winner[y_winner == 0]) / max(
+                len(y_winner[y_winner == 1]), 1
+            )
+
             # winner model
             self.winner_model = Pipeline(
                 [
@@ -677,14 +725,12 @@ class UFCPredictor:
                     ),
                 ]
             )
-            
+
             # Calibrate for better probability estimates
             self.winner_model = CalibratedClassifierCV(
-                self.winner_model,
-                method='isotonic',
-                cv=3
+                self.winner_model, method="isotonic", cv=3
             )
-            
+
             # method model
             self.method_model = Pipeline(
                 [
@@ -733,7 +779,7 @@ class UFCPredictor:
                     ),
                 ]
             )
-            
+
             self.method_model = Pipeline(
                 [
                     ("preprocessor", preprocessor),
@@ -761,33 +807,41 @@ class UFCPredictor:
         # Time-based cross-validation
         tscv = TimeSeriesSplit(n_splits=5)
         winner_cv_scores = []
-        
+
         for train_idx, val_idx in tscv.split(X):
             X_fold_train, X_fold_val = X.iloc[train_idx], X.iloc[val_idx]
             y_fold_train, y_fold_val = y_winner.iloc[train_idx], y_winner.iloc[val_idx]
-            
+
             # Use base model without calibration for CV
             if self.use_xgboost:
-                fold_model = Pipeline([
-                    ("preprocessor", preprocessor),
-                    ("feature_selector", SelectKBest(f_classif, k=min(55, len(feature_columns)))),
-                    ("classifier", XGBClassifier(
-                        n_estimators=400,
-                        max_depth=6,
-                        learning_rate=0.03,
-                        subsample=0.75,
-                        colsample_bytree=0.7,
-                        colsample_bylevel=0.7,
-                        reg_alpha=0.5,
-                        reg_lambda=2.5,
-                        min_child_weight=7,
-                        gamma=0.4,
-                        scale_pos_weight=scale_pos,
-                        random_state=42,
-                        eval_metric="logloss",
-                    ))
-                ])
-            
+                fold_model = Pipeline(
+                    [
+                        ("preprocessor", preprocessor),
+                        (
+                            "feature_selector",
+                            SelectKBest(f_classif, k=min(55, len(feature_columns))),
+                        ),
+                        (
+                            "classifier",
+                            XGBClassifier(
+                                n_estimators=400,
+                                max_depth=6,
+                                learning_rate=0.03,
+                                subsample=0.75,
+                                colsample_bytree=0.7,
+                                colsample_bylevel=0.7,
+                                reg_alpha=0.5,
+                                reg_lambda=2.5,
+                                min_child_weight=7,
+                                gamma=0.4,
+                                scale_pos_weight=scale_pos,
+                                random_state=42,
+                                eval_metric="logloss",
+                            ),
+                        ),
+                    ]
+                )
+
             fold_model.fit(X_fold_train, y_fold_train)
             score = fold_model.score(X_fold_val, y_fold_val)
             winner_cv_scores.append(score)
@@ -796,7 +850,9 @@ class UFCPredictor:
             f"\nTime-Based CV Accuracy: {np.mean(winner_cv_scores):.4f} "
             f"(±{np.std(winner_cv_scores):.4f})"
         )
-        print(f"Test Set Accuracy: {self.winner_model.score(X_test, y_winner_test):.4f}\n")
+        print(
+            f"Test Set Accuracy: {self.winner_model.score(X_test, y_winner_test):.4f}\n"
+        )
 
         return feature_columns
 
@@ -830,15 +886,37 @@ class UFCPredictor:
         stats = {
             k: latest[f"{prefix}_{k}_corrected"]
             for k in [
-                "wins", "losses", "draws", "win_loss_ratio",
-                "pro_SLpM", "pro_sig_str_acc", "pro_SApM", "pro_str_def",
-                "pro_total_str_pM", "pro_total_str_acc", "pro_total_str_absorbed_pM",
-                "pro_td_avg", "pro_td_acc", "pro_td_def", "pro_sub_avg",
-                "ko_rate", "sub_rate", "dec_rate", "recent_form",
-                "head_pct", "body_pct", "leg_pct",
-                "distance_pct", "clinch_pct", "ground_pct",
-                "win_streak", "loss_streak", "last_3_wins",
-                "days_since_last_fight", "recent_finish_rate", "durability"
+                "wins",
+                "losses",
+                "draws",
+                "win_loss_ratio",
+                "pro_SLpM",
+                "pro_sig_str_acc",
+                "pro_SApM",
+                "pro_str_def",
+                "pro_total_str_pM",
+                "pro_total_str_acc",
+                "pro_total_str_absorbed_pM",
+                "pro_td_avg",
+                "pro_td_acc",
+                "pro_td_def",
+                "pro_sub_avg",
+                "ko_rate",
+                "sub_rate",
+                "dec_rate",
+                "recent_form",
+                "head_pct",
+                "body_pct",
+                "leg_pct",
+                "distance_pct",
+                "clinch_pct",
+                "ground_pct",
+                "win_streak",
+                "loss_streak",
+                "last_3_wins",
+                "days_since_last_fight",
+                "recent_finish_rate",
+                "durability",
             ]
         }
 
@@ -846,7 +924,12 @@ class UFCPredictor:
             {
                 k: latest[f"{prefix}_{k}"]
                 for k in [
-                    "height", "reach", "weight", "age_at_event", "stance", "ape_index"
+                    "height",
+                    "reach",
+                    "weight",
+                    "age_at_event",
+                    "stance",
+                    "ape_index",
                 ]
             }
         )
@@ -929,15 +1012,36 @@ class UFCPredictor:
             **{
                 f"{k}_diff_corrected": r_stats[k] - b_stats[k]
                 for k in [
-                    "wins", "losses", "win_loss_ratio",
-                    "pro_SLpM", "pro_sig_str_acc", "pro_SApM", "pro_str_def",
-                    "pro_total_str_pM", "pro_total_str_acc", "pro_total_str_absorbed_pM",
-                    "pro_td_avg", "pro_td_acc", "pro_td_def", "pro_sub_avg",
-                    "ko_rate", "sub_rate", "dec_rate", "recent_form",
-                    "head_pct", "body_pct", "leg_pct",
-                    "distance_pct", "clinch_pct", "ground_pct",
-                    "win_streak", "loss_streak", "last_3_wins",
-                    "days_since_last_fight", "recent_finish_rate", "durability"
+                    "wins",
+                    "losses",
+                    "win_loss_ratio",
+                    "pro_SLpM",
+                    "pro_sig_str_acc",
+                    "pro_SApM",
+                    "pro_str_def",
+                    "pro_total_str_pM",
+                    "pro_total_str_acc",
+                    "pro_total_str_absorbed_pM",
+                    "pro_td_avg",
+                    "pro_td_acc",
+                    "pro_td_def",
+                    "pro_sub_avg",
+                    "ko_rate",
+                    "sub_rate",
+                    "dec_rate",
+                    "recent_form",
+                    "head_pct",
+                    "body_pct",
+                    "leg_pct",
+                    "distance_pct",
+                    "clinch_pct",
+                    "ground_pct",
+                    "win_streak",
+                    "loss_streak",
+                    "last_3_wins",
+                    "days_since_last_fight",
+                    "recent_finish_rate",
+                    "durability",
                 ]
             },
             "h2h_advantage": 0,
@@ -965,61 +1069,60 @@ class UFCPredictor:
         fight_features.update(
             {
                 "net_striking_advantage": (r_stats["pro_SLpM"] - r_stats["pro_SApM"])
-                -(b_stats["pro_SLpM"] - b_stats["pro_SApM"]),
+                - (b_stats["pro_SLpM"] - b_stats["pro_SApM"]),
                 "striking_efficiency": (
                     r_stats["pro_SLpM"] * r_stats["pro_sig_str_acc"]
                 )
-                -(b_stats["pro_SLpM"] * b_stats["pro_sig_str_acc"]),
+                - (b_stats["pro_SLpM"] * b_stats["pro_sig_str_acc"]),
                 "defensive_striking": (r_stats["pro_str_def"] - r_stats["pro_SApM"])
-                -(b_stats["pro_str_def"] - b_stats["pro_SApM"]),
+                - (b_stats["pro_str_def"] - b_stats["pro_SApM"]),
                 "grappling_control": (r_stats["pro_td_avg"] * r_stats["pro_td_acc"])
-                -(b_stats["pro_td_avg"] * b_stats["pro_td_acc"]),
+                - (b_stats["pro_td_avg"] * b_stats["pro_td_acc"]),
                 "grappling_defense": (
                     r_stats["pro_td_def"] - r_stats["pro_sub_avg"] / 5
                 )
-                -(b_stats["pro_td_def"] - b_stats["pro_sub_avg"] / 5),
+                - (b_stats["pro_td_def"] - b_stats["pro_sub_avg"] / 5),
                 "offensive_output": (
-                    r_stats["pro_SLpM"] + r_stats["pro_td_avg"] + 
-                    r_stats["pro_sub_avg"]
+                    r_stats["pro_SLpM"] + r_stats["pro_td_avg"] + r_stats["pro_sub_avg"]
                 )
-                -(
-                    b_stats["pro_SLpM"] + b_stats["pro_td_avg"] + 
-                    b_stats["pro_sub_avg"]
+                - (
+                    b_stats["pro_SLpM"] + b_stats["pro_td_avg"] + b_stats["pro_sub_avg"]
                 ),
                 "defensive_composite": (
                     (r_stats["pro_str_def"] + r_stats["pro_td_def"]) / 2
                 )
-                -((b_stats["pro_str_def"] + b_stats["pro_td_def"]) / 2),
+                - ((b_stats["pro_str_def"] + b_stats["pro_td_def"]) / 2),
                 "ko_specialist_gap": (r_stats["ko_rate"] * r_stats["pro_SLpM"])
-                -(b_stats["ko_rate"] * b_stats["pro_SLpM"]),
+                - (b_stats["ko_rate"] * b_stats["pro_SLpM"]),
                 "submission_specialist_gap": (
                     r_stats["sub_rate"] * r_stats["pro_sub_avg"]
                 )
-                -(b_stats["sub_rate"] * b_stats["pro_sub_avg"]),
-                "experience_gap": (
-                    r_stats["wins"] + r_stats["losses"]
-                ) - (b_stats["wins"] + b_stats["losses"]),
+                - (b_stats["sub_rate"] * b_stats["pro_sub_avg"]),
+                "experience_gap": (r_stats["wins"] + r_stats["losses"])
+                - (b_stats["wins"] + b_stats["losses"]),
                 "skill_momentum": (
-                    (r_stats["pro_SLpM"] - b_stats["pro_SLpM"]) * 
-                    (r_stats["recent_form"] - b_stats["recent_form"])
+                    (r_stats["pro_SLpM"] - b_stats["pro_SLpM"])
+                    * (r_stats["recent_form"] - b_stats["recent_form"])
                 ),
-                "finish_threat": (
-                    r_stats["ko_rate"] + r_stats["sub_rate"]
-                ) - (b_stats["ko_rate"] + b_stats["sub_rate"]),
+                "finish_threat": (r_stats["ko_rate"] + r_stats["sub_rate"])
+                - (b_stats["ko_rate"] + b_stats["sub_rate"]),
                 "momentum_advantage": (
-                    (r_stats["win_streak"] - b_stats["win_streak"]) - 
-                    (r_stats["loss_streak"] - b_stats["loss_streak"])
+                    (r_stats["win_streak"] - b_stats["win_streak"])
+                    - (r_stats["loss_streak"] - b_stats["loss_streak"])
                 ),
                 "inactivity_penalty": (
-                    -1 if r_stats["days_since_last_fight"] - b_stats["days_since_last_fight"] > 365
-                    else 1 if b_stats["days_since_last_fight"] - r_stats["days_since_last_fight"] > 365
+                    -1
+                    if r_stats["days_since_last_fight"]
+                    - b_stats["days_since_last_fight"]
+                    > 365
+                    else 1
+                    if b_stats["days_since_last_fight"]
+                    - r_stats["days_since_last_fight"]
+                    > 365
                     else 0
                 ),
-                "pace_differential": (
-                    r_stats["pro_SLpM"] + r_stats["pro_td_avg"]
-                ) - (
-                    b_stats["pro_SLpM"] + b_stats["pro_td_avg"]
-                ),
+                "pace_differential": (r_stats["pro_SLpM"] + r_stats["pro_td_avg"])
+                - (b_stats["pro_SLpM"] + b_stats["pro_td_avg"]),
             }
         )
 
@@ -1052,39 +1155,39 @@ class UFCPredictor:
 
         winner_prefix = "r" if winner_name == "Red" else "b"
         loser_prefix = "b" if winner_name == "Red" else "r"
-        
+
         # Get fighter stats
         ko_tendency = fight_data[f"{winner_prefix}_ko_rate_corrected"].values[0]
         sub_tendency = fight_data[f"{winner_prefix}_sub_rate_corrected"].values[0]
         dec_tendency = fight_data[f"{winner_prefix}_dec_rate_corrected"].values[0]
-        
+
         # Get opponent defensive stats
         opp_str_def = fight_data[f"{loser_prefix}_pro_str_def_corrected"].values[0]
         opp_td_def = fight_data[f"{loser_prefix}_pro_td_def_corrected"].values[0]
         opp_durability = fight_data[f"{loser_prefix}_durability_corrected"].values[0]
-        
+
         # Get context
         total_rounds = fight_data["total_rounds"].values[0]
-        
+
         # Calculate finish likelihood (addresses over-prediction of decisions)
         combined_finish_rate = ko_tendency + sub_tendency
         finish_threat = combined_finish_rate * (2 - opp_durability)
         finish_threat = min(finish_threat, 0.85)  # Cap at 85%
-        
+
         # Adjust for opponent defense with stronger penalties
         ko_adjusted = ko_tendency * (1 - opp_str_def * 0.7)  # Increased from 0.6
         sub_adjusted = sub_tendency * (1 - opp_td_def * 0.6)  # Increased from 0.5
-        
+
         # Add striking/grappling advantage boosts (addresses low KO/Sub detection)
         winner_slpm = fight_data[f"{winner_prefix}_pro_SLpM_corrected"].values[0]
         winner_sub_avg = fight_data[f"{winner_prefix}_pro_sub_avg_corrected"].values[0]
-        
+
         striking_advantage = max(0, (winner_slpm - opp_str_def * 10) / 10) * 0.15
         grappling_advantage = max(0, (winner_sub_avg - opp_td_def * 3) / 3) * 0.15
-        
+
         ko_adjusted = min(ko_adjusted + striking_advantage, 0.9)
         sub_adjusted = min(sub_adjusted + grappling_advantage, 0.9)
-        
+
         # Context-based weighting (from context_weighted approach)
         if total_rounds == 5:
             model_weight = 0.5  # More time = rely more on tendencies
@@ -1092,13 +1195,13 @@ class UFCPredictor:
         else:
             model_weight = 0.55  # Less time = slightly more model trust
             tendency_weight = 0.45
-        
+
         # Build final probabilities
         final_method_probs = {}
         for i, label in enumerate(method_labels):
             if label.startswith(winner_name):
                 method_type = label.split("_")[1]
-                
+
                 if method_type == "KO/TKO":
                     tendency = ko_adjusted
                 elif method_type == "Submission":
@@ -1106,7 +1209,7 @@ class UFCPredictor:
                 else:
                     # Reduce decision tendency when finish threat is high
                     tendency = dec_tendency * (1 - finish_threat * 0.3)
-                
+
                 # Blend model and tendency
                 final_method_probs[label] = (
                     method_proba[i] * model_weight + tendency * tendency_weight
@@ -1137,7 +1240,9 @@ class UFCPredictor:
         for fight in upcoming_fights:
             result = self.prepare_upcoming_fight(fight, feature_columns)
             if not result[0]:
-                skipped_fights.append(f"{fight['red_fighter']} vs {fight['blue_fighter']}")
+                skipped_fights.append(
+                    f"{fight['red_fighter']} vs {fight['blue_fighter']}"
+                )
                 continue
 
             fight_features, r_stats, b_stats = result
@@ -1149,10 +1254,12 @@ class UFCPredictor:
 
             pred = self.predict_fight(fight_df, feature_columns)
 
-            winner_prefix = pred['winner']
-            ko_prob = pred['method_probabilities'].get(f"{winner_prefix}_KO/TKO", 0)
-            sub_prob = pred['method_probabilities'].get(f"{winner_prefix}_Submission", 0)
-            dec_prob = pred['method_probabilities'].get(f"{winner_prefix}_Decision", 0)
+            winner_prefix = pred["winner"]
+            ko_prob = pred["method_probabilities"].get(f"{winner_prefix}_KO/TKO", 0)
+            sub_prob = pred["method_probabilities"].get(
+                f"{winner_prefix}_Submission", 0
+            )
+            dec_prob = pred["method_probabilities"].get(f"{winner_prefix}_Decision", 0)
 
             predictions.append(
                 {
@@ -1173,7 +1280,9 @@ class UFCPredictor:
 
         return predictions, skipped_fights
 
-    def export_predictions_to_excel(self, predictions, filename="ufc_predictions_.xlsx"):
+    def export_predictions_to_excel(
+        self, predictions, filename="ufc_predictions_.xlsx"
+    ):
         """Export predictions to formatted Excel file"""
         import openpyxl
         from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
@@ -1232,7 +1341,7 @@ class UFCPredictor:
                         cell_length = len(str(cell.value))
                         if idx == 0:
                             header_length = cell_length
-                    
+
                     if cell_length > max_length:
                         max_length = cell_length
                 except:
@@ -1242,7 +1351,7 @@ class UFCPredictor:
                 adjusted_width = max(max_length + 2, int(header_length) + 2)
             else:
                 adjusted_width = max_length + 2
-            
+
             ws.column_dimensions[column_letter].width = adjusted_width
 
         wb.save(filename)
@@ -1251,42 +1360,52 @@ class UFCPredictor:
         return filename
 
 
-
 class UFCPredictorGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("UFC Fight Predictor")
         self.root.geometry("1000x800")
         self.root.minsize(700, 550)
-        
+
         # Variables
         self.data_file_path = tk.StringVar(value="fight_data.csv")
         self.output_file_path = tk.StringVar(value="UFC_predictions.xlsx")
-        
+
         # Predictor will be initialized when running
         self.predictor = None
-        
+
         # Create UI
         self.create_widgets()
-        
+
     def create_widgets(self):
         # Title with UFC red color
-        title_frame = tk.Frame(self.root, bg='#D20A0A')
+        title_frame = tk.Frame(self.root, bg="#D20A0A")
         title_frame.pack(fill=tk.X)
-        tk.Label(title_frame, text="UFC FIGHT PREDICTOR", 
-                font=('Arial', 16, 'bold'), fg='white', bg='#D20A0A').pack(pady=(10, 8))
-        
+        tk.Label(
+            title_frame,
+            text="UFC FIGHT PREDICTOR",
+            font=("Arial", 16, "bold"),
+            fg="white",
+            bg="#D20A0A",
+        ).pack(pady=(10, 8))
+
         # Data file selection
         file_frame = ttk.LabelFrame(self.root, text="Data File", padding="5")
         file_frame.pack(fill=tk.X, padx=10, pady=3)
-        
-        ttk.Entry(file_frame, textvariable=self.data_file_path, width=70).pack(side=tk.LEFT, padx=3)
-        ttk.Button(file_frame, text="Browse", command=self.browse_data_file).pack(side=tk.LEFT)
-        
+
+        ttk.Entry(file_frame, textvariable=self.data_file_path, width=70).pack(
+            side=tk.LEFT, padx=3
+        )
+        ttk.Button(file_frame, text="Browse", command=self.browse_data_file).pack(
+            side=tk.LEFT
+        )
+
         # Fight input section
-        input_frame = ttk.LabelFrame(self.root, text="Enter Fights to Predict", padding="5")
+        input_frame = ttk.LabelFrame(
+            self.root, text="Enter Fights to Predict", padding="5"
+        )
         input_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=3)
-        
+
         instructions = """Enter fights in CSV format (one per line):
 Format: red_fighter,blue_fighter,weight_class,gender,total_rounds
 
@@ -1294,168 +1413,207 @@ Example:
 Max Holloway,Dustin Poirier,Lightweight,Men,5
 Ilia Topuria,Charles Oliveira,Lightweight,Men,5
 Tatiana Suarez,Amanda Lemos,Strawweight,Women,3"""
-        ttk.Label(input_frame, text=instructions, font=('Arial', 8), foreground="gray", justify=tk.LEFT).pack(anchor=tk.W, pady=(0, 3))
-        
-        self.fights_text = scrolledtext.ScrolledText(input_frame, height=8, width=95, wrap=tk.WORD)
+        ttk.Label(
+            input_frame,
+            text=instructions,
+            font=("Arial", 8),
+            foreground="gray",
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(0, 3))
+
+        self.fights_text = scrolledtext.ScrolledText(
+            input_frame, height=8, width=95, wrap=tk.WORD
+        )
         self.fights_text.pack(fill=tk.BOTH, expand=True, pady=3)
-        
-        
+
         # Output file
         output_frame = ttk.LabelFrame(self.root, text="Output File", padding="5")
         output_frame.pack(fill=tk.X, padx=10, pady=3)
-        
-        ttk.Entry(output_frame, textvariable=self.output_file_path, width=70).pack(side=tk.LEFT, padx=3)
-        ttk.Button(output_frame, text="Browse", command=self.browse_output_file).pack(side=tk.LEFT)
-        
+
+        ttk.Entry(output_frame, textvariable=self.output_file_path, width=70).pack(
+            side=tk.LEFT, padx=3
+        )
+        ttk.Button(output_frame, text="Browse", command=self.browse_output_file).pack(
+            side=tk.LEFT
+        )
+
         # Buttons
         button_frame = ttk.Frame(self.root, padding="5")
         button_frame.pack(fill=tk.X, padx=10)
-        
-        ttk.Button(button_frame, text="Load Sample", command=self.load_sample).pack(side=tk.LEFT, padx=3)
-        ttk.Button(button_frame, text="Clear", command=self.clear_input).pack(side=tk.LEFT, padx=3)
-        ttk.Button(button_frame, text="Generate Predictions", command=self.run_predictions).pack(side=tk.RIGHT, padx=3)
-        
+
+        ttk.Button(button_frame, text="Load Sample", command=self.load_sample).pack(
+            side=tk.LEFT, padx=3
+        )
+        ttk.Button(button_frame, text="Clear", command=self.clear_input).pack(
+            side=tk.LEFT, padx=3
+        )
+        ttk.Button(
+            button_frame, text="Generate Predictions", command=self.run_predictions
+        ).pack(side=tk.RIGHT, padx=3)
+
         # Status bar
         self.status_var = tk.StringVar(value="Ready")
-        status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
+        status_bar = ttk.Label(
+            self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W
+        )
         status_bar.pack(fill=tk.X, side=tk.BOTTOM)
-        
+
     def browse_data_file(self):
         filename = filedialog.askopenfilename(
             title="Select Fight Data CSV",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
         )
         if filename:
             self.data_file_path.set(filename)
-            
+
     def browse_output_file(self):
         filename = filedialog.asksaveasfilename(
             title="Save Predictions As",
             defaultextension=".xlsx",
-            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
         )
         if filename:
             self.output_file_path.set(filename)
-            
+
     def load_sample(self):
-        sample = '''Max Holloway,Dustin Poirier,Lightweight,Men,5
+        sample = """Max Holloway,Dustin Poirier,Lightweight,Men,5
 Ilia Topuria,Charles Oliveira,Lightweight,Men,5
-Tatiana Suarez,Amanda Lemos,Strawweight,Women,3'''
-        self.fights_text.delete('1.0', tk.END)
-        self.fights_text.insert('1.0', sample)
-        
+Tatiana Suarez,Amanda Lemos,Strawweight,Women,3"""
+        self.fights_text.delete("1.0", tk.END)
+        self.fights_text.insert("1.0", sample)
+
     def clear_input(self):
-        self.fights_text.delete('1.0', tk.END)
-        
+        self.fights_text.delete("1.0", tk.END)
+
     def parse_fights_input(self, text):
         """Parse CSV input text to extract fight data"""
         text = text.strip()
         fights = []
-        
-        for line in text.split('\n'):
+
+        for line in text.split("\n"):
             line = line.strip()
             if not line:
                 continue
-                
+
             # Split by comma
-            parts = [p.strip() for p in line.split(',')]
-            
+            parts = [p.strip() for p in line.split(",")]
+
             if len(parts) != 5:
-                raise ValueError(f"Invalid CSV format. Expected 5 fields, got {len(parts)} in line: {line}")
-            
+                raise ValueError(
+                    f"Invalid CSV format. Expected 5 fields, got {len(parts)} in line: {line}"
+                )
+
             try:
-                fights.append({
-                    'red_fighter': parts[0],
-                    'blue_fighter': parts[1],
-                    'weight_class': parts[2],
-                    'gender': parts[3],
-                    'total_rounds': int(parts[4])
-                })
+                fights.append(
+                    {
+                        "red_fighter": parts[0],
+                        "blue_fighter": parts[1],
+                        "weight_class": parts[2],
+                        "gender": parts[3],
+                        "total_rounds": int(parts[4]),
+                    }
+                )
             except ValueError as e:
-                raise ValueError(f"Error parsing line: {line}\nTotal rounds must be a number. {str(e)}")
-        
+                raise ValueError(
+                    f"Error parsing line: {line}\nTotal rounds must be a number. {str(e)}"
+                )
+
         if not fights:
             raise ValueError("No valid fight data found. Please check the format.")
-            
+
         return fights
-        
 
     def run_predictions(self):
         try:
             self.status_var.set("Loading data and training models... Please wait...")
             self.root.update()
-            
+
             # Get input
-            fights_text = self.fights_text.get('1.0', tk.END)
+            fights_text = self.fights_text.get("1.0", tk.END)
             upcoming_fights = self.parse_fights_input(fights_text)
-            
+
             if not upcoming_fights:
                 raise ValueError("No fights entered")
-                
+
             data_file = self.data_file_path.get()
             if not os.path.exists(data_file):
                 raise FileNotFoundError(f"Data file not found: {data_file}")
-            
+
             # Load data
             df = pd.read_csv(data_file)
-            
+
             self.status_var.set(f"Loaded {len(df)} fights. Training models...")
             self.root.update()
-            
+
             # Initialize predictor and train (suppress console output for EXE)
             self.predictor = UFCPredictor(use_xgboost=True)
-            
+
             # Suppress print statements during training
             f = io.StringIO()
             with redirect_stdout(f):
                 df = self.predictor.fix_data_leakage(df)
                 self.predictor.df_train = df
                 feature_columns = self.predictor.train_models(df)
-            
+
             self.status_var.set("Generating predictions...")
             self.root.update()
-            
+
             # Make predictions - now returns skipped fights too
-            predictions, skipped_fights = self.predictor.predict_upcoming_fights(upcoming_fights, feature_columns)
-            
+            predictions, skipped_fights = self.predictor.predict_upcoming_fights(
+                upcoming_fights, feature_columns
+            )
+
             # Check if we have any predictions
             if not predictions:
                 self.status_var.set("No predictions generated - all fights skipped")
                 messagebox.showerror(
-                    "No Predictions", 
+                    "No Predictions",
                     "No predictions could be generated. All fights were skipped due to insufficient fighter data.\n\n"
-                    "Please ensure the fighters exist in your training data."
+                    "Please ensure the fighters exist in your training data.",
                 )
                 return
-            
-            
+
             # Export to Excel
             output_file = self.output_file_path.get()
-            
+
             # Suppress console output during export
             with redirect_stdout(io.StringIO()):
                 self.predictor.export_predictions_to_excel(predictions, output_file)
-            
+
             # Success message with skipped fights warning if applicable
-            success_msg = f"Predictions generated successfully!\n\nSaved to: {output_file}\n\n"
+            success_msg = (
+                f"Predictions generated successfully!\n\nSaved to: {output_file}\n\n"
+            )
             success_msg += f"📊 {len(predictions)} fight(s) predicted"
-            
+
             if skipped_fights:
                 success_msg += f"\n⚠️ {len(skipped_fights)} fight(s) skipped due to insufficient data"
-                self.status_var.set(f"Success! {len(predictions)} predictions saved, {len(skipped_fights)} skipped")
-                
+                self.status_var.set(
+                    f"Success! {len(predictions)} predictions saved, {len(skipped_fights)} skipped"
+                )
+
                 # Show detailed skipped fights
-                skipped_msg = success_msg + "\n\n" + "Skipped Fights (insufficient fighter data):\n" + "\n".join(f"• {fight}" for fight in skipped_fights)
+                skipped_msg = (
+                    success_msg
+                    + "\n\n"
+                    + "Skipped Fights (insufficient fighter data):\n"
+                    + "\n".join(f"• {fight}" for fight in skipped_fights)
+                )
                 messagebox.showwarning("Predictions Complete", skipped_msg)
             else:
-                self.status_var.set(f"Success! All {len(predictions)} predictions saved to {output_file}")
+                self.status_var.set(
+                    f"Success! All {len(predictions)} predictions saved to {output_file}"
+                )
                 messagebox.showinfo("Success", success_msg)
-            
+
         except Exception as e:
             import traceback
+
             error_details = traceback.format_exc()
             self.status_var.set("Error occurred")
-            messagebox.showerror("Error", f"An error occurred:\n\n{str(e)}\n\nDetails:\n{error_details}")
+            messagebox.showerror(
+                "Error", f"An error occurred:\n\n{str(e)}\n\nDetails:\n{error_details}"
+            )
 
 
 def main():
