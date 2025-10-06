@@ -11,6 +11,10 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_MAX_THREADS"] = "1"
 os.environ["XGBOOST_DISABLE_MULTIPROCESSING"] = "1"
 
+# Enable multiprocessing for our custom parallel operations
+os.environ["JOBLIB_MULTIPROCESSING"] = "1"
+os.environ["LOKY_MAX_WORKERS"] = "8"
+
 # Note: multiprocessing.freeze_support() will be called later in the main execution block
 
 # Get the directory where this script is located
@@ -62,8 +66,31 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from scipy.stats import linregress
 import warnings
+import multiprocessing as mp
+from joblib import Parallel, delayed
+import shutil
+import atexit
 
 warnings.filterwarnings("ignore")
+
+def cleanup_temp_files():
+    """Clean up temporary files and folders created during training"""
+    try:
+        # Remove catboost_info folder if it exists
+        if os.path.exists("catboost_info"):
+            shutil.rmtree("catboost_info")
+            print("Cleaned up catboost_info folder")
+        
+        # Remove best_dl_model.h5 file if it exists
+        if os.path.exists("best_dl_model.h5"):
+            os.remove("best_dl_model.h5")
+            print("Cleaned up best_dl_model.h5 file")
+            
+    except Exception as e:
+        print(f"Warning: Could not clean up temporary files: {e}")
+
+# Register cleanup function to run on exit
+atexit.register(cleanup_temp_files)
 
 try:
     from xgboost import XGBClassifier
@@ -119,6 +146,14 @@ class AdvancedUFCPredictor:
         self.fighter_style_cache = {}
         self.fighter_encoder = None  # For fighter embeddings
         self.num_fighters = 0
+        
+        # Performance optimization attributes
+        self.feature_cache = {}
+        self.preprocessor_cache = None
+        self.feature_columns_cache = None
+        self.early_stopping_patience = 50
+        self.best_score = 0
+        self.patience_counter = 0
 
         # Set all random seeds for maximum reproducibility
         self.set_random_seeds()
@@ -877,6 +912,12 @@ class AdvancedUFCPredictor:
 
     def prepare_features(self, df):
         """Prepare enhanced features with all advanced metrics"""
+        # Check feature cache first
+        cache_key = f"{len(df)}_{hash(str(df.columns.tolist()))}"
+        if cache_key in self.feature_cache:
+            print("Using cached features...")
+            return self.feature_cache[cache_key]
+        
         # Ensure consistent random state for feature preparation
         self.set_random_seeds()
 
@@ -1698,6 +1739,9 @@ class AdvancedUFCPredictor:
         df = df.replace([np.inf, -np.inf], [1e6, -1e6])
 
         print(f"Total features: {len(feature_columns)}")
+        
+        # Cache the results
+        self.feature_cache[cache_key] = (df, feature_columns)
         return df, feature_columns
 
     def train_models(self, df):
@@ -1760,22 +1804,22 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         XGBClassifier(
-                            n_estimators=600,
+                            n_estimators=500,
                             max_depth=8,
-                            learning_rate=0.02,  # Enhanced parameters
-                            subsample=0.8,
-                            colsample_bytree=0.8,
-                            colsample_bylevel=0.85,  # Enhanced parameters
-                            n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
+                            learning_rate=0.025,
+                            subsample=0.85,
+                            colsample_bytree=0.85,
+                            colsample_bylevel=0.85,
+                            n_jobs=-1,
                             reg_alpha=0.2,
                             reg_lambda=1,
-                            min_child_weight=4,  # Enhanced parameters
+                            min_child_weight=4,
                             gamma=0.15,
                             scale_pos_weight=scale_pos,
                             random_state=42,
                             eval_metric="logloss",
-                            tree_method="hist",  # Use histogram method for consistency
-                            seed=42,  # Additional XGBoost seed
+                            tree_method="hist",
+                            seed=42,
                         ),
                     ),
                 ]
@@ -1794,15 +1838,15 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         LGBMClassifier(
-                            n_estimators=600,
+                            n_estimators=500,
                             max_depth=8,
-                            learning_rate=0.02,  # Enhanced parameters
-                            num_leaves=60,
-                            subsample=0.8,
-                            colsample_bytree=0.8,  # Enhanced parameters
+                            learning_rate=0.025,
+                            num_leaves=50,
+                            subsample=0.85,
+                            colsample_bytree=0.85,
                             reg_alpha=0.2,
                             reg_lambda=1,
-                            min_child_weight=4,  # Enhanced parameters
+                            min_child_weight=4,
                             random_state=42,
                             verbose=-1,
                         ),
@@ -1823,12 +1867,12 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         CatBoostClassifier(
-                            iterations=800,
-                            depth=10,
-                            learning_rate=0.02,  # Enhanced parameters
+                            iterations=500,
+                            depth=8,
+                            learning_rate=0.025,
                             l2_leaf_reg=1,
                             random_state=42,
-                            verbose=0,  # Enhanced parameters
+                            verbose=0,
                         ),
                     ),
                 ]
@@ -1847,12 +1891,12 @@ class AdvancedUFCPredictor:
                 (
                     "classifier",
                     RandomForestClassifier(
-                        n_estimators=600,
-                        max_depth=20,
-                        min_samples_split=8,  # Enhanced parameters
+                        n_estimators=500,
+                        max_depth=15,
+                        min_samples_split=6,
                         min_samples_leaf=2,
                         random_state=42,
-                        n_jobs=-1,  # Enhanced parameters
+                        n_jobs=-1,
                     ),
                 ),
             ]
@@ -1872,13 +1916,13 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         MLPClassifier(
-                            hidden_layer_sizes=(256, 128, 64),
+                            hidden_layer_sizes=(256, 128),
                             activation="relu",
                             solver="adam",
                             alpha=0.001,
                             batch_size=32,
                             learning_rate="adaptive",
-                            max_iter=500,
+                            max_iter=300,
                             early_stopping=True,
                             random_state=42,
                         ),
@@ -1965,12 +2009,12 @@ class AdvancedUFCPredictor:
             self.winner_model = StackingClassifier(
                 estimators=base_models,
                 final_estimator=voting_meta,
-                cv=7,  # Increased CV folds for better generalization
-                n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
-                stack_method="predict_proba",  # Use probabilities for stacking
+                cv=5,  # Reduced for speed while maintaining quality
+                n_jobs=-1,
+                stack_method="predict_proba",
             )
             self.winner_model = CalibratedClassifierCV(
-                self.winner_model, method="isotonic", cv=5
+                self.winner_model, method="isotonic", cv=3
             )
         else:
             # Fallback to single best model
@@ -2006,18 +2050,18 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         XGBClassifier(
-                            n_estimators=600,
+                            n_estimators=500,
                             max_depth=8,
-                            learning_rate=0.02,  # Enhanced parameters
-                            subsample=0.8,
-                            colsample_bytree=0.8,  # Enhanced parameters
-                            n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
+                            learning_rate=0.025,
+                            subsample=0.85,
+                            colsample_bytree=0.85,
+                            n_jobs=-1,
                             reg_alpha=0.2,
-                            reg_lambda=1,  # Enhanced parameters
+                            reg_lambda=1,
                             random_state=42,
                             objective="multi:softprob",
-                            tree_method="hist",  # Use histogram method for consistency
-                            seed=42,  # Additional XGBoost seed
+                            tree_method="hist",
+                            seed=42,
                         ),
                     ),
                 ]
@@ -2036,14 +2080,14 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         LGBMClassifier(
-                            n_estimators=600,
+                            n_estimators=500,
                             max_depth=8,
-                            learning_rate=0.02,  # Enhanced parameters
-                            num_leaves=60,
-                            subsample=0.8,
-                            colsample_bytree=0.8,  # Enhanced parameters
+                            learning_rate=0.025,
+                            num_leaves=50,
+                            subsample=0.85,
+                            colsample_bytree=0.85,
                             reg_alpha=0.2,
-                            reg_lambda=1,  # Enhanced parameters
+                            reg_lambda=1,
                             random_state=42,
                             verbose=-1,
                         ),
@@ -2063,12 +2107,12 @@ class AdvancedUFCPredictor:
                 (
                     "classifier",
                     RandomForestClassifier(
-                        n_estimators=600,
-                        max_depth=20,  # Enhanced parameters
-                        min_samples_split=8,
-                        min_samples_leaf=2,  # Enhanced parameters
+                        n_estimators=500,
+                        max_depth=15,
+                        min_samples_split=6,
+                        min_samples_leaf=2,
                         random_state=42,
-                        n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
+                        n_jobs=-1,
                     ),
                 ),
             ]
@@ -2086,13 +2130,13 @@ class AdvancedUFCPredictor:
                 (
                     "classifier",
                     MLPClassifier(
-                        hidden_layer_sizes=(128, 64, 32),
+                        hidden_layer_sizes=(128, 64),
                         activation="relu",
                         solver="adam",
                         alpha=0.001,
                         batch_size=32,
                         learning_rate="adaptive",
-                        max_iter=400,
+                        max_iter=300,
                         early_stopping=True,
                         random_state=42,
                     ),
@@ -2106,7 +2150,7 @@ class AdvancedUFCPredictor:
 
         # Calibrate the method model
         self.method_model = CalibratedClassifierCV(
-            self.method_model, method="isotonic", cv=5
+            self.method_model, method="isotonic", cv=3
         )
 
         self.method_model.fit(X_train, y_method_train)
@@ -2205,8 +2249,8 @@ class AdvancedUFCPredictor:
                 X_dl_train,
                 {"winner": y_winner_train.values, "method": y_method_train_dl},
                 validation_split=0.2,
-                epochs=100,  # Increased epochs
-                batch_size=64,  # Increased batch size
+                epochs=80,  # Reduced for speed
+                batch_size=64,
                 verbose=0,
                 callbacks=callbacks,
             )
@@ -2221,13 +2265,11 @@ class AdvancedUFCPredictor:
             print(f"  Winner Accuracy: {dl_results[3]:.4f}")
             print(f"  Method Accuracy: {dl_results[4]:.4f}")
 
-        # Time-based cross-validation
-        tscv = TimeSeriesSplit(
-            n_splits=5
-        )  # Increased from 5 to 7 for better validation
-        winner_cv_scores = []
-
-        for train_idx, val_idx in tscv.split(X):
+        # Time-based cross-validation with parallel processing
+        tscv = TimeSeriesSplit(n_splits=5)
+        
+        def train_fold(fold_data):
+            train_idx, val_idx, X, y_winner, preprocessor = fold_data
             X_fold_train, X_fold_val = X.iloc[train_idx], X.iloc[val_idx]
             y_fold_train, y_fold_val = y_winner.iloc[train_idx], y_winner.iloc[val_idx]
 
@@ -2235,35 +2277,57 @@ class AdvancedUFCPredictor:
                 fold_model = Pipeline(
                     [
                         ("preprocessor", preprocessor),
-                        (
-                            "feature_selector",
-                            SelectPercentile(f_classif, percentile=75),
-                        ),  # Increased from 75 to 85
+                        ("feature_selector", SelectPercentile(f_classif, percentile=75)),
                         (
                             "classifier",
                             XGBClassifier(
-                                n_estimators=600,
+                                n_estimators=500,
                                 max_depth=8,
-                                learning_rate=0.02,  # Enhanced parameters
-                                subsample=0.8,
-                                colsample_bytree=0.8,  # Enhanced parameters
-                                n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
+                                learning_rate=0.025,
+                                subsample=0.85,
+                                colsample_bytree=0.85,
+                                n_jobs=1,  # Single job for parallel processing
                                 reg_alpha=0.2,
-                                reg_lambda=1,  # Enhanced parameters
+                                reg_lambda=1,
                                 random_state=42,
                                 eval_metric="logloss",
-                                tree_method="hist",  # Use histogram method for consistency
-                                seed=42,  # Additional XGBoost seed
+                                tree_method="hist",
+                                seed=42,
                             ),
                         ),
                     ]
                 )
             else:
-                fold_model = rf_model
+                fold_model = Pipeline(
+                    [
+                        ("preprocessor", preprocessor),
+                        ("feature_selector", SelectPercentile(f_classif, percentile=75)),
+                        (
+                            "classifier",
+                            RandomForestClassifier(
+                                n_estimators=500,
+                                max_depth=15,
+                                min_samples_split=6,
+                                min_samples_leaf=2,
+                                random_state=42,
+                                n_jobs=1,  # Single job for parallel processing
+                            ),
+                        ),
+                    ]
+                )
 
             fold_model.fit(X_fold_train, y_fold_train)
-            score = fold_model.score(X_fold_val, y_fold_val)
-            winner_cv_scores.append(score)
+            return fold_model.score(X_fold_val, y_fold_val)
+
+        # Prepare fold data for parallel processing
+        fold_data = [(train_idx, val_idx, X, y_winner, preprocessor) 
+                     for train_idx, val_idx in tscv.split(X)]
+        
+        # Use parallel processing for cross-validation
+        n_jobs = min(12, mp.cpu_count())  # Use up to 12 cores
+        winner_cv_scores = Parallel(n_jobs=n_jobs, backend="loky")(
+            delayed(train_fold)(fold) for fold in fold_data
+        )
 
         print(f"\n{'=' * 80}")
         print(
@@ -3424,7 +3488,7 @@ class UFCPredictorGUI:
         self.root.minsize(700, 550)
 
         self.data_file_path = tk.StringVar(value=fight_data_path)
-        self.output_file_path = tk.StringVar(value="UFC_predictions.xlsx")
+        self.output_file_path = tk.StringVar(value="UFC_predictions_2.xlsx")
         self.use_deep_learning = tk.BooleanVar(value=True)
         self.predictor = None
         self.create_widgets()
@@ -3625,6 +3689,9 @@ Tatiana Suarez,Amanda Lemos,Strawweight,Women,3"""
             with redirect_stdout(io.StringIO()):
                 self.predictor.export_predictions_to_excel(predictions, output_file)
 
+            # Clean up temporary files immediately after training
+            cleanup_temp_files()
+
             success_msg = f"Predictions generated!\n\nSaved to: {output_file}\n\n{len(predictions)} fight(s) predicted"
             if use_dl:
                 success_msg += "\n✓ Deep Learning enabled"
@@ -3673,6 +3740,8 @@ def main():
 
         traceback.print_exc()
     finally:
+        # Clean up temporary files when GUI is closed
+        cleanup_temp_files()
         # Reset the flag when done
         if hasattr(main, "_running"):
             delattr(main, "_running")
@@ -3690,3 +3759,8 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Error in UFC Predictor execution: {e}")
         # Don't exit, just print the error for debugging
+
+
+# ~ 5 Minutes
+# ✅ Winners correct: 136 / 218 → 62.4%
+# ✅ Winner + method correct: 72 / 218 → 33.0%

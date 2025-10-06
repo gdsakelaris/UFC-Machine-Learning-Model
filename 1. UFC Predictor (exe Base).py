@@ -11,6 +11,10 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_MAX_THREADS"] = "1"
 os.environ["XGBOOST_DISABLE_MULTIPROCESSING"] = "1"
 
+# Enable multiprocessing for our custom parallel operations
+os.environ["JOBLIB_MULTIPROCESSING"] = "1"
+os.environ["LOKY_MAX_WORKERS"] = "12"
+
 # Note: multiprocessing.freeze_support() will be called later in the main execution block
 
 # Get the directory where this script is located
@@ -34,6 +38,8 @@ from tkinter import ttk, scrolledtext, filedialog, messagebox
 import json
 import pandas as pd
 import numpy as np
+import multiprocessing as mp
+from joblib import Parallel, delayed
 
 # Set random seeds for reproducibility
 random.seed(42)
@@ -62,8 +68,29 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from scipy.stats import linregress
 import warnings
+import shutil
+import atexit
 
 warnings.filterwarnings("ignore")
+
+def cleanup_temp_files():
+    """Clean up temporary files and folders created during training"""
+    try:
+        # Remove catboost_info folder if it exists
+        if os.path.exists("catboost_info"):
+            shutil.rmtree("catboost_info")
+            print("Cleaned up catboost_info folder")
+        
+        # Remove best_dl_model.h5 file if it exists
+        if os.path.exists("best_dl_model.h5"):
+            os.remove("best_dl_model.h5")
+            print("Cleaned up best_dl_model.h5 file")
+            
+    except Exception as e:
+        print(f"Warning: Could not clean up temporary files: {e}")
+
+# Register cleanup function to run on exit
+atexit.register(cleanup_temp_files)
 
 try:
     from xgboost import XGBClassifier
@@ -119,6 +146,11 @@ class AdvancedUFCPredictor:
         self.fighter_style_cache = {}
         self.fighter_encoder = None  # For fighter embeddings
         self.num_fighters = 0
+        
+        # Performance optimization attributes
+        self.feature_cache = {}
+        self.preprocessor_cache = None
+        self.feature_columns_cache = None
 
         # Set all random seeds for maximum reproducibility
         self.set_random_seeds()
@@ -877,6 +909,12 @@ class AdvancedUFCPredictor:
 
     def prepare_features(self, df):
         """Prepare enhanced features with all advanced metrics"""
+        # Check feature cache first
+        cache_key = f"{len(df)}_{hash(str(df.columns.tolist()))}"
+        if cache_key in self.feature_cache:
+            print("Using cached features...")
+            return self.feature_cache[cache_key]
+        
         # Ensure consistent random state for feature preparation
         self.set_random_seeds()
 
@@ -1494,6 +1532,9 @@ class AdvancedUFCPredictor:
         df = df.replace([np.inf, -np.inf], [1e6, -1e6])
 
         print(f"Total features: {len(feature_columns)}")
+        
+        # Cache the results
+        self.feature_cache[cache_key] = (df, feature_columns)
         return df, feature_columns
 
     def train_models(self, df):
@@ -1990,11 +2031,11 @@ class AdvancedUFCPredictor:
             print(f"  Winner Accuracy: {dl_results[3]:.4f}")
             print(f"  Method Accuracy: {dl_results[4]:.4f}")
 
-        # Time-based cross-validation
+        # Time-based cross-validation with parallel processing
         tscv = TimeSeriesSplit(n_splits=5)
-        winner_cv_scores = []
-
-        for train_idx, val_idx in tscv.split(X):
+        
+        def train_fold(fold_data):
+            train_idx, val_idx, X, y_winner, preprocessor = fold_data
             X_fold_train, X_fold_val = X.iloc[train_idx], X.iloc[val_idx]
             y_fold_train, y_fold_val = y_winner.iloc[train_idx], y_winner.iloc[val_idx]
 
@@ -2002,10 +2043,7 @@ class AdvancedUFCPredictor:
                 fold_model = Pipeline(
                     [
                         ("preprocessor", preprocessor),
-                        (
-                            "feature_selector",
-                            SelectPercentile(f_classif, percentile=75),
-                        ),
+                        ("feature_selector", SelectPercentile(f_classif, percentile=75)),
                         (
                             "classifier",
                             XGBClassifier(
@@ -2014,23 +2052,48 @@ class AdvancedUFCPredictor:
                                 learning_rate=0.025,
                                 subsample=0.85,
                                 colsample_bytree=0.8,
-                                n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
+                                n_jobs=1,  # Single job for parallel processing
                                 reg_alpha=0.2,
                                 reg_lambda=1.0,
                                 random_state=42,
                                 eval_metric="logloss",
-                                tree_method="hist",  # Use histogram method for consistency
-                                seed=42,  # Additional XGBoost seed
+                                tree_method="hist",
+                                seed=42,
                             ),
                         ),
                     ]
                 )
             else:
-                fold_model = rf_model
+                fold_model = Pipeline(
+                    [
+                        ("preprocessor", preprocessor),
+                        ("feature_selector", SelectPercentile(f_classif, percentile=75)),
+                        (
+                            "classifier",
+                            RandomForestClassifier(
+                                n_estimators=600,
+                                max_depth=20,
+                                min_samples_split=8,
+                                min_samples_leaf=2,
+                                random_state=42,
+                                n_jobs=1,  # Single job for parallel processing
+                            ),
+                        ),
+                    ]
+                )
 
             fold_model.fit(X_fold_train, y_fold_train)
-            score = fold_model.score(X_fold_val, y_fold_val)
-            winner_cv_scores.append(score)
+            return fold_model.score(X_fold_val, y_fold_val)
+
+        # Prepare fold data for parallel processing
+        fold_data = [(train_idx, val_idx, X, y_winner, preprocessor) 
+                     for train_idx, val_idx in tscv.split(X)]
+        
+        # Use parallel processing for cross-validation
+        n_jobs = min(12, mp.cpu_count())  # Use up to 12 cores
+        winner_cv_scores = Parallel(n_jobs=n_jobs, backend="loky")(
+            delayed(train_fold)(fold) for fold in fold_data
+        )
 
         print(f"\n{'=' * 80}")
         print(
@@ -3070,8 +3133,8 @@ class UFCPredictorGUI:
         self.root.minsize(700, 550)
 
         self.data_file_path = tk.StringVar(value=fight_data_path)
-        self.output_file_path = tk.StringVar(value="UFC_predictions.xlsx")
-        self.use_deep_learning = tk.BooleanVar(value=False)
+        self.output_file_path = tk.StringVar(value="UFC_predictions_1.xlsx")
+        self.use_deep_learning = tk.BooleanVar(value=True)
         self.predictor = None
         self.create_widgets()
 
@@ -3271,6 +3334,9 @@ Tatiana Suarez,Amanda Lemos,Strawweight,Women,3"""
             with redirect_stdout(io.StringIO()):
                 self.predictor.export_predictions_to_excel(predictions, output_file)
 
+            # Clean up temporary files immediately after training
+            cleanup_temp_files()
+
             success_msg = f"Predictions generated!\n\nSaved to: {output_file}\n\n{len(predictions)} fight(s) predicted"
             if use_dl:
                 success_msg += "\n✓ Deep Learning enabled"
@@ -3319,6 +3385,8 @@ def main():
 
         traceback.print_exc()
     finally:
+        # Clean up temporary files when GUI is closed
+        cleanup_temp_files()
         # Reset the flag when done
         if hasattr(main, "_running"):
             delattr(main, "_running")
@@ -3338,5 +3406,6 @@ if __name__ == "__main__":
         # Don't exit, just print the error for debugging
 
 
+# ~ 8 Minutes
 # ✅ Winners correct: 174 / 218 → 79.8%
 # ✅ Winner + method correct: 100 / 218 → 45.9%

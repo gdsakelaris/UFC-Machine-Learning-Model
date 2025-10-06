@@ -11,6 +11,10 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_MAX_THREADS"] = "1"
 os.environ["XGBOOST_DISABLE_MULTIPROCESSING"] = "1"
 
+# Enable multiprocessing for our custom parallel operations
+os.environ["JOBLIB_MULTIPROCESSING"] = "1"
+os.environ["LOKY_MAX_WORKERS"] = "12"
+
 # Note: multiprocessing.freeze_support() will be called later in the main execution block
 
 # Get the directory where this script is located
@@ -62,12 +66,33 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from scipy.stats import linregress
 import warnings
+import shutil
+import atexit
 
 # Parallel processing imports
 from joblib import Parallel, delayed
 import multiprocessing as mp
 
 warnings.filterwarnings("ignore")
+
+def cleanup_temp_files():
+    """Clean up temporary files and folders created during training"""
+    try:
+        # Remove catboost_info folder if it exists
+        if os.path.exists("catboost_info"):
+            shutil.rmtree("catboost_info")
+            print("Cleaned up catboost_info folder")
+        
+        # Remove best_dl_model.h5 file if it exists
+        if os.path.exists("best_dl_model.h5"):
+            os.remove("best_dl_model.h5")
+            print("Cleaned up best_dl_model.h5 file")
+            
+    except Exception as e:
+        print(f"Warning: Could not clean up temporary files: {e}")
+
+# Register cleanup function to run on exit
+atexit.register(cleanup_temp_files)
 
 try:
     from xgboost import XGBClassifier
@@ -123,6 +148,11 @@ class AdvancedUFCPredictor:
         self.fighter_style_cache = {}
         self.fighter_encoder = None  # For fighter embeddings
         self.num_fighters = 0
+        
+        # Performance optimization attributes
+        self.feature_cache = {}
+        self.preprocessor_cache = None
+        self.feature_columns_cache = None
 
         # Set all random seeds for maximum reproducibility
         self.set_random_seeds()
@@ -966,6 +996,12 @@ class AdvancedUFCPredictor:
 
     def prepare_features(self, df):
         """Prepare enhanced features with all advanced metrics"""
+        # Check feature cache first
+        cache_key = f"{len(df)}_{hash(str(df.columns.tolist()))}"
+        if cache_key in self.feature_cache:
+            print("Using cached features...")
+            return self.feature_cache[cache_key]
+        
         # Ensure consistent random state for feature preparation
         self.set_random_seeds()
 
@@ -1804,6 +1840,9 @@ class AdvancedUFCPredictor:
         print(
             f"Total features: {len(available_features)} (filtered from {len(feature_columns)} requested)"
         )
+        
+        # Cache the results
+        self.feature_cache[cache_key] = (df, available_features)
         return df, available_features
 
     def train_models(self, df):
@@ -2466,7 +2505,7 @@ class AdvancedUFCPredictor:
 
         # Run folds in parallel (3-4x faster)
         winner_cv_scores = []
-        results = Parallel(n_jobs=min(4, mp.cpu_count()), backend="threading")(
+        results = Parallel(n_jobs=min(12, mp.cpu_count()), backend="loky")(
             delayed(train_fold)(data) for data in fold_data
         )
 
@@ -3606,8 +3645,8 @@ class UFCPredictorGUI:
         self.root.minsize(700, 550)
 
         self.data_file_path = tk.StringVar(value=fight_data_path)
-        self.output_file_path = tk.StringVar(value="UFC_predictions.xlsx")
-        self.use_deep_learning = tk.BooleanVar(value=False)
+        self.output_file_path = tk.StringVar(value="UFC_predictions_3.xlsx")
+        self.use_deep_learning = tk.BooleanVar(value=True)
         self.predictor = None
         self.create_widgets()
 
@@ -3807,6 +3846,9 @@ Tatiana Suarez,Amanda Lemos,Strawweight,Women,3"""
             with redirect_stdout(io.StringIO()):
                 self.predictor.export_predictions_to_excel(predictions, output_file)
 
+            # Clean up temporary files immediately after training
+            cleanup_temp_files()
+
             success_msg = f"Predictions generated!\n\nSaved to: {output_file}\n\n{len(predictions)} fight(s) predicted"
             if use_dl:
                 success_msg += "\n✓ Deep Learning enabled"
@@ -3855,6 +3897,8 @@ def main():
 
         traceback.print_exc()
     finally:
+        # Clean up temporary files when GUI is closed
+        cleanup_temp_files()
         # Reset the flag when done
         if hasattr(main, "_running"):
             delattr(main, "_running")
@@ -3874,5 +3918,6 @@ if __name__ == "__main__":
         # Don't exit, just print the error for debugging
 
 
+# ~ 30 Minutes
 # ✅ Winners correct: 172 / 218 → 78.9%
 # ✅ Winner + method correct: 101 / 218 → 46.3%

@@ -3,13 +3,17 @@ import os
 import random
 
 # Enable multiprocessing for faster training
-# os.environ["OMP_NUM_THREADS"] = "1"
-# os.environ["OPENBLAS_NUM_THREADS"] = "1"
-# os.environ["MKL_NUM_THREADS"] = "1"
-# os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-# os.environ["NUMEXPR_NUM_THREADS"] = "1"
-# os.environ["NUMEXPR_MAX_THREADS"] = "1"
-# os.environ["XGBOOST_DISABLE_MULTIPROCESSING"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_MAX_THREADS"] = "1"
+os.environ["XGBOOST_DISABLE_MULTIPROCESSING"] = "1"
+
+# Enable multiprocessing for our custom parallel operations
+os.environ["JOBLIB_MULTIPROCESSING"] = "1"
+os.environ["LOKY_MAX_WORKERS"] = "12"
 
 # Note: multiprocessing.freeze_support() will be called later in the main execution block
 
@@ -62,6 +66,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from scipy.stats import linregress
 import warnings
+import shutil
+import atexit
 
 # Parallel processing imports
 from joblib import Parallel, delayed
@@ -69,6 +75,25 @@ import multiprocessing as mp
 
 
 warnings.filterwarnings("ignore")
+
+def cleanup_temp_files():
+    """Clean up temporary files and folders created during training"""
+    try:
+        # Remove catboost_info folder if it exists
+        if os.path.exists("catboost_info"):
+            shutil.rmtree("catboost_info")
+            print("Cleaned up catboost_info folder")
+        
+        # Remove best_dl_model.h5 file if it exists
+        if os.path.exists("best_dl_model.h5"):
+            os.remove("best_dl_model.h5")
+            print("Cleaned up best_dl_model.h5 file")
+            
+    except Exception as e:
+        print(f"Warning: Could not clean up temporary files: {e}")
+
+# Register cleanup function to run on exit
+atexit.register(cleanup_temp_files)
 
 try:
     from xgboost import XGBClassifier
@@ -2762,7 +2787,7 @@ class AdvancedUFCPredictor:
 
         # Run folds in parallel with optimized backend (5-8x faster)
         winner_cv_scores = []
-        results = Parallel(n_jobs=min(8, mp.cpu_count()), backend="loky")(
+        results = Parallel(n_jobs=min(12, mp.cpu_count()), backend="loky")(
             delayed(train_fold)(data) for data in fold_data
         )
 
@@ -3902,7 +3927,7 @@ class UFCPredictorGUI:
         self.root.minsize(700, 550)
 
         self.data_file_path = tk.StringVar(value=fight_data_path)
-        self.output_file_path = tk.StringVar(value="UFC_predictions.xlsx")
+        self.output_file_path = tk.StringVar(value="UFC_predictions_4.xlsx")
         self.use_deep_learning = tk.BooleanVar(value=True)
         self.predictor = None
         self.create_widgets()
@@ -4103,6 +4128,9 @@ Tatiana Suarez,Amanda Lemos,Strawweight,Women,3"""
             with redirect_stdout(io.StringIO()):
                 self.predictor.export_predictions_to_excel(predictions, output_file)
 
+            # Clean up temporary files immediately after training
+            cleanup_temp_files()
+
             success_msg = f"Predictions generated!\n\nSaved to: {output_file}\n\n{len(predictions)} fight(s) predicted"
             if use_dl:
                 success_msg += "\n✓ Deep Learning enabled"
@@ -4151,6 +4179,8 @@ def main():
 
         traceback.print_exc()
     finally:
+        # Clean up temporary files when GUI is closed
+        cleanup_temp_files()
         # Reset the flag when done
         if hasattr(main, "_running"):
             delattr(main, "_running")
@@ -4170,5 +4200,6 @@ if __name__ == "__main__":
         # Don't exit, just print the error for debugging
 
 
-# ✅ Winners correct: 134 / 218 → 61.5%
-# ✅ Winner + method correct: 77 / 218 → 35.3%
+# ~ 7 Minutes
+# ✅ Winners correct: 130 / 218 → 59.6%
+# ✅ Winner + method correct: 79 / 218 → 36.2%
