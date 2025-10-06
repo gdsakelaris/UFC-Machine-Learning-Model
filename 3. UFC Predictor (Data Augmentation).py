@@ -2199,7 +2199,7 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=60),  # 75% -> 60% (1.25x faster)
+                        SelectPercentile(f_classif, percentile=75),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     ("classifier", xgb_classifier),
                 ]
@@ -2213,20 +2213,20 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=60),  # 75% -> 60% (1.25x faster)
+                        SelectPercentile(f_classif, percentile=75),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     (
                         "classifier",
                         LGBMClassifier(
-                            n_estimators=500,  # 300 -> 500 (balanced speed/accuracy)
-                            max_depth=8,       # 6 -> 8 (better accuracy)
-                            learning_rate=0.025,  # 0.03 -> 0.025 (better convergence)
+                            n_estimators=600,  # 500 -> 600 (better accuracy)
+                            max_depth=9,       # 8 -> 9 (better accuracy)
+                            learning_rate=0.02,  # 0.025 -> 0.02 (better convergence)
                             num_leaves=50,     # 30 -> 50 (better accuracy)
                             subsample=0.85,    # 0.8 -> 0.85 (better accuracy)
                             colsample_bytree=0.85,  # 0.8 -> 0.85 (better accuracy)
-                            reg_alpha=0.2,
-                            reg_lambda=1,
-                            min_child_weight=4,
+                            reg_alpha=0.15,
+                            reg_lambda=0.8,
+                            min_child_weight=3,
                             random_state=42,
                             verbose=-1,
                             # EARLY STOPPING: Removed - requires validation set in pipeline
@@ -2243,15 +2243,15 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=60),  # 75% -> 60% (1.25x faster)
+                        SelectPercentile(f_classif, percentile=75),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     (
                         "classifier",
                         CatBoostClassifier(
-                            iterations=500,  # 300 -> 500 (balanced speed/accuracy)
-                            depth=8,         # 6 -> 8 (better accuracy)
-                            learning_rate=0.025,  # 0.03 -> 0.025 (better convergence)
-                            l2_leaf_reg=1,
+                            iterations=600,  # 500 -> 600 (better accuracy)
+                            depth=9,         # 8 -> 9 (better accuracy)
+                            learning_rate=0.02,  # 0.025 -> 0.02 (better convergence)
+                            l2_leaf_reg=0.8,
                             random_state=42,
                             verbose=0,
                             # EARLY STOPPING: Removed - requires validation set in pipeline
@@ -2273,9 +2273,9 @@ class AdvancedUFCPredictor:
                 (
                     "classifier",
                     RandomForestClassifier(
-                        n_estimators=500,  # 300 -> 500 (balanced speed/accuracy)
-                        max_depth=15,      # 12 -> 15 (better accuracy)
-                        min_samples_split=6,  # 8 -> 6 (better accuracy)
+                        n_estimators=600,  # 500 -> 600 (better accuracy)
+                        max_depth=18,      # 15 -> 18 (better accuracy)
+                        min_samples_split=5,  # 6 -> 5 (better accuracy)
                         min_samples_leaf=2,
                         random_state=42,
                         n_jobs=-1,
@@ -2294,18 +2294,18 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=60),  # 75% -> 60% (1.25x faster)
+                        SelectPercentile(f_classif, percentile=75),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     (
                         "classifier",
                         MLPClassifier(
-                            hidden_layer_sizes=(256, 128),  # (128, 64) -> (256, 128) (better accuracy)
+                            hidden_layer_sizes=(256, 128, 64),  # (256, 128) -> (256, 128, 64) (better accuracy)
                             activation="relu",
                             solver="adam",
-                            alpha=0.001,
+                            alpha=0.0005,
                             batch_size=32,
                             learning_rate="adaptive",
-                            max_iter=300,  # 200 -> 300 (better accuracy)
+                            max_iter=400,  # 300 -> 400 (better accuracy)
                             early_stopping=True,
                             random_state=42,
                         ),
@@ -2435,19 +2435,19 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=60),  # 75% -> 60% (1.25x faster)
+                        SelectPercentile(f_classif, percentile=75),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     (
                         "classifier",
                         XGBClassifier(
-                            n_estimators=500,  # 300 -> 500 (balanced speed/accuracy)
-                            max_depth=8,     # 6 -> 8 (better accuracy)
-                            learning_rate=0.025,  # 0.03 -> 0.025 (better convergence)
+                            n_estimators=600,  # 500 -> 600 (better accuracy)
+                            max_depth=9,     # 8 -> 9 (better accuracy)
+                            learning_rate=0.02,  # 0.025 -> 0.02 (better convergence)
                             subsample=0.85,  # 0.8 -> 0.85 (better accuracy)
                             colsample_bytree=0.85,  # 0.8 -> 0.85 (better accuracy)
                             n_jobs=-1,
-                            reg_alpha=0.2,
-                            reg_lambda=1,
+                            reg_alpha=0.15,
+                            reg_lambda=0.8,
                             random_state=42,
                             objective="multi:softprob",
                             tree_method="hist",
@@ -2466,19 +2466,19 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=60),  # 75% -> 60% (1.25x faster)
+                        SelectPercentile(f_classif, percentile=75),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     (
                         "classifier",
                         LGBMClassifier(
-                            n_estimators=500,  # 300 -> 500 (balanced speed/accuracy)
-                            max_depth=8,     # 6 -> 8 (better accuracy)
-                            learning_rate=0.025,  # 0.03 -> 0.025 (better convergence)
-                            num_leaves=50,   # 30 -> 50 (better accuracy)
+                            n_estimators=600,  # 500 -> 600 (better accuracy)
+                            max_depth=9,     # 8 -> 9 (better accuracy)
+                            learning_rate=0.02,  # 0.025 -> 0.02 (better convergence)
+                            num_leaves=60,   # 50 -> 60 (better accuracy)
                             subsample=0.85,  # 0.8 -> 0.85 (better accuracy)
                             colsample_bytree=0.85,  # 0.8 -> 0.85 (better accuracy)
-                            reg_alpha=0.2,
-                            reg_lambda=1,
+                            reg_alpha=0.15,
+                            reg_lambda=0.8,
                             random_state=42,
                             verbose=-1,
                             # early_stopping_rounds=50,  # Removed - requires validation set
@@ -2499,9 +2499,9 @@ class AdvancedUFCPredictor:
                 (
                     "classifier",
                     RandomForestClassifier(
-                        n_estimators=500,  # 300 -> 500 (balanced speed/accuracy)
-                        max_depth=15,     # 12 -> 15 (better accuracy)
-                        min_samples_split=6,  # 8 -> 6 (better accuracy)
+                        n_estimators=600,  # 500 -> 600 (better accuracy)
+                        max_depth=18,     # 15 -> 18 (better accuracy)
+                        min_samples_split=5,  # 6 -> 5 (better accuracy)
                         min_samples_leaf=2,
                         random_state=42,
                         n_jobs=-1,
@@ -2523,13 +2523,13 @@ class AdvancedUFCPredictor:
                 (
                     "classifier",
                         MLPClassifier(
-                            hidden_layer_sizes=(128, 64),  # (64, 32) -> (128, 64) (better accuracy)
+                            hidden_layer_sizes=(128, 64, 32),  # (128, 64) -> (128, 64, 32) (better accuracy)
                             activation="relu",
                             solver="adam",
-                            alpha=0.001,
+                            alpha=0.0005,
                             batch_size=32,
                             learning_rate="adaptive",
-                            max_iter=300,  # 200 -> 300 (better accuracy)
+                            max_iter=400,  # 300 -> 400 (better accuracy)
                             early_stopping=True,
                             random_state=42,
                         ),
@@ -2742,7 +2742,7 @@ class AdvancedUFCPredictor:
                         ("preprocessor", preprocessor),
                         (
                             "feature_selector",
-                            SelectPercentile(f_classif, percentile=60),  # 75% -> 60% (1.25x faster)
+                            SelectPercentile(f_classif, percentile=75),  # 60% -> 75% (better accuracy)
                         ),  # Match Class Weighting
                         ("classifier", fold_classifier),
                     ]
@@ -2753,7 +2753,7 @@ class AdvancedUFCPredictor:
                         ("preprocessor", preprocessor),
                         (
                             "feature_selector",
-                            SelectPercentile(f_classif, percentile=60),  # 75% -> 60% (1.25x faster)
+                            SelectPercentile(f_classif, percentile=75),  # 60% -> 75% (better accuracy)
                         ),  # Match Class Weighting
                         (
                             "classifier",
@@ -3369,7 +3369,7 @@ class AdvancedUFCPredictor:
         else:
             return "Decision"
 
-    def calculate_comprehensive_method_adjustments(
+    def calculate_enhanced_method_adjustments(
         self, fight_data, winner_prefix, loser_prefix
     ):
         """Comprehensive method prediction using all available stats"""
@@ -3440,39 +3440,56 @@ class AdvancedUFCPredictor:
 
         total_rounds = safe_get_value(fight_data, "total_rounds")
 
-        # KO/TKO PROBABILITY
+        # ENHANCED KO/TKO PROBABILITY
         ko_base = w_ko_rate
 
+        # Advanced striking analysis
         striking_volume_factor = min(w_slpm / 6.0, 1.5)
-        accuracy_factor = 1 + (w_sig_acc - 0.45) * 2
-        accuracy_factor = max(0.5, min(accuracy_factor, 1.8))
+        accuracy_factor = 1 + (w_sig_acc - 0.45) * 2.5  # Increased sensitivity
+        accuracy_factor = max(0.4, min(accuracy_factor, 2.0))
 
-        head_hunting_factor = 1 + (w_head_pct - 0.5) * 0.6
-        head_hunting_factor = max(0.7, min(head_hunting_factor, 1.5))
+        # Enhanced head hunting analysis
+        head_hunting_factor = 1 + (w_head_pct - 0.5) * 0.8  # Increased sensitivity
+        head_hunting_factor = max(0.6, min(head_hunting_factor, 1.6))
 
-        distance_factor = 1 + (w_distance_pct - 0.6) * 0.5
-        distance_factor = max(0.8, min(distance_factor, 1.4))
+        # Distance fighting preference
+        distance_factor = 1 + (w_distance_pct - 0.6) * 0.6  # Increased sensitivity
+        distance_factor = max(0.7, min(distance_factor, 1.5))
 
-        # Knockdown threat factor
-        kd_threat_factor = 1 + min(w_kd_rate / 0.5, 1.2)
+        # Enhanced knockdown threat analysis
+        kd_threat_factor = 1 + min(w_kd_rate / 0.4, 1.5)  # Increased sensitivity
+        kd_threat_factor = max(0.8, kd_threat_factor)
 
+        # Advanced opponent vulnerability analysis
         opp_vulnerability = (
-            (1 - l_str_def) * 0.4 + (l_sapm / 6.0) * 0.3 + (1 - l_durability) * 0.3
+            (1 - l_str_def) * 0.45 + (l_sapm / 6.0) * 0.35 + (1 - l_durability) * 0.2
         )
-        opp_vulnerability = min(opp_vulnerability, 1.0)
+        opp_vulnerability = min(opp_vulnerability, 1.2)  # Allow higher vulnerability
 
+        # Enhanced power differential analysis
         power_differential = (w_slpm * w_sig_acc) - (l_sapm * (1 - l_str_def))
-        power_differential_factor = 1 + max(0, power_differential / 5.0)
-        power_differential_factor = min(power_differential_factor, 1.8)
+        power_differential_factor = 1 + max(0, power_differential / 4.0)  # Increased sensitivity
+        power_differential_factor = min(power_differential_factor, 2.0)
+
+        # Recent form impact on finishing ability
+        # Extract recent form data (with fallback if not available)
+        try:
+            w_recent_form = safe_get_value(fight_data, f"{w_prefix}_recent_form_corrected")
+        except (KeyError, IndexError):
+            w_recent_form = 0.5  # Default neutral value
+            
+        recent_form_factor = 1 + (w_recent_form - 0.5) * 0.4
+        recent_form_factor = max(0.7, min(recent_form_factor, 1.3))
 
         ko_prob = ko_base * (
-            striking_volume_factor * 0.20
-            + accuracy_factor * 0.18
-            + head_hunting_factor * 0.12
-            + distance_factor * 0.08
-            + opp_vulnerability * 0.18
-            + power_differential_factor * 0.08
-            + kd_threat_factor * 0.16
+            striking_volume_factor * 0.18
+            + accuracy_factor * 0.20
+            + head_hunting_factor * 0.15
+            + distance_factor * 0.10
+            + opp_vulnerability * 0.20
+            + power_differential_factor * 0.10
+            + kd_threat_factor * 0.12
+            + recent_form_factor * 0.15
         )
 
         if total_rounds == 5:
@@ -3724,7 +3741,7 @@ class AdvancedUFCPredictor:
         method_labels = self.label_encoders["winner_method_encoder"].classes_
 
         # Get comprehensive method adjustments
-        method_adjustments = self.calculate_comprehensive_method_adjustments(
+        method_adjustments = self.calculate_enhanced_method_adjustments(
             fight_data, winner_name, loser_prefix
         )
 
@@ -4200,6 +4217,11 @@ if __name__ == "__main__":
         # Don't exit, just print the error for debugging
 
 
+# BEST:
 # ~ 7 Minutes
 # ✅ Winners correct: 130 / 218 → 59.6%
 # ✅ Winner + method correct: 79 / 218 → 36.2%
+# CURRENT:
+# ~ 10 Minutes
+# ✅ Winners correct: 122 / 218 → 56.0%
+# ✅ Winner + method correct: 69 / 218 → 31.7%

@@ -1804,17 +1804,17 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         XGBClassifier(
-                            n_estimators=500,
-                            max_depth=8,
-                            learning_rate=0.025,
+                            n_estimators=600,
+                            max_depth=9,
+                            learning_rate=0.02,
                             subsample=0.85,
                             colsample_bytree=0.85,
                             colsample_bylevel=0.85,
                             n_jobs=-1,
-                            reg_alpha=0.2,
-                            reg_lambda=1,
-                            min_child_weight=4,
-                            gamma=0.15,
+                            reg_alpha=0.15,
+                            reg_lambda=0.8,
+                            min_child_weight=3,
+                            gamma=0.1,
                             scale_pos_weight=scale_pos,
                             random_state=42,
                             eval_metric="logloss",
@@ -1838,15 +1838,15 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         LGBMClassifier(
-                            n_estimators=500,
-                            max_depth=8,
-                            learning_rate=0.025,
-                            num_leaves=50,
+                            n_estimators=600,
+                            max_depth=9,
+                            learning_rate=0.02,
+                            num_leaves=60,
                             subsample=0.85,
                             colsample_bytree=0.85,
-                            reg_alpha=0.2,
-                            reg_lambda=1,
-                            min_child_weight=4,
+                            reg_alpha=0.15,
+                            reg_lambda=0.8,
+                            min_child_weight=3,
                             random_state=42,
                             verbose=-1,
                         ),
@@ -1867,10 +1867,10 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         CatBoostClassifier(
-                            iterations=500,
-                            depth=8,
-                            learning_rate=0.025,
-                            l2_leaf_reg=1,
+                            iterations=600,
+                            depth=9,
+                            learning_rate=0.02,
+                            l2_leaf_reg=0.8,
                             random_state=42,
                             verbose=0,
                         ),
@@ -1891,9 +1891,9 @@ class AdvancedUFCPredictor:
                 (
                     "classifier",
                     RandomForestClassifier(
-                        n_estimators=500,
-                        max_depth=15,
-                        min_samples_split=6,
+                        n_estimators=600,
+                        max_depth=18,
+                        min_samples_split=5,
                         min_samples_leaf=2,
                         random_state=42,
                         n_jobs=-1,
@@ -1916,13 +1916,13 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         MLPClassifier(
-                            hidden_layer_sizes=(256, 128),
+                            hidden_layer_sizes=(256, 128, 64),
                             activation="relu",
                             solver="adam",
-                            alpha=0.001,
+                            alpha=0.0005,
                             batch_size=32,
                             learning_rate="adaptive",
-                            max_iter=300,
+                            max_iter=400,
                             early_stopping=True,
                             random_state=42,
                         ),
@@ -2050,14 +2050,14 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         XGBClassifier(
-                            n_estimators=500,
-                            max_depth=8,
-                            learning_rate=0.025,
+                            n_estimators=600,
+                            max_depth=9,
+                            learning_rate=0.02,
                             subsample=0.85,
                             colsample_bytree=0.85,
                             n_jobs=-1,
-                            reg_alpha=0.2,
-                            reg_lambda=1,
+                            reg_alpha=0.15,
+                            reg_lambda=0.8,
                             random_state=42,
                             objective="multi:softprob",
                             tree_method="hist",
@@ -2080,14 +2080,14 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         LGBMClassifier(
-                            n_estimators=500,
-                            max_depth=8,
-                            learning_rate=0.025,
-                            num_leaves=50,
+                            n_estimators=600,
+                            max_depth=9,
+                            learning_rate=0.02,
+                            num_leaves=60,
                             subsample=0.85,
                             colsample_bytree=0.85,
-                            reg_alpha=0.2,
-                            reg_lambda=1,
+                            reg_alpha=0.15,
+                            reg_lambda=0.8,
                             random_state=42,
                             verbose=-1,
                         ),
@@ -2107,9 +2107,9 @@ class AdvancedUFCPredictor:
                 (
                     "classifier",
                     RandomForestClassifier(
-                        n_estimators=500,
-                        max_depth=15,
-                        min_samples_split=6,
+                        n_estimators=600,
+                        max_depth=18,
+                        min_samples_split=5,
                         min_samples_leaf=2,
                         random_state=42,
                         n_jobs=-1,
@@ -2130,13 +2130,13 @@ class AdvancedUFCPredictor:
                 (
                     "classifier",
                     MLPClassifier(
-                        hidden_layer_sizes=(128, 64),
+                        hidden_layer_sizes=(128, 64, 32),
                         activation="relu",
                         solver="adam",
-                        alpha=0.001,
+                        alpha=0.0005,
                         batch_size=32,
                         learning_rate="adaptive",
-                        max_iter=300,
+                        max_iter=400,
                         early_stopping=True,
                         random_state=42,
                     ),
@@ -2877,7 +2877,7 @@ class AdvancedUFCPredictor:
         else:
             return "Decision"
 
-    def calculate_comprehensive_method_adjustments(
+    def calculate_enhanced_method_adjustments(
         self, fight_data, winner_prefix, loser_prefix
     ):
         """Comprehensive method prediction using all available stats"""
@@ -2886,65 +2886,86 @@ class AdvancedUFCPredictor:
         w_prefix = "r" if winner_prefix == "Red" else "b"
         l_prefix = "r" if loser_prefix == "Red" else "b"
 
-        # Extract all relevant stats
-        w_slpm = fight_data[f"{w_prefix}_pro_SLpM_corrected"].values[0]
-        w_sig_acc = fight_data[f"{w_prefix}_pro_sig_str_acc_corrected"].values[0]
-        w_td_avg = fight_data[f"{w_prefix}_pro_td_avg_corrected"].values[0]
-        w_td_acc = fight_data[f"{w_prefix}_pro_td_acc_corrected"].values[0]
-        w_sub_avg = fight_data[f"{w_prefix}_pro_sub_avg_corrected"].values[0]
-        w_ko_rate = fight_data[f"{w_prefix}_ko_rate_corrected"].values[0]
-        w_sub_rate = fight_data[f"{w_prefix}_sub_rate_corrected"].values[0]
-        w_dec_rate = fight_data[f"{w_prefix}_dec_rate_corrected"].values[0]
-        w_kd_rate = fight_data[f"{w_prefix}_pro_kd_pM_corrected"].values[0]
+        # Safe data extraction function
+        def safe_get_value(data, key, default=0.0):
+            try:
+                return data[key].values[0] if hasattr(data[key], 'values') else data[key]
+            except (KeyError, IndexError, AttributeError):
+                return default
 
-        l_str_def = fight_data[f"{l_prefix}_pro_str_def_corrected"].values[0]
-        l_sapm = fight_data[f"{l_prefix}_pro_SApM_corrected"].values[0]
-        l_td_def = fight_data[f"{l_prefix}_pro_td_def_corrected"].values[0]
-        l_durability = fight_data[f"{l_prefix}_durability_corrected"].values[0]
+        # Extract all relevant stats using safe function
+        w_slpm = safe_get_value(fight_data, f"{w_prefix}_pro_SLpM_corrected")
+        w_sig_acc = safe_get_value(fight_data, f"{w_prefix}_pro_sig_str_acc_corrected")
+        w_td_avg = safe_get_value(fight_data, f"{w_prefix}_pro_td_avg_corrected")
+        w_td_acc = safe_get_value(fight_data, f"{w_prefix}_pro_td_acc_corrected")
+        w_sub_avg = safe_get_value(fight_data, f"{w_prefix}_pro_sub_avg_corrected")
+        w_ko_rate = safe_get_value(fight_data, f"{w_prefix}_ko_rate_corrected")
+        w_sub_rate = safe_get_value(fight_data, f"{w_prefix}_sub_rate_corrected")
+        w_dec_rate = safe_get_value(fight_data, f"{w_prefix}_dec_rate_corrected")
+        w_kd_rate = safe_get_value(fight_data, f"{w_prefix}_pro_kd_pM_corrected")
 
-        w_head_pct = fight_data[f"{w_prefix}_head_pct_corrected"].values[0]
-        w_distance_pct = fight_data[f"{w_prefix}_distance_pct_corrected"].values[0]
-        w_clinch_pct = fight_data[f"{w_prefix}_clinch_pct_corrected"].values[0]
-        w_ground_pct = fight_data[f"{w_prefix}_ground_pct_corrected"].values[0]
+        l_str_def = safe_get_value(fight_data, f"{l_prefix}_pro_str_def_corrected")
+        l_sapm = safe_get_value(fight_data, f"{l_prefix}_pro_SApM_corrected")
+        l_td_def = safe_get_value(fight_data, f"{l_prefix}_pro_td_def_corrected")
+        l_durability = safe_get_value(fight_data, f"{l_prefix}_durability_corrected")
 
-        l_distance_pct = fight_data[f"{l_prefix}_distance_pct_corrected"].values[0]
-        l_ground_pct = fight_data[f"{l_prefix}_ground_pct_corrected"].values[0]
+        w_head_pct = safe_get_value(fight_data, f"{w_prefix}_head_pct_corrected")
+        w_distance_pct = safe_get_value(fight_data, f"{w_prefix}_distance_pct_corrected")
+        w_clinch_pct = safe_get_value(fight_data, f"{w_prefix}_clinch_pct_corrected")
+        w_ground_pct = safe_get_value(fight_data, f"{w_prefix}_ground_pct_corrected")
 
-        total_rounds = fight_data["total_rounds"].values[0]
+        l_distance_pct = safe_get_value(fight_data, f"{l_prefix}_distance_pct_corrected")
+        l_ground_pct = safe_get_value(fight_data, f"{l_prefix}_ground_pct_corrected")
 
-        # KO/TKO PROBABILITY
+        # Extract recent form data (with fallback if not available)
+        w_recent_form = safe_get_value(fight_data, f"{w_prefix}_recent_form_corrected", 0.5)
+
+        total_rounds = safe_get_value(fight_data, "total_rounds", 3)
+
+        # ENHANCED KO/TKO PROBABILITY
         ko_base = w_ko_rate
 
+        # Advanced striking analysis
         striking_volume_factor = min(w_slpm / 6.0, 1.5)
-        accuracy_factor = 1 + (w_sig_acc - 0.45) * 2
-        accuracy_factor = max(0.5, min(accuracy_factor, 1.8))
+        accuracy_factor = 1 + (w_sig_acc - 0.45) * 2.5  # Increased sensitivity
+        accuracy_factor = max(0.4, min(accuracy_factor, 2.0))
 
-        head_hunting_factor = 1 + (w_head_pct - 0.5) * 0.6
-        head_hunting_factor = max(0.7, min(head_hunting_factor, 1.5))
+        # Enhanced head hunting analysis
+        head_hunting_factor = 1 + (w_head_pct - 0.5) * 0.8  # Increased sensitivity
+        head_hunting_factor = max(0.6, min(head_hunting_factor, 1.6))
 
-        distance_factor = 1 + (w_distance_pct - 0.6) * 0.5
-        distance_factor = max(0.8, min(distance_factor, 1.4))
+        # Distance fighting preference
+        distance_factor = 1 + (w_distance_pct - 0.6) * 0.6  # Increased sensitivity
+        distance_factor = max(0.7, min(distance_factor, 1.5))
 
-        # Knockdown threat factor
-        kd_threat_factor = 1 + min(w_kd_rate / 0.5, 1.2)
+        # Enhanced knockdown threat analysis
+        kd_threat_factor = 1 + min(w_kd_rate / 0.4, 1.5)  # Increased sensitivity
+        kd_threat_factor = max(0.8, kd_threat_factor)
 
+        # Advanced opponent vulnerability analysis
         opp_vulnerability = (
-            (1 - l_str_def) * 0.4 + (l_sapm / 6.0) * 0.3 + (1 - l_durability) * 0.3
+            (1 - l_str_def) * 0.45 + (l_sapm / 6.0) * 0.35 + (1 - l_durability) * 0.2
         )
-        opp_vulnerability = min(opp_vulnerability, 1.0)
+        opp_vulnerability = min(opp_vulnerability, 1.2)  # Allow higher vulnerability
 
+        # Enhanced power differential analysis
         power_differential = (w_slpm * w_sig_acc) - (l_sapm * (1 - l_str_def))
-        power_differential_factor = 1 + max(0, power_differential / 5.0)
-        power_differential_factor = min(power_differential_factor, 1.8)
+        power_differential_factor = 1 + max(0, power_differential / 4.0)  # Increased sensitivity
+        power_differential_factor = min(power_differential_factor, 2.0)
+
+        # Recent form impact on finishing ability
+        recent_form_factor = 1 + (w_recent_form - 0.5) * 0.4
+        recent_form_factor = max(0.7, min(recent_form_factor, 1.3))
 
         ko_prob = ko_base * (
-            striking_volume_factor * 0.20
-            + accuracy_factor * 0.18
-            + head_hunting_factor * 0.12
-            + distance_factor * 0.08
-            + opp_vulnerability * 0.18
-            + power_differential_factor * 0.08
-            + kd_threat_factor * 0.16
+            striking_volume_factor * 0.18
+            + accuracy_factor * 0.20
+            + head_hunting_factor * 0.15
+            + distance_factor * 0.10
+            + opp_vulnerability * 0.20
+            + power_differential_factor * 0.10
+            + kd_threat_factor * 0.12
+            + recent_form_factor * 0.15
         )
 
         if total_rounds == 5:
@@ -3285,7 +3306,7 @@ class AdvancedUFCPredictor:
         method_labels = self.label_encoders["winner_method_encoder"].classes_
 
         # Get comprehensive method adjustments using the correct data
-        method_adjustments = self.calculate_comprehensive_method_adjustments(
+        method_adjustments = self.calculate_enhanced_method_adjustments(
             fight_data_for_method, winner_name, loser_prefix
         )
 
@@ -3761,6 +3782,6 @@ if __name__ == "__main__":
         # Don't exit, just print the error for debugging
 
 
-# ~ 5 Minutes
-# ✅ Winners correct: 136 / 218 → 62.4%
-# ✅ Winner + method correct: 72 / 218 → 33.0%
+# ~ 7 Minutes
+# ✅ Winners correct: 141 / 218 → 64.7%
+# ✅ Winner + method correct: 80 / 218 → 36.7%
