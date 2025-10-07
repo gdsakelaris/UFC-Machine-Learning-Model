@@ -1656,7 +1656,12 @@ class AdvancedUFCPredictor:
         df["r_total_fights"] = df["r_wins_corrected"] + df["r_losses_corrected"]
         df["b_total_fights"] = df["b_wins_corrected"] + df["b_losses_corrected"]
         df["experience_gap"] = df["r_total_fights"] - df["b_total_fights"]
-        df["experience_ratio"] = df["r_total_fights"] / (df["b_total_fights"] + 1)
+        # Symmetric ratio that handles zero fights properly
+        df["experience_ratio"] = np.where(
+            df["b_total_fights"] > 0,
+            df["r_total_fights"] / df["b_total_fights"],
+            np.where(df["r_total_fights"] > 0, 10.0, 1.0)  # Cap at 10x for extreme cases
+        )
 
         df["r_avg_fight_time"] = df["r_fight_time_minutes_corrected"] / (
             df["r_total_fights"] + 1
@@ -1790,8 +1795,9 @@ class AdvancedUFCPredictor:
         df["grappler_advantage"] = df["r_grappler_score"] - df["b_grappler_score"]
 
         # Reach advantage in striking context
-        df["effective_reach_advantage"] = np.where(
-            df["striker_advantage"] > 0.2, df["reach_diff"] * 1.5, df["reach_diff"]
+        # Reach matters more in striking-heavy matchups (for either fighter)
+        df["effective_reach_advantage"] = df["reach_diff"] * np.where(
+            abs(df["striker_advantage"]) > 0.2, 1.5, 1.0
         )
 
         # Stance matchup
@@ -3679,10 +3685,9 @@ class AdvancedUFCPredictor:
         fight_features["r_grappler_score"] = r_grappler_score
         fight_features["b_grappler_score"] = b_grappler_score
 
-        fight_features["effective_reach_advantage"] = (
-            fight_features["reach_diff"] * 1.5
-            if fight_features["striker_advantage"] > 0.2
-            else fight_features["reach_diff"]
+        # Reach matters more in striking-heavy matchups (for either fighter)
+        fight_features["effective_reach_advantage"] = fight_features["reach_diff"] * (
+            1.5 if abs(fight_features["striker_advantage"]) > 0.2 else 1.0
         )
 
         if (
@@ -4031,30 +4036,28 @@ class AdvancedUFCPredictor:
         # DECISION PROBABILITY
         dec_base = w_dec_rate
 
-        # Factors that favor decisions
-        decision_factors = []
+        # Factors that favor decisions (multiplicative effects)
+        decision_multiplier = 1.0
 
         # High output but low finishing rate
         if w_slpm > 4.0 and w_ko_rate < 0.15:
-            decision_factors.append(1.3)
+            decision_multiplier *= 1.2  # High volume, low power
 
         # High takedown rate but low submission rate
         if w_td_avg > 2.0 and w_sub_rate < 0.10:
-            decision_factors.append(1.2)
+            decision_multiplier *= 1.15  # Grappler without submissions
 
         # Opponent durability
         if l_durability > 0.7:
-            decision_factors.append(1.4)
+            decision_multiplier *= 1.25  # Durable opponent
 
         # Distance fighting preference
         if w_distance_pct > 0.7:
-            decision_factors.append(1.1)
+            decision_multiplier *= 1.1  # Distance fighter
 
         # Clinch fighting (often leads to decisions)
         if w_clinch_pct > 0.3:
-            decision_factors.append(1.15)
-
-        decision_multiplier = np.mean(decision_factors) if decision_factors else 1.0
+            decision_multiplier *= 1.1  # Clinch fighter
         
         # Enhanced decision probability with new factors
         dec_prob = dec_base * decision_multiplier * (
