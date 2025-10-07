@@ -1299,7 +1299,7 @@ class AdvancedUFCPredictor:
             "ko_susceptibility_advantage",
             "sub_opportunity_advantage",
             "championship_pressure_advantage",
-            "opponent_quality_advantage",
+            "fighter_quality_diff",
             "technical_striker_advantage",
             "clinch_effectiveness_advantage",
             "momentum_velocity",
@@ -1313,7 +1313,6 @@ class AdvancedUFCPredictor:
             "cardio_advantage",
             "finish_pressure",
             "composite_quality_gap",
-            "fighter_quality_diff",
             "recent_opponent_strength_diff",
             "upset_potential",
         ]
@@ -2051,18 +2050,14 @@ class AdvancedUFCPredictor:
             df["b_recent_form_corrected"] * 0.6
             + df["b_recent_finish_rate_corrected"] * 0.4
         )
-        # Note: This is redundant with recent_form_diff + finish_rate_diff
-        # Consider removing in future optimization
-        df["fighter_quality_diff"] = (
-            df["r_fighter_quality"] - df["b_fighter_quality"]
-        )
+        # Note: fighter_quality_diff removed - redundant with recent_form_diff + finish_rate_diff
 
         # Fight ending probability by round
+        # Average finish rate of both fighters (not multiplication)
         df["early_finish_probability"] = (
-            (df["r_ko_rate_corrected"] + df["r_sub_rate_corrected"])
-            * (df["b_ko_rate_corrected"] + df["b_sub_rate_corrected"])
-            * 0.5
-        )
+            (df["r_ko_rate_corrected"] + df["r_sub_rate_corrected"]) +
+            (df["b_ko_rate_corrected"] + df["b_sub_rate_corrected"])
+        ) / 2
 
         # Technical striking vs brawling analysis
         df["r_technical_striker"] = np.where(
@@ -2433,7 +2428,7 @@ class AdvancedUFCPredictor:
                 "cardio_advantage",
                 "weight_class_ko_factor",
                 "championship_pressure_advantage",
-                "opponent_quality_advantage",
+                "fighter_quality_diff",
                 "early_finish_probability",
                 "technical_striker_advantage",
                 "clinch_effectiveness_advantage",
