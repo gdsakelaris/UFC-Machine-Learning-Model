@@ -2586,6 +2586,224 @@ class AdvancedUFCPredictor:
             if feature not in feature_columns:
                 feature_columns.append(feature)
 
+        # ============================================================================
+        # ULTRA-SOPHISTICATED WINNER PREDICTION FEATURES (10 advanced features)
+        # ============================================================================
+        
+        # 1. Championship Clutch Factor Composite
+        if all(col in df.columns for col in ["r_championship_experience", "b_championship_experience", "r_clutch_factor", "b_clutch_factor", "r_recent_form_corrected", "b_recent_form_corrected", "r_days_since_last_fight_diff_corrected", "b_days_since_last_fight_diff_corrected", "r_win_streak_corrected", "b_win_streak_corrected", "r_loss_streak_corrected", "b_loss_streak_corrected"]):
+            df["championship_clutch_composite"] = (
+                (df["r_championship_experience"] * df["r_clutch_factor"] * df["r_recent_form_corrected"]) / 
+                (df["r_days_since_last_fight_diff_corrected"] + 30)
+            ) * (df["r_win_streak_corrected"] / (abs(df["r_loss_streak_corrected"]) + 1)) - (
+                (df["b_championship_experience"] * df["b_clutch_factor"] * df["b_recent_form_corrected"]) / 
+                (df["b_days_since_last_fight_diff_corrected"] + 30)
+            ) * (df["b_win_streak_corrected"] / (abs(df["b_loss_streak_corrected"]) + 1))
+        
+        # 2. Advanced Style Clash Resolution Matrix
+        if all(col in df.columns for col in ["striker_vs_grappler", "power_vs_technique", "stance_matchup_advantage", "style_clash_severity", "experience_gap", "r_total_fights", "b_total_fights"]):
+            df["style_clash_resolution_matrix"] = (
+                (df["striker_vs_grappler"] * df["power_vs_technique"] * df["stance_matchup_advantage"]) / 
+                (df["style_clash_severity"] + 0.1)
+            ) * (df["experience_gap"] / 10) * (df["r_total_fights"] / (df["b_total_fights"] + 1))
+        
+        # 3. Momentum Velocity with Pressure Response
+        if all(col in df.columns for col in ["r_win_streak_diff_corrected", "b_win_streak_diff_corrected", "r_recent_form_diff_corrected", "b_recent_form_diff_corrected", "r_finish_rate_diff", "b_finish_rate_diff", "r_loss_streak_diff_corrected", "b_loss_streak_diff_corrected", "r_championship_pressure", "b_championship_pressure", "r_days_since_last_fight_diff_corrected", "b_days_since_last_fight_diff_corrected"]):
+            df["momentum_pressure_velocity"] = (
+                (df["r_win_streak_diff_corrected"] * df["r_recent_form_diff_corrected"] * df["r_finish_rate_diff"]) / 
+                (abs(df["r_loss_streak_diff_corrected"]) + 1)
+            ) * (df["r_championship_pressure"] / (df["r_days_since_last_fight_diff_corrected"] + 30)) - (
+                (df["b_win_streak_diff_corrected"] * df["b_recent_form_diff_corrected"] * df["b_finish_rate_diff"]) / 
+                (abs(df["b_loss_streak_diff_corrected"]) + 1)
+            ) * (df["b_championship_pressure"] / (df["b_days_since_last_fight_diff_corrected"] + 30))
+        
+        # 4. Technical Mastery vs Physical Dominance Ratio
+        if all(col in df.columns for col in ["r_pro_sig_str_acc_corrected", "b_pro_sig_str_acc_corrected", "r_pro_str_def_corrected", "b_pro_str_def_corrected", "r_pro_SLpM_corrected", "b_pro_SLpM_corrected", "r_pro_SApM_corrected", "b_pro_SApM_corrected", "r_head_pct_corrected", "b_head_pct_corrected", "r_body_pct_corrected", "b_body_pct_corrected", "r_leg_pct_corrected", "b_leg_pct_corrected", "r_height", "b_height", "r_reach", "b_reach", "r_weight", "b_weight", "r_ape_index", "b_ape_index"]):
+            df["technical_vs_physical_dominance"] = (
+                (df["r_pro_sig_str_acc_corrected"] * df["r_pro_str_def_corrected"] * df["r_pro_SLpM_corrected"]) / 
+                (df["r_pro_SApM_corrected"] + 0.1)
+            ) * (df["r_head_pct_corrected"] / (df["r_body_pct_corrected"] + df["r_leg_pct_corrected"] + 0.1)) / (
+                ((df["r_height"] * df["r_reach"] * df["r_weight"]) / 1000) * (df["r_ape_index"] / 10)
+            ) - (
+                (df["b_pro_sig_str_acc_corrected"] * df["b_pro_str_def_corrected"] * df["b_pro_SLpM_corrected"]) / 
+                (df["b_pro_SApM_corrected"] + 0.1)
+            ) * (df["b_head_pct_corrected"] / (df["b_body_pct_corrected"] + df["b_leg_pct_corrected"] + 0.1)) / (
+                ((df["b_height"] * df["b_reach"] * df["b_weight"]) / 1000) * (df["b_ape_index"] / 10)
+            )
+        
+        # 5. Advanced Grappling Control Matrix
+        if all(col in df.columns for col in ["r_pro_td_avg_corrected", "b_pro_td_avg_corrected", "r_pro_td_acc_corrected", "b_pro_td_acc_corrected", "r_pro_sub_avg_corrected", "b_pro_sub_avg_corrected", "r_pro_td_def_corrected", "b_pro_td_def_corrected", "r_ground_pct_corrected", "b_ground_pct_corrected", "r_clinch_pct_corrected", "b_clinch_pct_corrected", "r_pro_ctrl_sec_corrected", "b_pro_ctrl_sec_corrected", "r_avg_fight_time", "b_avg_fight_time"]):
+            df["grappling_control_matrix"] = (
+                (df["r_pro_td_avg_corrected"] * df["r_pro_td_acc_corrected"] * df["r_pro_sub_avg_corrected"]) / 
+                (df["r_pro_td_def_corrected"] + 0.1)
+            ) * (df["r_ground_pct_corrected"] / (df["r_clinch_pct_corrected"] + 0.1)) * (
+                df["r_pro_ctrl_sec_corrected"] / (df["r_avg_fight_time"] + 1)
+            ) - (
+                (df["b_pro_td_avg_corrected"] * df["b_pro_td_acc_corrected"] * df["b_pro_sub_avg_corrected"]) / 
+                (df["b_pro_td_def_corrected"] + 0.1)
+            ) * (df["b_ground_pct_corrected"] / (df["b_clinch_pct_corrected"] + 0.1)) * (
+                df["b_pro_ctrl_sec_corrected"] / (df["b_avg_fight_time"] + 1)
+            )
+        
+        # 6. Upset Potential vs Experience Matrix
+        if all(col in df.columns for col in ["r_upset_history", "b_upset_history", "r_recent_opponent_quality_diff", "b_recent_opponent_quality_diff", "r_total_fights", "b_total_fights", "r_age_at_event", "b_age_at_event", "r_recent_form_corrected", "b_recent_form_corrected"]):
+            df["upset_experience_matrix"] = (
+                (df["r_upset_history"] * df["r_recent_opponent_quality_diff"]) / 
+                (df["b_total_fights"] + 1)
+            ) * (df["r_age_at_event"] / (df["b_age_at_event"] + 1)) * (
+                df["r_recent_form_corrected"] / (df["b_recent_form_corrected"] + 0.1)
+            ) - (
+                (df["b_upset_history"] * df["b_recent_opponent_quality_diff"]) / 
+                (df["r_total_fights"] + 1)
+            ) * (df["b_age_at_event"] / (df["r_age_at_event"] + 1)) * (
+                df["b_recent_form_corrected"] / (df["r_recent_form_corrected"] + 0.1)
+            )
+        
+        # 7. Advanced Fight IQ Composite
+        if all(col in df.columns for col in ["r_pro_str_def_corrected", "b_pro_str_def_corrected", "r_pro_td_def_corrected", "b_pro_td_def_corrected", "r_pro_sig_str_acc_corrected", "b_pro_sig_str_acc_corrected", "r_pro_SApM_corrected", "b_pro_SApM_corrected", "r_total_fights", "b_total_fights", "r_age_at_event", "b_age_at_event"]):
+            df["advanced_fight_iq_composite"] = (
+                (df["r_pro_str_def_corrected"] * df["r_pro_td_def_corrected"] * df["r_pro_sig_str_acc_corrected"]) / 
+                (df["r_pro_SApM_corrected"] + 0.1)
+            ) * (df["r_pro_str_def_corrected"] / (df["r_pro_SApM_corrected"] + 0.1)) * (
+                df["r_total_fights"] / (df["r_age_at_event"] + 1)
+            ) - (
+                (df["b_pro_str_def_corrected"] * df["b_pro_td_def_corrected"] * df["b_pro_sig_str_acc_corrected"]) / 
+                (df["b_pro_SApM_corrected"] + 0.1)
+            ) * (df["b_pro_str_def_corrected"] / (df["b_pro_SApM_corrected"] + 0.1)) * (
+                df["b_total_fights"] / (df["b_age_at_event"] + 1)
+            )
+        
+        # 8. Durability vs Power Advanced Ratio
+        if all(col in df.columns for col in ["r_durability_score", "b_durability_score", "r_pro_str_def_corrected", "b_pro_str_def_corrected", "r_ko_rate_corrected", "b_ko_rate_corrected", "r_pro_kd_pM_corrected", "b_pro_kd_pM_corrected", "r_avg_fight_time", "b_avg_fight_time"]):
+            df["durability_power_advanced_ratio"] = (
+                (df["r_durability_score"] * df["r_pro_str_def_corrected"]) / 
+                (df["b_ko_rate_corrected"] * df["b_pro_kd_pM_corrected"] + 0.1)
+            ) * (df["r_avg_fight_time"] / 5) - (
+                (df["b_durability_score"] * df["b_pro_str_def_corrected"]) / 
+                (df["r_ko_rate_corrected"] * df["r_pro_kd_pM_corrected"] + 0.1)
+            ) * (df["b_avg_fight_time"] / 5)
+        
+        # 9. Pace Control Mastery with Momentum
+        if all(col in df.columns for col in ["r_avg_fight_time", "b_avg_fight_time", "r_pro_SLpM_corrected", "b_pro_SLpM_corrected", "r_pro_SApM_corrected", "b_pro_SApM_corrected", "r_pro_str_def_corrected", "b_pro_str_def_corrected", "r_win_streak_corrected", "b_win_streak_corrected", "r_loss_streak_corrected", "b_loss_streak_corrected"]):
+            df["pace_control_momentum_mastery"] = (
+                (df["r_avg_fight_time"] / 5) * (df["r_pro_SLpM_corrected"] - df["r_pro_SApM_corrected"]) * 
+                (df["r_pro_str_def_corrected"] / (df["r_pro_SApM_corrected"] + 0.1))
+            ) * (df["r_win_streak_corrected"] / (abs(df["r_loss_streak_corrected"]) + 1)) - (
+                (df["b_avg_fight_time"] / 5) * (df["b_pro_SLpM_corrected"] - df["b_pro_SApM_corrected"]) * 
+                (df["b_pro_str_def_corrected"] / (df["b_pro_SApM_corrected"] + 0.1))
+            ) * (df["b_win_streak_corrected"] / (abs(df["b_loss_streak_corrected"]) + 1))
+        
+        # 10. Veteran Wisdom vs Youth Advanced
+        if all(col in df.columns for col in ["r_total_fights", "b_total_fights", "r_age_at_event", "b_age_at_event", "r_pro_str_def_corrected", "b_pro_str_def_corrected", "r_pro_SApM_corrected", "b_pro_SApM_corrected", "r_championship_experience", "b_championship_experience", "r_wins_corrected", "b_wins_corrected", "r_recent_form_corrected", "b_recent_form_corrected"]):
+            df["veteran_youth_advanced"] = (
+                (df["r_total_fights"] * df["r_age_at_event"] * df["r_pro_str_def_corrected"]) / 
+                (df["r_pro_SApM_corrected"] + 0.1)
+            ) * (df["r_championship_experience"] / (df["r_wins_corrected"] + 1)) * (
+                df["r_recent_form_corrected"] / (df["b_recent_form_corrected"] + 0.1)
+            ) - (
+                (df["b_total_fights"] * df["b_age_at_event"] * df["b_pro_str_def_corrected"]) / 
+                (df["b_pro_SApM_corrected"] + 0.1)
+            ) * (df["b_championship_experience"] / (df["b_wins_corrected"] + 1)) * (
+                df["b_recent_form_corrected"] / (df["r_recent_form_corrected"] + 0.1)
+            )
+        
+        # ============================================================================
+        # ULTRA-SOPHISTICATED METHOD PREDICTION FEATURES (5 advanced features)
+        # ============================================================================
+        
+        # 1. Advanced KO Power Composite
+        if all(col in df.columns for col in ["r_ko_rate_corrected", "b_ko_rate_corrected", "r_pro_kd_pM_corrected", "b_pro_kd_pM_corrected", "r_pro_SLpM_corrected", "b_pro_SLpM_corrected", "r_pro_SApM_corrected", "b_pro_SApM_corrected", "r_head_pct_corrected", "b_head_pct_corrected", "r_body_pct_corrected", "b_body_pct_corrected", "r_leg_pct_corrected", "b_leg_pct_corrected", "r_win_streak_corrected", "b_win_streak_corrected", "r_loss_streak_corrected", "b_loss_streak_corrected"]):
+            df["advanced_ko_power_composite"] = (
+                (df["r_ko_rate_corrected"] * df["r_pro_kd_pM_corrected"] * df["r_pro_SLpM_corrected"]) / 
+                (df["r_pro_SApM_corrected"] + 0.1)
+            ) * (df["r_head_pct_corrected"] / (df["r_body_pct_corrected"] + df["r_leg_pct_corrected"] + 0.1)) * (
+                df["r_win_streak_corrected"] / (abs(df["r_loss_streak_corrected"]) + 1)
+            ) - (
+                (df["b_ko_rate_corrected"] * df["b_pro_kd_pM_corrected"] * df["b_pro_SLpM_corrected"]) / 
+                (df["b_pro_SApM_corrected"] + 0.1)
+            ) * (df["b_head_pct_corrected"] / (df["b_body_pct_corrected"] + df["b_leg_pct_corrected"] + 0.1)) * (
+                df["b_win_streak_corrected"] / (abs(df["b_loss_streak_corrected"]) + 1)
+            )
+        
+        # 2. Submission Threat Advanced Matrix
+        if all(col in df.columns for col in ["r_sub_rate_corrected", "b_sub_rate_corrected", "r_pro_sub_avg_corrected", "b_pro_sub_avg_corrected", "r_pro_td_def_corrected", "b_pro_td_def_corrected", "r_ground_pct_corrected", "b_ground_pct_corrected", "r_clinch_pct_corrected", "b_clinch_pct_corrected", "r_pro_td_avg_corrected", "b_pro_td_avg_corrected", "r_pro_td_acc_corrected", "b_pro_td_acc_corrected"]):
+            df["submission_threat_advanced_matrix"] = (
+                (df["r_sub_rate_corrected"] * df["r_pro_sub_avg_corrected"]) / 
+                (df["r_pro_td_def_corrected"] + 0.1)
+            ) * (df["r_ground_pct_corrected"] / (df["r_clinch_pct_corrected"] + 0.1)) * (
+                df["r_pro_td_avg_corrected"] * df["r_pro_td_acc_corrected"]
+            ) - (
+                (df["b_sub_rate_corrected"] * df["b_pro_sub_avg_corrected"]) / 
+                (df["b_pro_td_def_corrected"] + 0.1)
+            ) * (df["b_ground_pct_corrected"] / (df["b_clinch_pct_corrected"] + 0.1)) * (
+                df["b_pro_td_avg_corrected"] * df["b_pro_td_acc_corrected"]
+            )
+        
+        # 3. Decision Tendency Advanced Composite
+        if all(col in df.columns for col in ["r_dec_rate_corrected", "b_dec_rate_corrected", "r_avg_fight_time", "b_avg_fight_time", "r_ko_rate_corrected", "b_ko_rate_corrected", "r_sub_rate_corrected", "b_sub_rate_corrected", "r_pro_str_def_corrected", "b_pro_str_def_corrected", "r_pro_SApM_corrected", "b_pro_SApM_corrected", "r_durability_score", "b_durability_score", "r_ko_losses_corrected", "b_ko_losses_corrected"]):
+            df["decision_tendency_advanced_composite"] = (
+                (df["r_dec_rate_corrected"] * df["r_avg_fight_time"]) / 
+                (df["r_ko_rate_corrected"] + df["r_sub_rate_corrected"] + 0.1)
+            ) * (df["r_pro_str_def_corrected"] / (df["r_pro_SApM_corrected"] + 0.1)) * (
+                df["r_durability_score"] / (df["r_ko_losses_corrected"] + 1)
+            ) - (
+                (df["b_dec_rate_corrected"] * df["b_avg_fight_time"]) / 
+                (df["b_ko_rate_corrected"] + df["b_sub_rate_corrected"] + 0.1)
+            ) * (df["b_pro_str_def_corrected"] / (df["b_pro_SApM_corrected"] + 0.1)) * (
+                df["b_durability_score"] / (df["b_ko_losses_corrected"] + 1)
+            )
+        
+        # 4. Early Finish Specialist Advantage
+        if all(col in df.columns for col in ["r_ko_rate_corrected", "b_ko_rate_corrected", "r_sub_rate_corrected", "b_sub_rate_corrected", "r_avg_fight_time", "b_avg_fight_time", "r_pro_kd_pM_corrected", "b_pro_kd_pM_corrected", "r_pro_sub_avg_corrected", "b_pro_sub_avg_corrected", "r_recent_form_corrected", "b_recent_form_corrected", "r_days_since_last_fight_diff_corrected", "b_days_since_last_fight_diff_corrected"]):
+            df["early_finish_specialist_advantage"] = (
+                (df["r_ko_rate_corrected"] + df["r_sub_rate_corrected"]) / 
+                (df["r_avg_fight_time"] + 1)
+            ) * (df["r_pro_kd_pM_corrected"] * df["r_pro_sub_avg_corrected"]) * (
+                df["r_recent_form_corrected"] / (df["r_days_since_last_fight_diff_corrected"] + 30)
+            ) - (
+                (df["b_ko_rate_corrected"] + df["b_sub_rate_corrected"]) / 
+                (df["b_avg_fight_time"] + 1)
+            ) * (df["b_pro_kd_pM_corrected"] * df["b_pro_sub_avg_corrected"]) * (
+                df["b_recent_form_corrected"] / (df["b_days_since_last_fight_diff_corrected"] + 30)
+            )
+        
+        # 5. Method Versatility vs Specialization
+        if all(col in df.columns for col in ["r_ko_rate_corrected", "b_ko_rate_corrected", "r_sub_rate_corrected", "b_sub_rate_corrected", "r_dec_rate_corrected", "b_dec_rate_corrected", "r_pro_kd_pM_corrected", "b_pro_kd_pM_corrected", "r_pro_sub_avg_corrected", "b_pro_sub_avg_corrected", "r_total_fights", "b_total_fights", "r_wins_corrected", "b_wins_corrected"]):
+            df["method_versatility_vs_specialization"] = (
+                (df["r_ko_rate_corrected"] * df["r_sub_rate_corrected"] * df["r_dec_rate_corrected"]) / 
+                (df["r_pro_kd_pM_corrected"] * df["r_pro_sub_avg_corrected"] + 0.1)
+            ) * (df["r_total_fights"] / (df["r_wins_corrected"] + 1)) - (
+                (df["b_ko_rate_corrected"] * df["b_sub_rate_corrected"] * df["b_dec_rate_corrected"]) / 
+                (df["b_pro_kd_pM_corrected"] * df["b_pro_sub_avg_corrected"] + 0.1)
+            ) * (df["b_total_fights"] / (df["b_wins_corrected"] + 1))
+        
+        # Add new ultra-sophisticated features to feature_columns
+        ultra_sophisticated_winner_features = [
+            "championship_clutch_composite",
+            "style_clash_resolution_matrix",
+            "momentum_pressure_velocity",
+            "technical_vs_physical_dominance",
+            "grappling_control_matrix",
+            "upset_experience_matrix",
+            "advanced_fight_iq_composite",
+            "durability_power_advanced_ratio",
+            "pace_control_momentum_mastery",
+            "veteran_youth_advanced"
+        ]
+        
+        ultra_sophisticated_method_features = [
+            "advanced_ko_power_composite",
+            "submission_threat_advanced_matrix",
+            "decision_tendency_advanced_composite",
+            "early_finish_specialist_advantage",
+            "method_versatility_vs_specialization"
+        ]
+        
+        # Add to feature_columns
+        for feature in ultra_sophisticated_winner_features + ultra_sophisticated_method_features:
+            if feature not in feature_columns:
+                feature_columns.append(feature)
+
         # Filter feature columns to only include those that exist and are unique
         available_features = []
         for col in feature_columns:
