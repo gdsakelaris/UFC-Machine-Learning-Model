@@ -1269,7 +1269,6 @@ class AdvancedUFCPredictor:
             "ko_specialist_gap",
             "submission_specialist_gap",
             "experience_gap",
-            "skill_momentum",
             "finish_threat",
             "momentum_advantage",
             "pace_differential",
@@ -1302,7 +1301,6 @@ class AdvancedUFCPredictor:
             "fighter_quality_diff",
             "technical_striker_advantage",
             "clinch_effectiveness_advantage",
-            "momentum_velocity",
             "championship_impact",
             "fighter_quality_momentum",
             "finishing_pressure_stress",
@@ -1355,9 +1353,9 @@ class AdvancedUFCPredictor:
         if "stance_diff" in df_swapped.columns:
             df_swapped["stance_diff"] = -df_swapped["stance_diff"]
 
-        # Handle inactivity penalty (logic needs to be reversed)
-        if "inactivity_penalty" in df_swapped.columns:
-            df_swapped["inactivity_penalty"] = -df_swapped["inactivity_penalty"]
+        # Handle ring rust (logic needs to be reversed)
+        if "ring_rust_continuous" in df_swapped.columns:
+            df_swapped["ring_rust_continuous"] = -df_swapped["ring_rust_continuous"]
 
         print(f"Corner swapping complete. Created {len(df_swapped)} augmented fights.")
         return df_swapped
@@ -1565,7 +1563,6 @@ class AdvancedUFCPredictor:
             "weight_class_factor",
             "ring_rust_factor",
             "championship_pressure_advantage",  # This is the actual feature name
-            "momentum_swing",
             "style_clash_severity",
             "power_vs_technique",
             "cardio_advantage",
@@ -1580,7 +1577,6 @@ class AdvancedUFCPredictor:
             "comeback_ability_diff",
             "clutch_factor_diff",
             "recent_trend_diff",
-            "momentum_shift_diff",
             "form_consistency_diff_corrected",
             "upset_history_diff",
             # NEW OPPONENT STRENGTH DIFFERENTIAL FEATURES
@@ -1671,9 +1667,7 @@ class AdvancedUFCPredictor:
         )
         df["avg_fight_time_diff"] = df["r_avg_fight_time"] - df["b_avg_fight_time"]
 
-        df["skill_momentum"] = (
-            df["pro_SLpM_diff_corrected"] * df["recent_form_diff_corrected"]
-        )
+        # skill_momentum removed - redundant with momentum_velocity and fighter_quality_momentum
         df["finish_threat"] = (
             df["r_ko_rate_corrected"] + df["r_sub_rate_corrected"]
         ) - (df["b_ko_rate_corrected"] + df["b_sub_rate_corrected"])
@@ -1682,10 +1676,10 @@ class AdvancedUFCPredictor:
             df["win_streak_diff_corrected"] - df["loss_streak_diff_corrected"]
         )
 
-        df["inactivity_penalty"] = np.where(
-            df["days_since_last_fight_diff_corrected"] > 365,
-            -1,
-            np.where(df["days_since_last_fight_diff_corrected"] < -365, 1, 0),
+        # Continuous ring rust penalty (scaled by months)
+        df["ring_rust_continuous"] = np.clip(
+            df["days_since_last_fight_diff_corrected"] / 180.0,  # Scale by 6 months
+            -2.0, 2.0  # Cap at ±2 years impact
         )
 
         df["pace_differential"] = (
@@ -1733,16 +1727,22 @@ class AdvancedUFCPredictor:
             df["experience_gap"] * df["pro_SLpM_diff_corrected"] / 50
         )
 
-        df["veteran_edge"] = np.where(
-            np.abs(df["experience_gap"]) > 5,
-            df["experience_gap"] * df["recent_form_diff_corrected"],
-            0,
+        # Smooth veteran edge that scales with gap
+        df["veteran_edge"] = (
+            df["experience_gap"] * 
+            df["recent_form_diff_corrected"] * 
+            np.tanh(abs(df["experience_gap"]) / 5.0)  # Smooth scaling
         )
 
+        # Novice gets penalized, veteran gets benefit (using 5 fights as threshold)
         df["novice_vulnerability"] = np.where(
-            (df["r_total_fights"] < 10) | (df["b_total_fights"] < 10),
-            -np.abs(df["experience_gap"]) * 0.5,
-            0,
+            df["r_total_fights"] < 5,
+            -abs(df["experience_gap"]) * 0.5,  # Red is novice → penalty
+            np.where(
+                df["b_total_fights"] < 5,
+                abs(df["experience_gap"]) * 0.5,   # Blue is novice → benefit to Red
+                0
+            )
         )
 
         # Experience gap historical win rate
@@ -1920,18 +1920,12 @@ class AdvancedUFCPredictor:
         df["title_fight_ko_factor"] = np.where(df["is_title_bout"] == 1, 1.2, 1.0)
         df["five_round_advantage"] = np.where(df["total_rounds"] == 5, 1.15, 1.0)
 
-        # Recent form and momentum analysis
-        df["r_momentum_score"] = (
-            df["r_recent_form_corrected"] * 0.4
-            + df["r_win_streak_corrected"] / 10.0 * 0.3
-            + df["r_recent_finish_rate_corrected"] * 0.3
+        # Recent form and momentum analysis (simplified direct calculation)
+        df["momentum_advantage"] = (
+            (df["r_recent_form_corrected"] - df["b_recent_form_corrected"]) * 0.4 +
+            (df["r_win_streak_corrected"] - df["b_win_streak_corrected"]) / 10.0 * 0.3 +
+            (df["r_recent_finish_rate_corrected"] - df["b_recent_finish_rate_corrected"]) * 0.3
         )
-        df["b_momentum_score"] = (
-            df["b_recent_form_corrected"] * 0.4
-            + df["b_win_streak_corrected"] / 10.0 * 0.3
-            + df["b_recent_finish_rate_corrected"] * 0.3
-        )
-        df["momentum_advantage"] = df["r_momentum_score"] - df["b_momentum_score"]
 
         # Age and experience interaction
         df["age_experience_interaction"] = (
@@ -2104,10 +2098,7 @@ class AdvancedUFCPredictor:
         # APE INDEX ADVANTAGE (Reach - Height) - Critical for striking range
         df["ape_index_advantage"] = df["ape_index_diff"]
 
-        # ENHANCED MOMENTUM FEATURES
-        df["momentum_velocity"] = (
-            df["r_recent_form_corrected"] - df["b_recent_form_corrected"]
-        ) * (df["r_win_streak_corrected"] - df["b_win_streak_corrected"])
+        # momentum_velocity removed - redundant with momentum_advantage
 
         # FIGHTER STYLE MATCHUP DEPTH
         df["style_matchup_depth"] = (
@@ -2244,12 +2235,7 @@ class AdvancedUFCPredictor:
             * (df["r_recent_form_corrected"] - df["b_recent_form_corrected"])
         )
 
-        # MOMENTUM SWING - Recent performance trends
-        df["momentum_swing"] = (
-            df["r_recent_form_corrected"]
-            - df["b_recent_form_corrected"]
-            + (df["r_win_streak_corrected"] - df["b_win_streak_corrected"]) * 0.1
-        )
+        # momentum_swing removed - redundant with momentum_advantage
 
         # STYLE CLASH SEVERITY already created above
 
@@ -2359,10 +2345,7 @@ class AdvancedUFCPredictor:
         df["b_recent_trend"] = df["b_recent_form_corrected"] * df["b_win_streak_corrected"]
         df["recent_trend_diff"] = df["r_recent_trend"] - df["b_recent_trend"]
         
-        # MOMENTUM SHIFT - Change in performance momentum
-        df["r_momentum_shift"] = df["r_win_streak_corrected"] - df["r_loss_streak_corrected"]
-        df["b_momentum_shift"] = df["b_win_streak_corrected"] - df["b_loss_streak_corrected"]
-        df["momentum_shift_diff"] = df["r_momentum_shift"] - df["b_momentum_shift"]
+        # momentum_shift_diff removed - redundant with momentum_advantage
         
         # FORM CONSISTENCY - How consistent recent performance is (pre-calculated in fix_data_leakage)
         # These were already calculated chronologically to prevent data leakage
@@ -2395,10 +2378,9 @@ class AdvancedUFCPredictor:
                 "ko_specialist_gap",
                 "submission_specialist_gap",
                 "experience_gap",
-                "skill_momentum",
                 "finish_threat",
                 "momentum_advantage",
-                "inactivity_penalty",
+                "ring_rust_continuous",
                 "pace_differential",
                 "r_total_fights",
                 "b_total_fights",
@@ -2445,7 +2427,6 @@ class AdvancedUFCPredictor:
                 "weight_class_factor",
                 "ring_rust_factor",
                 "championship_pressure",
-                "momentum_swing",
                 "style_clash_severity",
                 "power_vs_technique",
                 "cardio_advantage", # potentially causes error
@@ -2454,7 +2435,6 @@ class AdvancedUFCPredictor:
                 "recent_opponent_strength_diff",
                 "upset_potential",
                 # ENHANCED ACCURACY FEATURES
-                "momentum_velocity",
                 "style_matchup_depth",
                 "championship_impact",
                 "fighter_quality_momentum",
@@ -3579,23 +3559,17 @@ class AdvancedUFCPredictor:
                 )
                 - (b_stats["sub_rate"] * b_stats["pro_sub_avg"]),
                 "experience_gap": r_total_fights - b_total_fights,
-                "skill_momentum": (
-                    (r_stats["pro_SLpM"] - b_stats["pro_SLpM"])
-                    * (r_stats["recent_form"] - b_stats["recent_form"])
-                ),
+                # skill_momentum removed - redundant with momentum_velocity and fighter_quality_momentum
                 "finish_threat": (r_stats["ko_rate"] + r_stats["sub_rate"])
                 - (b_stats["ko_rate"] + b_stats["sub_rate"]),
                 "momentum_advantage": (
                     (r_stats["win_streak"] - b_stats["win_streak"])
                     - (r_stats["loss_streak"] - b_stats["loss_streak"])
                 ),
-                "inactivity_penalty": -1
-                if r_stats["days_since_last_fight"] - b_stats["days_since_last_fight"]
-                > 365
-                else 1
-                if b_stats["days_since_last_fight"] - r_stats["days_since_last_fight"]
-                > 365
-                else 0,
+                "ring_rust_continuous": np.clip(
+                    (r_stats["days_since_last_fight"] - b_stats["days_since_last_fight"]) / 180.0,
+                    -2.0, 2.0
+                ),
                 "pace_differential": (r_stats["pro_SLpM"] + r_stats["pro_td_avg"])
                 - (b_stats["pro_SLpM"] + b_stats["pro_td_avg"]),
                 "experience_ratio": r_total_fights / (b_total_fights + 1),
@@ -3641,18 +3615,22 @@ class AdvancedUFCPredictor:
             / 50
         )
 
+        # Smooth veteran edge that scales with gap
+        experience_gap = r_total_fights - b_total_fights
+        recent_form_diff = r_stats["recent_form"] - b_stats["recent_form"]
         fight_features["veteran_edge"] = (
-            fight_features["experience_gap"]
-            * (r_stats["recent_form"] - b_stats["recent_form"])
-            if abs(fight_features["experience_gap"]) > 5
-            else 0
+            experience_gap * 
+            recent_form_diff * 
+            np.tanh(abs(experience_gap) / 5.0)  # Smooth scaling
         )
 
-        fight_features["novice_vulnerability"] = (
-            -abs(fight_features["experience_gap"]) * 0.5
-            if r_total_fights < 10 or b_total_fights < 10
-            else 0
-        )
+        # Novice gets penalized, veteran gets benefit (using 5 fights as threshold)
+        if r_total_fights < 5:
+            fight_features["novice_vulnerability"] = -abs(experience_gap) * 0.5  # Red is novice → penalty
+        elif b_total_fights < 5:
+            fight_features["novice_vulnerability"] = abs(experience_gap) * 0.5   # Blue is novice → benefit to Red
+        else:
+            fight_features["novice_vulnerability"] = 0
 
         fight_features["exp_gap_historical_win_rate"] = 0.5
 
