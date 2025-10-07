@@ -1,6 +1,34 @@
 import sys
 import os
 import random
+import tkinter as tk
+from tkinter import ttk, scrolledtext, filedialog, messagebox
+import json
+import pandas as pd
+import numpy as np
+import io
+from contextlib import redirect_stdout, redirect_stderr
+from sklearn.model_selection import train_test_split, TimeSeriesSplit, cross_val_score
+from sklearn.ensemble import (
+    RandomForestClassifier,
+    VotingClassifier,
+    StackingClassifier,
+)
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.feature_selection import SelectPercentile, f_classif
+from sklearn.metrics import classification_report, accuracy_score
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.linear_model import LogisticRegression
+from sklearn.neural_network import MLPClassifier
+from scipy.stats import linregress
+import warnings
+import shutil
+import atexit
+from joblib import Parallel, delayed
+import multiprocessing as mp
 
 # Enable multiprocessing for faster training
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -31,13 +59,6 @@ fight_data_path = os.path.join(script_dir, "fight_data.csv")
 if not os.path.exists(fight_data_path):
     print(f"Warning: fight_data.csv not found in script directory: {script_dir}")
 
-import tkinter as tk
-from tkinter import ttk, scrolledtext, filedialog, messagebox
-
-# Import multiprocessing only when needed
-import json
-import pandas as pd
-import numpy as np
 
 # Set random seeds for reproducibility
 random.seed(42)
@@ -47,34 +68,10 @@ np.random.seed(42)
 os.environ["PYTHONHASHSEED"] = "42"
 os.environ["TF_DETERMINISTIC_OPS"] = "1"
 os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
-import io
-from contextlib import redirect_stdout, redirect_stderr
-from sklearn.model_selection import train_test_split, TimeSeriesSplit, cross_val_score
-from sklearn.ensemble import (
-    RandomForestClassifier,
-    VotingClassifier,
-    StackingClassifier,
-)
-from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.impute import SimpleImputer
-from sklearn.feature_selection import SelectPercentile, f_classif
-from sklearn.metrics import classification_report, accuracy_score
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.linear_model import LogisticRegression
-from sklearn.neural_network import MLPClassifier
-from scipy.stats import linregress
-import warnings
-import shutil
-import atexit
-
-# Parallel processing imports
-from joblib import Parallel, delayed
-import multiprocessing as mp
 
 
 warnings.filterwarnings("ignore")
+
 
 def cleanup_temp_files():
     """Clean up temporary files and folders created during training"""
@@ -83,14 +80,15 @@ def cleanup_temp_files():
         if os.path.exists("catboost_info"):
             shutil.rmtree("catboost_info")
             print("Cleaned up catboost_info folder")
-        
+
         # Remove best_dl_model.h5 file if it exists
         if os.path.exists("best_dl_model.h5"):
             os.remove("best_dl_model.h5")
             print("Cleaned up best_dl_model.h5 file")
-            
+
     except Exception as e:
         print(f"Warning: Could not clean up temporary files: {e}")
+
 
 # Register cleanup function to run on exit
 atexit.register(cleanup_temp_files)
@@ -149,12 +147,12 @@ class AdvancedUFCPredictor:
         self.fighter_style_cache = {}
         self.fighter_encoder = None  # For fighter embeddings
         self.num_fighters = 0
-        
+
         # MEMORY OPTIMIZATION: Feature caching for 2x speedup
         self.feature_cache = {}
         self.preprocessor_cache = None
         self.feature_columns_cache = None
-        
+
         # EARLY STOPPING: Performance tracking
         self.early_stopping_patience = 10
         self.best_score = 0
@@ -162,7 +160,6 @@ class AdvancedUFCPredictor:
 
         # Set all random seeds for maximum reproducibility
         self.set_random_seeds()
-
 
     def set_random_seeds(self):
         """Set all random seeds for maximum reproducibility while maintaining accuracy"""
@@ -179,13 +176,14 @@ class AdvancedUFCPredictor:
 
         # XGBoost specific random seed settings
         os.environ["XGBOOST_DISABLE_MULTIPROCESSING"] = "1"
-        
+
         # GPU device management to prevent conflicts
         os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-        
+
         # Clear GPU memory to prevent conflicts
         try:
             import gc
+
             gc.collect()
         except:
             pass
@@ -928,7 +926,9 @@ class AdvancedUFCPredictor:
 
     def augment_data_with_corner_swapping(self, df):
         """Augment data by swapping red and blue corners to eliminate bias - OPTIMIZED FOR SPEED"""
-        print("Augmenting data with SMART corner swapping to eliminate red corner bias...")
+        print(
+            "Augmenting data with SMART corner swapping to eliminate red corner bias..."
+        )
 
         # Add neutral features that don't favor either corner
         df = self.create_neutral_features(df)
@@ -948,23 +948,25 @@ class AdvancedUFCPredictor:
         # ENHANCED AUGMENTATION: More aggressive for data augmentation model
         bias_threshold = 0.02  # Even lower threshold for more augmentation
         if abs(red_bias - 0.5) > bias_threshold:
-            print(f"Significant bias detected ({abs(red_bias - 0.5):.3f}), applying enhanced augmentation...")
-            
+            print(
+                f"Significant bias detected ({abs(red_bias - 0.5):.3f}), applying enhanced augmentation..."
+            )
+
             # Create augmented dataset by swapping corners
             df_augmented = self.swap_corners(df)
-            
+
             # ENHANCED SAMPLING: Use 90% of augmented data for better balance
             sample_size = int(len(df_augmented) * 0.90)
             df_augmented_sampled = df_augmented.sample(n=sample_size, random_state=42)
-            
+
             # Additional augmentation for close fights to improve method prediction
             # Check if winner_method_simple column exists first
             if "winner_method_simple" in df.columns:
                 # Check if winner_confidence column exists, if not use a default approach
                 if "winner_confidence" in df.columns:
                     close_fights = df[
-                        (df["winner_method_simple"].str.contains("Decision")) & 
-                        (df["winner_confidence"] < 0.7)  # Low confidence decisions
+                        (df["winner_method_simple"].str.contains("Decision"))
+                        & (df["winner_confidence"] < 0.7)  # Low confidence decisions
                     ].copy()
                 else:
                     # If no confidence column, just use decision fights
@@ -978,16 +980,24 @@ class AdvancedUFCPredictor:
                 # Add 25% of close fights as additional augmentation
                 close_sample_size = min(len(close_fights) // 2, len(df) // 4)
                 if close_sample_size > 0:  # Ensure we have something to sample
-                    close_subset = close_fights.sample(n=close_sample_size, random_state=42)
+                    close_subset = close_fights.sample(
+                        n=close_sample_size, random_state=42
+                    )
                     close_swapped = self.swap_corners(close_subset)
-                    df_augmented_sampled = pd.concat([df_augmented_sampled, close_swapped], ignore_index=True)
-            
+                    df_augmented_sampled = pd.concat(
+                        [df_augmented_sampled, close_swapped], ignore_index=True
+                    )
+
             # Combine original and sampled augmented data
             df_combined = pd.concat([df, df_augmented_sampled], ignore_index=True)
-            
-            print(f"Enhanced augmentation: {len(df)} -> {len(df_combined)} (1.75x size)")
+
+            print(
+                f"Enhanced augmentation: {len(df)} -> {len(df_combined)} (1.75x size)"
+            )
         else:
-            print("Bias is minimal, applying light augmentation for method prediction...")
+            print(
+                "Bias is minimal, applying light augmentation for method prediction..."
+            )
             # Light augmentation even with minimal bias for method prediction
             df_augmented = self.swap_corners(df)
             sample_size = len(df_augmented) // 4  # 25% augmentation
@@ -1236,42 +1246,68 @@ class AdvancedUFCPredictor:
                 1,
                 0,
             )
-            
+
             # Additional style features for better method prediction
             df["power_vs_technique"] = np.where(
-                (df["r_pro_kd_pM_corrected"] > df["r_pro_sig_str_acc_corrected"] * 0.1) &
-                (df["b_pro_kd_pM_corrected"] < df["b_pro_sig_str_acc_corrected"] * 0.1),
+                (df["r_pro_kd_pM_corrected"] > df["r_pro_sig_str_acc_corrected"] * 0.1)
+                & (
+                    df["b_pro_kd_pM_corrected"]
+                    < df["b_pro_sig_str_acc_corrected"] * 0.1
+                ),
                 1,
                 np.where(
-                    (df["b_pro_kd_pM_corrected"] > df["b_pro_sig_str_acc_corrected"] * 0.1) &
-                    (df["r_pro_kd_pM_corrected"] < df["r_pro_sig_str_acc_corrected"] * 0.1),
+                    (
+                        df["b_pro_kd_pM_corrected"]
+                        > df["b_pro_sig_str_acc_corrected"] * 0.1
+                    )
+                    & (
+                        df["r_pro_kd_pM_corrected"]
+                        < df["r_pro_sig_str_acc_corrected"] * 0.1
+                    ),
                     -1,
-                    0
-                )
+                    0,
+                ),
             )
-            
+
             df["volume_vs_accuracy"] = np.where(
-                (df["r_pro_SLpM_corrected"] > df["r_pro_sig_str_acc_corrected"] * 10) &
-                (df["b_pro_SLpM_corrected"] < df["b_pro_sig_str_acc_corrected"] * 10),
+                (df["r_pro_SLpM_corrected"] > df["r_pro_sig_str_acc_corrected"] * 10)
+                & (df["b_pro_SLpM_corrected"] < df["b_pro_sig_str_acc_corrected"] * 10),
                 1,
                 np.where(
-                    (df["b_pro_SLpM_corrected"] > df["b_pro_sig_str_acc_corrected"] * 10) &
-                    (df["r_pro_SLpM_corrected"] < df["r_pro_sig_str_acc_corrected"] * 10),
+                    (
+                        df["b_pro_SLpM_corrected"]
+                        > df["b_pro_sig_str_acc_corrected"] * 10
+                    )
+                    & (
+                        df["r_pro_SLpM_corrected"]
+                        < df["r_pro_sig_str_acc_corrected"] * 10
+                    ),
                     -1,
-                    0
-                )
+                    0,
+                ),
             )
 
         # Method prediction specific features
         if "r_ko_rate_corrected" in df.columns and "b_ko_rate_corrected" in df.columns:
-            df["ko_rate_differential"] = df["r_ko_rate_corrected"] - df["b_ko_rate_corrected"]
-        if "r_sub_rate_corrected" in df.columns and "b_sub_rate_corrected" in df.columns:
-            df["sub_rate_differential"] = df["r_sub_rate_corrected"] - df["b_sub_rate_corrected"]
-        if "r_dec_rate_corrected" in df.columns and "b_dec_rate_corrected" in df.columns:
-            df["dec_rate_differential"] = df["r_dec_rate_corrected"] - df["b_dec_rate_corrected"]
+            df["ko_rate_differential"] = (
+                df["r_ko_rate_corrected"] - df["b_ko_rate_corrected"]
+            )
+        if (
+            "r_sub_rate_corrected" in df.columns
+            and "b_sub_rate_corrected" in df.columns
+        ):
+            df["sub_rate_differential"] = (
+                df["r_sub_rate_corrected"] - df["b_sub_rate_corrected"]
+            )
+        if (
+            "r_dec_rate_corrected" in df.columns
+            and "b_dec_rate_corrected" in df.columns
+        ):
+            df["dec_rate_differential"] = (
+                df["r_dec_rate_corrected"] - df["b_dec_rate_corrected"]
+            )
         else:
             df["striker_vs_grappler"] = 0
-
 
         return df
 
@@ -1282,7 +1318,7 @@ class AdvancedUFCPredictor:
         if cache_key in self.feature_cache:
             print("Using cached features for 2x speedup...")
             return self.feature_cache[cache_key]
-            
+
         # Ensure consistent random state for feature preparation
         self.set_random_seeds()
 
@@ -1317,7 +1353,7 @@ class AdvancedUFCPredictor:
         else:
             # If no method column, create default method based on other available columns
             df["method_simple"] = "Decision"  # Default to Decision
-        
+
         # Check if winner column exists, if not create a default
         if "winner" not in df.columns:
             # Try to infer winner from other columns or create default
@@ -1327,7 +1363,7 @@ class AdvancedUFCPredictor:
             else:
                 # If no fighter info, create a default winner column
                 df["winner"] = "Red"
-        
+
         df["winner_method_simple"] = df["winner"] + "_" + df["method_simple"]
 
         feature_columns = [
@@ -2123,78 +2159,118 @@ class AdvancedUFCPredictor:
         # ============================================================================
         # NEW HIGH-IMPACT WINNER PREDICTION FEATURES
         # ============================================================================
-        
+
         # RECENT OPPONENT QUALITY - Quality of recent opponents
-        df["r_recent_opponent_quality"] = df["r_recent_opponent_strength"] * 0.7 + df["r_wins_corrected"] * 0.3
-        df["b_recent_opponent_quality"] = df["b_recent_opponent_strength"] * 0.7 + df["b_wins_corrected"] * 0.3
-        df["recent_opponent_quality_diff"] = df["r_recent_opponent_quality"] - df["b_recent_opponent_quality"]
-        
+        df["r_recent_opponent_quality"] = (
+            df["r_recent_opponent_strength"] * 0.7 + df["r_wins_corrected"] * 0.3
+        )
+        df["b_recent_opponent_quality"] = (
+            df["b_recent_opponent_strength"] * 0.7 + df["b_wins_corrected"] * 0.3
+        )
+        df["recent_opponent_quality_diff"] = (
+            df["r_recent_opponent_quality"] - df["b_recent_opponent_quality"]
+        )
+
         # FINISH RATE - Recent finishing ability
-        df["r_finish_rate"] = (df["r_ko_rate_corrected"] + df["r_sub_rate_corrected"]) / 2
-        df["b_finish_rate"] = (df["b_ko_rate_corrected"] + df["b_sub_rate_corrected"]) / 2
+        df["r_finish_rate"] = (
+            df["r_ko_rate_corrected"] + df["r_sub_rate_corrected"]
+        ) / 2
+        df["b_finish_rate"] = (
+            df["b_ko_rate_corrected"] + df["b_sub_rate_corrected"]
+        ) / 2
         df["finish_rate_diff"] = df["r_finish_rate"] - df["b_finish_rate"]
-        
+
         # STAMINA FACTOR - Based on fight duration patterns
         df["r_stamina_factor"] = np.where(
-            df["r_avg_fight_time"] > 12, 1.2,  # Championship rounds experience
-            np.where(df["r_avg_fight_time"] > 8, 1.0, 0.8)  # Regular vs short fights
+            df["r_avg_fight_time"] > 12,
+            1.2,  # Championship rounds experience
+            np.where(df["r_avg_fight_time"] > 8, 1.0, 0.8),  # Regular vs short fights
         )
         df["b_stamina_factor"] = np.where(
-            df["b_avg_fight_time"] > 12, 1.2,
-            np.where(df["b_avg_fight_time"] > 8, 1.0, 0.8)
+            df["b_avg_fight_time"] > 12,
+            1.2,
+            np.where(df["b_avg_fight_time"] > 8, 1.0, 0.8),
         )
         df["stamina_factor_diff"] = df["r_stamina_factor"] - df["b_stamina_factor"]
-        
+
         # PRESSURE PERFORMANCE - Performance in high-stakes fights
         df["r_pressure_performance"] = np.where(
-            df["is_title_bout"] == 1, df["r_recent_form_corrected"] * 1.2, df["r_recent_form_corrected"]
+            df["is_title_bout"] == 1,
+            df["r_recent_form_corrected"] * 1.2,
+            df["r_recent_form_corrected"],
         )
         df["b_pressure_performance"] = np.where(
-            df["is_title_bout"] == 1, df["b_recent_form_corrected"] * 1.2, df["b_recent_form_corrected"]
+            df["is_title_bout"] == 1,
+            df["b_recent_form_corrected"] * 1.2,
+            df["b_recent_form_corrected"],
         )
-        df["pressure_performance_diff"] = df["r_pressure_performance"] - df["b_pressure_performance"]
-        
+        df["pressure_performance_diff"] = (
+            df["r_pressure_performance"] - df["b_pressure_performance"]
+        )
+
         # COMEBACK ABILITY - Ability to recover from adversity
         df["r_comeback_ability"] = np.where(
-            df["r_loss_streak_corrected"] > 0, 
+            df["r_loss_streak_corrected"] > 0,
             df["r_recent_form_corrected"] * 0.8,  # Penalty for recent losses
-            df["r_recent_form_corrected"] * 1.1   # Bonus for avoiding losses
+            df["r_recent_form_corrected"] * 1.1,  # Bonus for avoiding losses
         )
         df["b_comeback_ability"] = np.where(
             df["b_loss_streak_corrected"] > 0,
             df["b_recent_form_corrected"] * 0.8,
-            df["b_recent_form_corrected"] * 1.1
+            df["b_recent_form_corrected"] * 1.1,
         )
-        df["comeback_ability_diff"] = df["r_comeback_ability"] - df["b_comeback_ability"]
-        
+        df["comeback_ability_diff"] = (
+            df["r_comeback_ability"] - df["b_comeback_ability"]
+        )
+
         # CLUTCH FACTOR - Performance in close fights
-        df["r_clutch_factor"] = df["r_win_loss_ratio_corrected"] * df["r_recent_form_corrected"]
-        df["b_clutch_factor"] = df["b_win_loss_ratio_corrected"] * df["b_recent_form_corrected"]
+        df["r_clutch_factor"] = (
+            df["r_win_loss_ratio_corrected"] * df["r_recent_form_corrected"]
+        )
+        df["b_clutch_factor"] = (
+            df["b_win_loss_ratio_corrected"] * df["b_recent_form_corrected"]
+        )
         df["clutch_factor_diff"] = df["r_clutch_factor"] - df["b_clutch_factor"]
-        
+
         # RECENT TREND - Performance trajectory over last 3-5 fights
-        df["r_recent_trend"] = df["r_recent_form_corrected"] * df["r_win_streak_corrected"]
-        df["b_recent_trend"] = df["b_recent_form_corrected"] * df["b_win_streak_corrected"]
+        df["r_recent_trend"] = (
+            df["r_recent_form_corrected"] * df["r_win_streak_corrected"]
+        )
+        df["b_recent_trend"] = (
+            df["b_recent_form_corrected"] * df["b_win_streak_corrected"]
+        )
         df["recent_trend_diff"] = df["r_recent_trend"] - df["b_recent_trend"]
-        
+
         # MOMENTUM SHIFT - Change in performance momentum
-        df["r_momentum_shift"] = df["r_win_streak_corrected"] - df["r_loss_streak_corrected"]
-        df["b_momentum_shift"] = df["b_win_streak_corrected"] - df["b_loss_streak_corrected"]
+        df["r_momentum_shift"] = (
+            df["r_win_streak_corrected"] - df["r_loss_streak_corrected"]
+        )
+        df["b_momentum_shift"] = (
+            df["b_win_streak_corrected"] - df["b_loss_streak_corrected"]
+        )
         df["momentum_shift_diff"] = df["r_momentum_shift"] - df["b_momentum_shift"]
-        
+
         # FORM CONSISTENCY - How consistent recent performance is
-        df["r_form_consistency"] = 1.0 - np.abs(df["r_recent_form_corrected"] - 0.5) * 2  # Closer to 0.5 = more consistent
+        df["r_form_consistency"] = (
+            1.0 - np.abs(df["r_recent_form_corrected"] - 0.5) * 2
+        )  # Closer to 0.5 = more consistent
         df["b_form_consistency"] = 1.0 - np.abs(df["b_recent_form_corrected"] - 0.5) * 2
-        df["form_consistency_diff"] = df["r_form_consistency"] - df["b_form_consistency"]
-        
+        df["form_consistency_diff"] = (
+            df["r_form_consistency"] - df["b_form_consistency"]
+        )
+
         # UPSET HISTORY - History of causing/being upset
         df["r_upset_history"] = np.where(
-            df["r_recent_form_corrected"] > 0.7, 1.2,  # Strong favorite
-            np.where(df["r_recent_form_corrected"] < 0.3, 0.8, 1.0)  # Underdog or neutral
+            df["r_recent_form_corrected"] > 0.7,
+            1.2,  # Strong favorite
+            np.where(
+                df["r_recent_form_corrected"] < 0.3, 0.8, 1.0
+            ),  # Underdog or neutral
         )
         df["b_upset_history"] = np.where(
-            df["b_recent_form_corrected"] > 0.7, 1.2,
-            np.where(df["b_recent_form_corrected"] < 0.3, 0.8, 1.0)
+            df["b_recent_form_corrected"] > 0.7,
+            1.2,
+            np.where(df["b_recent_form_corrected"] < 0.3, 0.8, 1.0),
         )
         df["upset_history_diff"] = df["r_upset_history"] - df["b_upset_history"]
 
@@ -2264,7 +2340,7 @@ class AdvancedUFCPredictor:
                 "momentum_swing",
                 "style_clash_severity",
                 "power_vs_technique",
-                "cardio_advantage", # potentially causes error
+                "cardio_advantage",  # potentially causes error
                 "finish_pressure",
                 "opponent_quality_gap",
                 "recent_opponent_strength",
@@ -2281,6 +2357,235 @@ class AdvancedUFCPredictor:
             ]
         )
 
+        # ============================================================================
+        # NEW FEATURES FOR ENHANCED PREDICTION ACCURACY
+        # ============================================================================
+        
+        # WINNER PREDICTION FEATURES (10 new features)
+        
+        # 1. Clinch Control Advantage - effectiveness in clinch range
+        if all(col in df.columns for col in ["r_clinch_pct_corrected", "b_clinch_pct_corrected", "r_pro_SLpM_corrected", "b_pro_SLpM_corrected"]):
+            df["clinch_control_advantage"] = (df["r_clinch_pct_corrected"] * df["r_pro_SLpM_corrected"]) - (df["b_clinch_pct_corrected"] * df["b_pro_SLpM_corrected"])
+        
+        # 2. Ground Control Advantage - ground control effectiveness
+        if all(col in df.columns for col in ["r_ground_pct_corrected", "b_ground_pct_corrected", "r_pro_td_avg_corrected", "b_pro_td_avg_corrected"]):
+            df["ground_control_advantage"] = (df["r_ground_pct_corrected"] * df["r_pro_td_avg_corrected"]) - (df["b_ground_pct_corrected"] * df["b_pro_td_avg_corrected"])
+        
+        # 3. Striking Volume Advantage - volume × accuracy composite
+        if all(col in df.columns for col in ["r_pro_SLpM_corrected", "b_pro_SLpM_corrected", "r_pro_sig_str_acc_corrected", "b_pro_sig_str_acc_corrected"]):
+            df["striking_volume_advantage"] = (df["r_pro_SLpM_corrected"] * df["r_pro_sig_str_acc_corrected"]) - (df["b_pro_SLpM_corrected"] * df["b_pro_sig_str_acc_corrected"])
+        
+        # 4. Defensive Advantage - overall defensive capability
+        if all(col in df.columns for col in ["r_pro_str_def_corrected", "b_pro_str_def_corrected", "r_pro_SApM_corrected", "b_pro_SApM_corrected"]):
+            df["defensive_advantage"] = (df["r_pro_str_def_corrected"] - df["r_pro_SApM_corrected"]) - (df["b_pro_str_def_corrected"] - df["b_pro_SApM_corrected"])
+        
+        # 5. Finish Avoidance Advantage - ability to avoid being finished
+        if all(col in df.columns for col in ["r_ko_losses_corrected", "b_ko_losses_corrected", "r_sub_losses_corrected", "b_sub_losses_corrected"]):
+            df["finish_avoidance_advantage"] = (1 / (1 + df["r_ko_losses_corrected"] + df["r_sub_losses_corrected"])) - (1 / (1 + df["b_ko_losses_corrected"] + df["b_sub_losses_corrected"]))
+        
+        # 6. Pace Control Advantage - fight pace control ability
+        if all(col in df.columns for col in ["r_avg_fight_time_corrected", "b_avg_fight_time_corrected", "r_pro_SLpM_corrected", "b_pro_SLpM_corrected"]):
+            df["pace_control_advantage"] = (df["r_avg_fight_time_corrected"] - df["b_avg_fight_time_corrected"]) * (df["r_pro_SLpM_corrected"] - df["b_pro_SLpM_corrected"])
+        
+        # 7. Experience Quality Advantage - quality-adjusted experience
+        if all(col in df.columns for col in ["r_total_fights_corrected", "b_total_fights_corrected", "r_win_loss_ratio_corrected", "b_win_loss_ratio_corrected"]):
+            df["experience_quality_advantage"] = (df["r_total_fights_corrected"] * df["r_win_loss_ratio_corrected"]) - (df["b_total_fights_corrected"] * df["b_win_loss_ratio_corrected"])
+        
+        # 8. Momentum Consistency Advantage - consistent momentum advantage
+        if all(col in df.columns for col in ["r_recent_form_corrected", "b_recent_form_corrected", "r_win_streak_corrected", "b_win_streak_corrected"]):
+            df["momentum_consistency_advantage"] = (df["r_recent_form_corrected"] * df["r_win_streak_corrected"]) - (df["b_recent_form_corrected"] * df["b_win_streak_corrected"])
+        
+        # 9. Striking Defense Advantage - striking defense effectiveness
+        if all(col in df.columns for col in ["r_pro_str_def_corrected", "b_pro_str_def_corrected", "r_pro_SApM_corrected", "b_pro_SApM_corrected"]):
+            df["striking_defense_advantage"] = (df["r_pro_str_def_corrected"] * (1 - df["r_pro_SApM_corrected"]/10)) - (df["b_pro_str_def_corrected"] * (1 - df["b_pro_SApM_corrected"]/10))
+        
+        # 10. Grappling Offense Advantage - grappling offensive effectiveness
+        if all(col in df.columns for col in ["r_pro_td_avg_corrected", "b_pro_td_avg_corrected", "r_pro_td_acc_corrected", "b_pro_td_acc_corrected"]):
+            df["grappling_offense_advantage"] = (df["r_pro_td_avg_corrected"] * df["r_pro_td_acc_corrected"]) - (df["b_pro_td_avg_corrected"] * df["b_pro_td_acc_corrected"])
+        
+        # METHOD PREDICTION FEATURES (5 new features)
+        
+        # 1. KO Power Advantage - KO power composite (rate × knockdowns)
+        if all(col in df.columns for col in ["r_ko_rate_corrected", "b_ko_rate_corrected", "r_pro_kd_pM_corrected", "b_pro_kd_pM_corrected"]):
+            df["ko_power_advantage"] = (df["r_ko_rate_corrected"] * df["r_pro_kd_pM_corrected"]) - (df["b_ko_rate_corrected"] * df["b_pro_kd_pM_corrected"])
+        
+        # 2. Submission Threat Advantage - submission threat composite
+        if all(col in df.columns for col in ["r_sub_rate_corrected", "b_sub_rate_corrected", "r_pro_sub_avg_corrected", "b_pro_sub_avg_corrected"]):
+            df["submission_threat_advantage"] = (df["r_sub_rate_corrected"] * df["r_pro_sub_avg_corrected"]) - (df["b_sub_rate_corrected"] * df["b_pro_sub_avg_corrected"])
+        
+        # 3. Decision Tendency Advantage - decision likelihood composite
+        if all(col in df.columns for col in ["r_dec_rate_corrected", "b_dec_rate_corrected", "r_avg_fight_time_corrected", "b_avg_fight_time_corrected"]):
+            df["decision_tendency_advantage"] = (df["r_dec_rate_corrected"] * df["r_avg_fight_time_corrected"]) - (df["b_dec_rate_corrected"] * df["b_avg_fight_time_corrected"])
+        
+        # 4. Early Finish Advantage - early finish likelihood
+        if all(col in df.columns for col in ["r_ko_rate_corrected", "b_ko_rate_corrected", "r_sub_rate_corrected", "b_sub_rate_corrected"]):
+            df["early_finish_advantage"] = (df["r_ko_rate_corrected"] + df["r_sub_rate_corrected"]) - (df["b_ko_rate_corrected"] + df["b_sub_rate_corrected"])
+        
+        # 5. Durability Advantage - knockdown resistance
+        if all(col in df.columns for col in ["r_ko_losses_corrected", "b_ko_losses_corrected"]):
+            df["durability_advantage"] = (1 / (1 + df["r_ko_losses_corrected"])) - (1 / (1 + df["b_ko_losses_corrected"]))
+        
+        # ============================================================================
+        # SOPHISTICATED WINNER PREDICTION FEATURES (12 advanced features)
+        # ============================================================================
+        
+        # 1. Fight IQ Composite Advantage - defensive intelligence
+        if all(col in df.columns for col in ["r_pro_str_def_corrected", "b_pro_str_def_corrected", "r_pro_td_def_corrected", "b_pro_td_def_corrected", "r_pro_sig_str_acc_corrected", "b_pro_sig_str_acc_corrected", "r_pro_SApM_corrected", "b_pro_SApM_corrected"]):
+            df["fight_iq_composite_advantage"] = (
+                (df["r_pro_str_def_corrected"] * df["r_pro_td_def_corrected"] * df["r_pro_sig_str_acc_corrected"]) / 
+                (df["r_pro_SApM_corrected"] + 0.1)
+            ) - (
+                (df["b_pro_str_def_corrected"] * df["b_pro_td_def_corrected"] * df["b_pro_sig_str_acc_corrected"]) / 
+                (df["b_pro_SApM_corrected"] + 0.1)
+            )
+        
+        # 2. Championship Pressure Performance - big fight experience
+        if all(col in df.columns for col in ["r_championship_pressure_advantage", "b_championship_pressure_advantage", "r_clutch_factor_diff", "b_clutch_factor_diff", "r_recent_form_diff_corrected", "b_recent_form_diff_corrected", "r_days_since_last_fight_diff_corrected", "b_days_since_last_fight_diff_corrected"]):
+            df["championship_pressure_performance"] = (
+                (df["r_championship_pressure_advantage"] * df["r_clutch_factor_diff"] * df["r_recent_form_diff_corrected"]) / 
+                (df["r_days_since_last_fight_diff_corrected"] + 30)
+            ) - (
+                (df["b_championship_pressure_advantage"] * df["b_clutch_factor_diff"] * df["b_recent_form_diff_corrected"]) / 
+                (df["b_days_since_last_fight_diff_corrected"] + 30)
+            )
+        
+        # 3. Momentum Velocity Advantage - hot streak dynamics
+        if all(col in df.columns for col in ["r_win_streak_diff_corrected", "b_win_streak_diff_corrected", "r_recent_form_diff_corrected", "b_recent_form_diff_corrected", "r_finish_rate_diff", "b_finish_rate_diff", "r_loss_streak_diff_corrected", "b_loss_streak_diff_corrected"]):
+            df["momentum_velocity_advantage"] = (
+                (df["r_win_streak_diff_corrected"] * df["r_recent_form_diff_corrected"] * df["r_finish_rate_diff"]) / 
+                (abs(df["r_loss_streak_diff_corrected"]) + 1)
+            ) - (
+                (df["b_win_streak_diff_corrected"] * df["b_recent_form_diff_corrected"] * df["b_finish_rate_diff"]) / 
+                (abs(df["b_loss_streak_diff_corrected"]) + 1)
+            )
+        
+        # 4. Style Matchup Depth Score - complex style interactions
+        if all(col in df.columns for col in ["striker_vs_grappler", "power_vs_technique", "stance_matchup_advantage", "style_clash_severity", "experience_gap"]):
+            df["style_matchup_depth_score"] = (
+                (df["striker_vs_grappler"] * df["power_vs_technique"] * df["stance_matchup_advantage"]) / 
+                (df["style_clash_severity"] + 0.1)
+            ) * (df["experience_gap"] / 10)
+        
+        # 5. Durability vs Power Ratio - survival vs knockout power
+        if all(col in df.columns for col in ["r_durability_score", "b_durability_score", "r_pro_str_def_corrected", "b_pro_str_def_corrected", "r_ko_rate_corrected", "b_ko_rate_corrected", "r_pro_kd_pM_corrected", "b_pro_kd_pM_corrected"]):
+            df["durability_vs_power_ratio"] = (
+                (df["r_durability_score"] * df["r_pro_str_def_corrected"]) / 
+                (df["b_ko_rate_corrected"] * df["b_pro_kd_pM_corrected"] + 0.1)
+            ) - (
+                (df["b_durability_score"] * df["b_pro_str_def_corrected"]) / 
+                (df["r_ko_rate_corrected"] * df["r_pro_kd_pM_corrected"] + 0.1)
+            )
+        
+        # 6. Pace Control Mastery - fight duration and efficiency
+        if all(col in df.columns for col in ["r_avg_fight_time", "b_avg_fight_time", "r_pro_SLpM_corrected", "b_pro_SLpM_corrected", "r_pro_SApM_corrected", "b_pro_SApM_corrected", "r_pro_str_def_corrected", "b_pro_str_def_corrected"]):
+            df["pace_control_mastery"] = (
+                (df["r_avg_fight_time"] / 5) * (df["r_pro_SLpM_corrected"] - df["r_pro_SApM_corrected"]) * 
+                (df["r_pro_str_def_corrected"] / (df["r_pro_SApM_corrected"] + 0.1))
+            ) - (
+                (df["b_avg_fight_time"] / 5) * (df["b_pro_SLpM_corrected"] - df["b_pro_SApM_corrected"]) * 
+                (df["b_pro_str_def_corrected"] / (df["b_pro_SApM_corrected"] + 0.1))
+            )
+        
+        # 7. Grappling Transition Mastery - ground control effectiveness
+        if all(col in df.columns for col in ["r_pro_td_avg_corrected", "b_pro_td_avg_corrected", "r_pro_td_acc_corrected", "b_pro_td_acc_corrected", "r_pro_sub_avg_corrected", "b_pro_sub_avg_corrected", "r_pro_td_def_corrected", "b_pro_td_def_corrected", "r_ground_pct_corrected", "b_ground_pct_corrected", "r_clinch_pct_corrected", "b_clinch_pct_corrected"]):
+            df["grappling_transition_mastery"] = (
+                (df["r_pro_td_avg_corrected"] * df["r_pro_td_acc_corrected"] * df["r_pro_sub_avg_corrected"]) / 
+                (df["r_pro_td_def_corrected"] + 0.1)
+            ) * (df["r_ground_pct_corrected"] / (df["r_clinch_pct_corrected"] + 0.1)) - (
+                (df["b_pro_td_avg_corrected"] * df["b_pro_td_acc_corrected"] * df["b_pro_sub_avg_corrected"]) / 
+                (df["b_pro_td_def_corrected"] + 0.1)
+            ) * (df["b_ground_pct_corrected"] / (df["b_clinch_pct_corrected"] + 0.1))
+        
+        # 8. Upset Potential vs Experience - underdog dynamics
+        if all(col in df.columns for col in ["r_upset_history", "b_upset_history", "r_recent_opponent_quality_diff", "b_recent_opponent_quality_diff", "r_total_fights", "b_total_fights", "r_age_at_event", "b_age_at_event"]):
+            df["upset_potential_vs_experience"] = (
+                (df["r_upset_history"] * df["r_recent_opponent_quality_diff"]) / 
+                (df["b_total_fights"] + 1)
+            ) * (df["r_age_at_event"] / (df["b_age_at_event"] + 1)) - (
+                (df["b_upset_history"] * df["b_recent_opponent_quality_diff"]) / 
+                (df["r_total_fights"] + 1)
+            ) * (df["b_age_at_event"] / (df["r_age_at_event"] + 1))
+        
+        # 9. Physical Dominance Composite - size and athleticism
+        if all(col in df.columns for col in ["r_height", "b_height", "r_reach", "b_reach", "r_weight", "b_weight", "r_ape_index", "b_ape_index", "r_age_at_event", "b_age_at_event"]):
+            df["physical_dominance_composite"] = (
+                ((df["r_height"] * df["r_reach"] * df["r_weight"]) / 1000) * 
+                (df["r_ape_index"] / 10) * (df["r_age_at_event"] / 30)
+            ) - (
+                ((df["b_height"] * df["b_reach"] * df["b_weight"]) / 1000) * 
+                (df["b_ape_index"] / 10) * (df["b_age_at_event"] / 30)
+            )
+        
+        # 10. Technical Striking Mastery - precision and targeting
+        if all(col in df.columns for col in ["r_pro_sig_str_acc_corrected", "b_pro_sig_str_acc_corrected", "r_pro_str_def_corrected", "b_pro_str_def_corrected", "r_pro_SLpM_corrected", "b_pro_SLpM_corrected", "r_pro_SApM_corrected", "b_pro_SApM_corrected", "r_head_pct_corrected", "b_head_pct_corrected", "r_body_pct_corrected", "b_body_pct_corrected", "r_leg_pct_corrected", "b_leg_pct_corrected"]):
+            df["technical_striking_mastery"] = (
+                (df["r_pro_sig_str_acc_corrected"] * df["r_pro_str_def_corrected"] * df["r_pro_SLpM_corrected"]) / 
+                (df["r_pro_SApM_corrected"] + 0.1)
+            ) * (df["r_head_pct_corrected"] / (df["r_body_pct_corrected"] + df["r_leg_pct_corrected"] + 0.1)) - (
+                (df["b_pro_sig_str_acc_corrected"] * df["b_pro_str_def_corrected"] * df["b_pro_SLpM_corrected"]) / 
+                (df["b_pro_SApM_corrected"] + 0.1)
+            ) * (df["b_head_pct_corrected"] / (df["b_body_pct_corrected"] + df["b_leg_pct_corrected"] + 0.1))
+        
+        # 11. Clutch Performance Under Pressure - mental toughness
+        if all(col in df.columns for col in ["r_clutch_factor", "b_clutch_factor", "r_championship_pressure", "b_championship_pressure", "r_recent_form_corrected", "b_recent_form_corrected", "r_days_since_last_fight_diff_corrected", "b_days_since_last_fight_diff_corrected", "r_win_streak_corrected", "b_win_streak_corrected", "r_loss_streak_corrected", "b_loss_streak_corrected"]):
+            df["clutch_performance_under_pressure"] = (
+                (df["r_clutch_factor"] * df["r_championship_pressure"] * df["r_recent_form_corrected"]) / 
+                (df["r_days_since_last_fight_diff_corrected"] + 30)
+            ) * (df["r_win_streak_corrected"] / (abs(df["r_loss_streak_corrected"]) + 1)) - (
+                (df["b_clutch_factor"] * df["b_championship_pressure"] * df["b_recent_form_corrected"]) / 
+                (df["b_days_since_last_fight_diff_corrected"] + 30)
+            ) * (df["b_win_streak_corrected"] / (abs(df["b_loss_streak_corrected"]) + 1))
+        
+        # 12. Veteran Wisdom vs Youth Advantage - experience vs athleticism
+        if all(col in df.columns for col in ["r_total_fights", "b_total_fights", "r_age_at_event", "b_age_at_event", "r_pro_str_def_corrected", "b_pro_str_def_corrected", "r_pro_SApM_corrected", "b_pro_SApM_corrected", "r_championship_experience", "b_championship_experience", "r_wins_corrected", "b_wins_corrected"]):
+            df["veteran_wisdom_vs_youth"] = (
+                (df["r_total_fights"] * df["r_age_at_event"] * df["r_pro_str_def_corrected"]) / 
+                (df["r_pro_SApM_corrected"] + 0.1)
+            ) * (df["r_championship_experience"] / (df["r_wins_corrected"] + 1)) - (
+                (df["b_total_fights"] * df["b_age_at_event"] * df["b_pro_str_def_corrected"]) / 
+                (df["b_pro_SApM_corrected"] + 0.1)
+            ) * (df["b_championship_experience"] / (df["b_wins_corrected"] + 1))
+        
+        # Add new features to feature_columns list
+        new_winner_features = [
+            "clinch_control_advantage",
+            "ground_control_advantage", 
+            "striking_volume_advantage",
+            "defensive_advantage",
+            "finish_avoidance_advantage",
+            "pace_control_advantage",
+            "experience_quality_advantage",
+            "momentum_consistency_advantage",
+            "striking_defense_advantage",
+            "grappling_offense_advantage",
+            # SOPHISTICATED WINNER FEATURES (12 advanced features)
+            "fight_iq_composite_advantage",
+            "championship_pressure_performance",
+            "momentum_velocity_advantage",
+            "style_matchup_depth_score",
+            "durability_vs_power_ratio",
+            "pace_control_mastery",
+            "grappling_transition_mastery",
+            "upset_potential_vs_experience",
+            "physical_dominance_composite",
+            "technical_striking_mastery",
+            "clutch_performance_under_pressure",
+            "veteran_wisdom_vs_youth"
+        ]
+        
+        new_method_features = [
+            "ko_power_advantage",
+            "submission_threat_advantage", 
+            "decision_tendency_advantage",
+            "early_finish_advantage",
+            "durability_advantage"
+        ]
+        
+        # Add to feature_columns
+        for feature in new_winner_features + new_method_features:
+            if feature not in feature_columns:
+                feature_columns.append(feature)
+
         # Filter feature columns to only include those that exist and are unique
         available_features = []
         for col in feature_columns:
@@ -2293,11 +2598,11 @@ class AdvancedUFCPredictor:
         print(
             f"Total features: {len(available_features)} (filtered from {len(feature_columns)} requested)"
         )
-        
+
         # FEATURE CACHING: Store computed features for future use
         self.feature_cache[cache_key] = (df, available_features)
         print("Features cached for future use...")
-        
+
         return df, available_features
 
     def train_models(self, df):
@@ -2321,7 +2626,7 @@ class AdvancedUFCPredictor:
 
         if "winner_method_encoder" not in self.label_encoders:
             self.label_encoders["winner_method_encoder"] = LabelEncoder()
-        
+
         # Check if winner_method_simple column exists
         if "winner_method_simple" in df.columns:
             y_method = self.label_encoders["winner_method_encoder"].fit_transform(
@@ -2361,7 +2666,7 @@ class AdvancedUFCPredictor:
         # GPU Usage Strategy:
         # Sequential execution: XGBoost + LightGBM (GPU) + CatBoost + RandomForest + MLP (CPU)
         base_models = []
-        
+
         if HAS_XGBOOST:
             print("\n✓ XGBoost available (GPU - parallel with LightGBM)")
             # Use balanced weights since data augmentation eliminates bias
@@ -2370,16 +2675,16 @@ class AdvancedUFCPredictor:
             # Create XGBoost classifier - DRASTICALLY IMPROVED FOR WINNER PREDICTION
             xgb_params = {
                 "n_estimators": 1000,  # 500 -> 1000 (much more trees for better accuracy)
-                "max_depth": 10,       # 8 -> 10 (deeper trees for complex patterns)
+                "max_depth": 10,  # 8 -> 10 (deeper trees for complex patterns)
                 "learning_rate": 0.01,  # 0.025 -> 0.01 (slower learning for better convergence)
-                "subsample": 0.9,      # 0.85 -> 0.9 (higher subsample for better performance)
+                "subsample": 0.9,  # 0.85 -> 0.9 (higher subsample for better performance)
                 "colsample_bytree": 0.9,  # 0.85 -> 0.9 (higher for better feature usage)
                 "colsample_bylevel": 0.9,  # 0.85 -> 0.9 (higher for better feature usage)
                 "n_jobs": -1,
-                "reg_alpha": 0.05,     # 0.1 -> 0.05 (less regularization for more complexity)
-                "reg_lambda": 0.5,     # 0.8 -> 0.5 (less regularization for more complexity)
+                "reg_alpha": 0.05,  # 0.1 -> 0.05 (less regularization for more complexity)
+                "reg_lambda": 0.5,  # 0.8 -> 0.5 (less regularization for more complexity)
                 "min_child_weight": 2,  # 3 -> 2 (more sensitive to small changes)
-                "gamma": 0.05,         # 0.1 -> 0.05 (less pruning for more complexity)
+                "gamma": 0.05,  # 0.1 -> 0.05 (less pruning for more complexity)
                 "scale_pos_weight": scale_pos,
                 "random_state": 42,
                 "eval_metric": "logloss",
@@ -2398,7 +2703,9 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=75),  # 60% -> 75% (better accuracy)
+                        SelectPercentile(
+                            f_classif, percentile=75
+                        ),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     ("classifier", xgb_classifier),
                 ]
@@ -2412,23 +2719,25 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=75),  # 60% -> 75% (better accuracy)
+                        SelectPercentile(
+                            f_classif, percentile=75
+                        ),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     (
                         "classifier",
                         LGBMClassifier(
                             n_estimators=400,  # 500 -> 400 (faster training)
-                            max_depth=7,       # 8 -> 7 (faster training)
+                            max_depth=7,  # 8 -> 7 (faster training)
                             learning_rate=0.03,  # 0.025 -> 0.03 (faster convergence)
-                            num_leaves=40,     # 50 -> 40 (faster training)
-                            subsample=0.8,     # 0.85 -> 0.8 (faster training)
+                            num_leaves=40,  # 50 -> 40 (faster training)
+                            subsample=0.8,  # 0.85 -> 0.8 (faster training)
                             colsample_bytree=0.8,  # 0.85 -> 0.8 (faster training)
-                            reg_alpha=0.1,     # Keep same
-                            reg_lambda=0.8,    # Keep same
+                            reg_alpha=0.1,  # Keep same
+                            reg_lambda=0.8,  # Keep same
                             min_child_weight=3,  # Keep same
-                            device="gpu",      # GPU acceleration
-                            gpu_platform_id=0, # Specify GPU platform
-                            gpu_device_id=0,   # Specify GPU device
+                            device="gpu",  # GPU acceleration
+                            gpu_platform_id=0,  # Specify GPU platform
+                            gpu_device_id=0,  # Specify GPU device
                             random_state=42,
                             verbose=-1,
                         ),
@@ -2445,16 +2754,18 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=75),  # 60% -> 75% (better accuracy)
+                        SelectPercentile(
+                            f_classif, percentile=75
+                        ),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     (
                         "classifier",
                         CatBoostClassifier(
                             iterations=400,  # 500 -> 400 (faster training)
-                            depth=7,         # 8 -> 7 (faster training)
+                            depth=7,  # 8 -> 7 (faster training)
                             learning_rate=0.03,  # 0.025 -> 0.03 (faster convergence)
                             l2_leaf_reg=0.8,  # Keep same
-                            task_type="CPU", # Use CPU to avoid persistent GPU conflicts
+                            task_type="CPU",  # Use CPU to avoid persistent GPU conflicts
                             random_state=42,
                             verbose=0,
                         ),
@@ -2462,14 +2773,6 @@ class AdvancedUFCPredictor:
                 ]
             )
             base_models.append(("catboost", catboost_model))
-
-        # REMOVED ExtraTreesClassifier for faster training
-
-        # REMOVED GradientBoostingClassifier for faster training
-
-        # REMOVED AdaBoostClassifier for faster training
-
-        # REMOVED SVC for faster training
 
         # Random Forest (always available)
         print("✓ Random Forest available")
@@ -2484,9 +2787,9 @@ class AdvancedUFCPredictor:
                     "classifier",
                     RandomForestClassifier(
                         n_estimators=600,  # More trees for better accuracy
-                        max_depth=15,      # Optimal depth for winner prediction
+                        max_depth=15,  # Optimal depth for winner prediction
                         min_samples_split=6,  # Balanced for accuracy
-                        min_samples_leaf=2,   # Balanced for accuracy
+                        min_samples_leaf=2,  # Balanced for accuracy
                         random_state=42,
                         n_jobs=-1,
                         class_weight="balanced",
@@ -2504,12 +2807,18 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=75),  # 60% -> 75% (better accuracy)
+                        SelectPercentile(
+                            f_classif, percentile=75
+                        ),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     (
                         "classifier",
                         MLPClassifier(
-                            hidden_layer_sizes=(256, 128, 64),  # Deeper network for better accuracy
+                            hidden_layer_sizes=(
+                                256,
+                                128,
+                                64,
+                            ),  # Deeper network for better accuracy
                             activation="relu",
                             solver="adam",
                             alpha=0.0005,  # Lower regularization for better accuracy
@@ -2597,65 +2906,76 @@ class AdvancedUFCPredictor:
         # Create optimized voting ensemble of meta-learners with weights
         meta_weights = [1.2, 1.0, 0.9] if len(meta_learners) == 3 else None
         voting_meta = VotingClassifier(
-            estimators=meta_learners, 
-            voting="soft",
-            weights=meta_weights
+            estimators=meta_learners, voting="soft", weights=meta_weights
         )
 
         # MULTI-LEVEL STACKING: Level 1 -> Level 2 -> Final Blender
         if self.use_ensemble and len(base_models) > 1:
             print("\n🔧 Building multi-level stacking ensemble...")
-            
+
             # Level 1: Base models
             level1_models = base_models
-            
+
             # Level 2: Meta-learners (current approach)
             level2_meta = voting_meta
-            
+
             # Level 3: Final blender with more sophisticated approach
             final_blender = VotingClassifier(
                 estimators=[
-                    ("xgb_final", XGBClassifier(
-                        n_estimators=200,
-                        max_depth=6,
-                        learning_rate=0.1,
-                        subsample=0.8,
-                        colsample_bytree=0.8,
-                        reg_alpha=0.1,
-                        reg_lambda=1.0,
-                        random_state=42,
-                        eval_metric="logloss"
-                    )),
-                    ("lgbm_final", LGBMClassifier(
-                        n_estimators=200,
-                        max_depth=6,
-                        learning_rate=0.1,
-                        num_leaves=31,
-                        subsample=0.8,
-                        colsample_bytree=0.8,
-                        reg_alpha=0.1,
-                        reg_lambda=1.0,
-                        random_state=42,
-                        verbose=-1
-                    )),
-                    ("rf_final", RandomForestClassifier(
-                        n_estimators=300,
-                        max_depth=10,
-                        min_samples_split=4,
-                        min_samples_leaf=2,
-                        random_state=42,
-                        n_jobs=-1
-                    )),
-                    ("lr_final", LogisticRegression(
-                        C=1.0,
-                        max_iter=1000,
-                        random_state=42
-                    ))
+                    (
+                        "xgb_final",
+                        XGBClassifier(
+                            n_estimators=200,
+                            max_depth=6,
+                            learning_rate=0.1,
+                            subsample=0.8,
+                            colsample_bytree=0.8,
+                            reg_alpha=0.1,
+                            reg_lambda=1.0,
+                            random_state=42,
+                            eval_metric="logloss",
+                        ),
+                    ),
+                    (
+                        "lgbm_final",
+                        LGBMClassifier(
+                            n_estimators=200,
+                            max_depth=6,
+                            learning_rate=0.1,
+                            num_leaves=31,
+                            subsample=0.8,
+                            colsample_bytree=0.8,
+                            reg_alpha=0.1,
+                            reg_lambda=1.0,
+                            random_state=42,
+                            verbose=-1,
+                        ),
+                    ),
+                    (
+                        "rf_final",
+                        RandomForestClassifier(
+                            n_estimators=300,
+                            max_depth=10,
+                            min_samples_split=4,
+                            min_samples_leaf=2,
+                            random_state=42,
+                            n_jobs=-1,
+                        ),
+                    ),
+                    (
+                        "lr_final",
+                        LogisticRegression(C=1.0, max_iter=1000, random_state=42),
+                    ),
                 ],
                 voting="soft",
-                weights=[0.4, 0.3, 0.2, 0.1]  # XGBoost, LightGBM, RandomForest, LogisticRegression
+                weights=[
+                    0.4,
+                    0.3,
+                    0.2,
+                    0.1,
+                ],  # XGBoost, LightGBM, RandomForest, LogisticRegression
             )
-            
+
             # Create the multi-level stacking
             self.winner_model = StackingClassifier(
                 estimators=level1_models,
@@ -2665,23 +2985,27 @@ class AdvancedUFCPredictor:
                     cv=3,  # Fewer folds for final level
                     n_jobs=-1,
                     stack_method="predict_proba",
-                    passthrough=False
+                    passthrough=False,
                 ),
-                cv=5,   # 10 -> 5 folds (faster training)
+                cv=5,  # 10 -> 5 folds (faster training)
                 n_jobs=-1,
                 stack_method="predict_proba",
                 passthrough=True,  # Include original features in first level
             )
-            
+
             # Enhanced calibration for the entire stack
             self.winner_model = CalibratedClassifierCV(
-                self.winner_model, method="isotonic", cv=5  # 10 -> 5 folds (faster training)
+                self.winner_model,
+                method="isotonic",
+                cv=5,  # 10 -> 5 folds (faster training)
             )
         else:
             # Fallback to single best model
             self.winner_model = base_models[0][1]
             self.winner_model = CalibratedClassifierCV(
-                self.winner_model, method="isotonic", cv=3  # 5 -> 3 folds (1.7x faster)
+                self.winner_model,
+                method="isotonic",
+                cv=3,  # 5 -> 3 folds (1.7x faster)
             )
 
         # Ensure we have proper DataFrame format for scikit-learn
@@ -2712,13 +3036,15 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=75),  # 60% -> 75% (better accuracy)
+                        SelectPercentile(
+                            f_classif, percentile=75
+                        ),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     (
                         "classifier",
                         XGBClassifier(
                             n_estimators=600,  # 500 -> 600 (better accuracy)
-                            max_depth=9,     # 8 -> 9 (better accuracy)
+                            max_depth=9,  # 8 -> 9 (better accuracy)
                             learning_rate=0.02,  # 0.025 -> 0.02 (better convergence)
                             subsample=0.85,  # 0.8 -> 0.85 (better accuracy)
                             colsample_bytree=0.85,  # 0.8 -> 0.85 (better accuracy)
@@ -2743,20 +3069,22 @@ class AdvancedUFCPredictor:
                     ("preprocessor", preprocessor),
                     (
                         "feature_selector",
-                        SelectPercentile(f_classif, percentile=75),  # 60% -> 75% (better accuracy)
+                        SelectPercentile(
+                            f_classif, percentile=75
+                        ),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     (
                         "classifier",
                         LGBMClassifier(
                             n_estimators=400,  # 600 -> 400 (faster training)
-                            max_depth=7,     # 9 -> 7 (faster training)
+                            max_depth=7,  # 9 -> 7 (faster training)
                             learning_rate=0.03,  # 0.02 -> 0.03 (faster convergence)
-                            num_leaves=40,   # 60 -> 40 (faster training)
+                            num_leaves=40,  # 60 -> 40 (faster training)
                             subsample=0.8,  # 0.85 -> 0.8 (faster training)
                             colsample_bytree=0.8,  # 0.85 -> 0.8 (faster training)
                             reg_alpha=0.15,
                             reg_lambda=0.8,
-                            device="gpu",    # GPU acceleration
+                            device="gpu",  # GPU acceleration
                             random_state=42,
                             verbose=-1,
                         ),
@@ -2777,7 +3105,7 @@ class AdvancedUFCPredictor:
                     "classifier",
                     RandomForestClassifier(
                         n_estimators=600,  # 500 -> 600 (better accuracy)
-                        max_depth=18,     # 15 -> 18 (better accuracy)
+                        max_depth=18,  # 15 -> 18 (better accuracy)
                         min_samples_split=5,  # 6 -> 5 (better accuracy)
                         min_samples_leaf=2,
                         random_state=42,
@@ -2799,17 +3127,21 @@ class AdvancedUFCPredictor:
                 ),  # Match Class Weighting
                 (
                     "classifier",
-                        MLPClassifier(
-                            hidden_layer_sizes=(128, 64, 32),  # (128, 64) -> (128, 64, 32) (better accuracy)
-                            activation="relu",
-                            solver="adam",
-                            alpha=0.0005,
-                            batch_size=32,
-                            learning_rate="adaptive",
-                            max_iter=400,  # 300 -> 400 (better accuracy)
-                            early_stopping=True,
-                            random_state=42,
-                        ),
+                    MLPClassifier(
+                        hidden_layer_sizes=(
+                            128,
+                            64,
+                            32,
+                        ),  # (128, 64) -> (128, 64, 32) (better accuracy)
+                        activation="relu",
+                        solver="adam",
+                        alpha=0.0005,
+                        batch_size=32,
+                        learning_rate="adaptive",
+                        max_iter=400,  # 300 -> 400 (better accuracy)
+                        early_stopping=True,
+                        random_state=42,
+                    ),
                 ),
             ]
         )
@@ -2819,21 +3151,26 @@ class AdvancedUFCPredictor:
         # Use optimized weighted voting based on model performance characteristics
         if len(method_models) == 4:
             # Optimized weights based on data augmentation performance
-            method_weights = [1.3, 1.2, 1.0, 0.8]  # XGBoost, LightGBM, RandomForest, Neural Network
+            method_weights = [
+                1.3,
+                1.2,
+                1.0,
+                0.8,
+            ]  # XGBoost, LightGBM, RandomForest, Neural Network
         elif len(method_models) == 3:
             method_weights = [1.3, 1.2, 1.0]  # XGBoost, LightGBM, RandomForest
         else:
             method_weights = None
-            
+
         self.method_model = VotingClassifier(
-            estimators=method_models, 
-            voting="soft",
-            weights=method_weights
+            estimators=method_models, voting="soft", weights=method_weights
         )
 
         # Calibrate the method model
         self.method_model = CalibratedClassifierCV(
-            self.method_model, method="isotonic", cv=3  # 5 -> 3 folds (faster training)
+            self.method_model,
+            method="isotonic",
+            cv=3,  # 5 -> 3 folds (faster training)
         )
 
         self.method_model.fit(X_train, y_method_train)
@@ -2915,7 +3252,10 @@ class AdvancedUFCPredictor:
                         method_map[i] = 5
 
             # Convert to categorical for deep learning
-            from tensorflow.keras.utils import to_categorical
+            try:
+                from tensorflow.keras.utils import to_categorical
+            except ImportError:
+                from keras.utils import to_categorical
 
             y_method_train_dl = to_categorical(
                 [method_map[y] for y in y_method_train], num_classes=6
@@ -3022,7 +3362,7 @@ class AdvancedUFCPredictor:
                     "random_state": 42,
                     "eval_metric": "logloss",
                     "tree_method": "hist",
-                "device": "cuda",  # GPU acceleration
+                    "device": "cuda",  # GPU acceleration
                     "seed": 42,
                 }
 
@@ -3033,7 +3373,9 @@ class AdvancedUFCPredictor:
                         ("preprocessor", preprocessor),
                         (
                             "feature_selector",
-                            SelectPercentile(f_classif, percentile=75),  # 60% -> 75% (better accuracy)
+                            SelectPercentile(
+                                f_classif, percentile=75
+                            ),  # 60% -> 75% (better accuracy)
                         ),  # Match Class Weighting
                         ("classifier", fold_classifier),
                     ]
@@ -3044,7 +3386,9 @@ class AdvancedUFCPredictor:
                         ("preprocessor", preprocessor),
                         (
                             "feature_selector",
-                            SelectPercentile(f_classif, percentile=75),  # 60% -> 75% (better accuracy)
+                            SelectPercentile(
+                                f_classif, percentile=75
+                            ),  # 60% -> 75% (better accuracy)
                         ),  # Match Class Weighting
                         (
                             "classifier",
@@ -3685,7 +4029,11 @@ class AdvancedUFCPredictor:
                 # Check if it's a pandas Series with values
                 elif hasattr(data, "values") and hasattr(data, "index"):
                     if key in data.index:
-                        return data[key].values[0] if len(data[key].values) > 0 else default
+                        return (
+                            data[key].values[0]
+                            if len(data[key].values) > 0
+                            else default
+                        )
                     else:
                         return default
                 # Check if it's a dictionary-like object
@@ -3759,34 +4107,38 @@ class AdvancedUFCPredictor:
 
         # Enhanced power differential analysis
         power_differential = (w_slpm * w_sig_acc) - (l_sapm * (1 - l_str_def))
-        power_differential_factor = 1 + max(0, power_differential / 4.0)  # Increased sensitivity
+        power_differential_factor = 1 + max(
+            0, power_differential / 4.0
+        )  # Increased sensitivity
         power_differential_factor = min(power_differential_factor, 2.0)
 
         # Recent form impact on finishing ability
         # Extract recent form data (with fallback if not available)
         try:
-            w_recent_form = safe_get_value(fight_data, f"{w_prefix}_recent_form_corrected")
+            w_recent_form = safe_get_value(
+                fight_data, f"{w_prefix}_recent_form_corrected"
+            )
         except (KeyError, IndexError):
             w_recent_form = 0.5  # Default neutral value
-            
+
         recent_form_factor = 1 + (w_recent_form - 0.5) * 0.4
         recent_form_factor = max(0.7, min(recent_form_factor, 1.3))
-        
+
         # ENHANCED METHOD PREDICTION FEATURES
         # Momentum and confidence factors
         w_win_streak = safe_get_value(fight_data, f"{w_prefix}_win_streak_corrected")
         w_loss_streak = safe_get_value(fight_data, f"{w_prefix}_loss_streak_corrected")
         momentum_factor = 1 + (w_win_streak - w_loss_streak) * 0.1
         momentum_factor = max(0.8, min(momentum_factor, 1.4))
-        
+
         # Pressure and championship experience
         is_title_bout = safe_get_value(fight_data, "is_title_bout", 0)
         championship_factor = 1 + is_title_bout * 0.15
-        
+
         # Style matchup impact on method
         striker_vs_grappler = safe_get_value(fight_data, "striker_vs_grappler", 0)
         style_factor = 1 + abs(striker_vs_grappler) * 0.1
-        
+
         # Physical advantage impact
         height_advantage = safe_get_value(fight_data, "height_diff", 0)
         reach_advantage = safe_get_value(fight_data, "reach_diff", 0)
@@ -3877,14 +4229,18 @@ class AdvancedUFCPredictor:
             decision_factors.append(1.15)
 
         decision_multiplier = np.mean(decision_factors) if decision_factors else 1.0
-        
+
         # Enhanced decision probability with new factors
-        dec_prob = dec_base * decision_multiplier * (
-            0.85  # Base multiplier
-            + momentum_factor * 0.05
-            + championship_factor * 0.03
-            + style_factor * 0.04
-            + physical_factor * 0.03
+        dec_prob = (
+            dec_base
+            * decision_multiplier
+            * (
+                0.85  # Base multiplier
+                + momentum_factor * 0.05
+                + championship_factor * 0.03
+                + style_factor * 0.04
+                + physical_factor * 0.03
+            )
         )
 
         # Additional context-based adjustments
