@@ -5,33 +5,33 @@
 | **Parameter**                            | **exe Base** | **Two Runs** | **Data Augmentation** |
 | ---------------------------------------------- | ------------------ | ------------------ | --------------------------- |
 | **XGBOOST PARAMETERS**                   |                    |                    |                             |
-| **n_estimators**                         | 600                | 600                | 500                         |
-| **max_depth**                            | 8                  | 9                  | 8                           |
-| **learning_rate**                        | 0.025              | 0.02               | 0.025                       |
-| **subsample**                            | 0.85               | 0.85               | 0.85                        |
-| **colsample_bytree**                     | 0.8                | 0.85               | 0.85                        |
-| **colsample_bylevel**                    | 0.8                | 0.85               | 0.85                        |
-| **reg_alpha**                            | 0.2                | 0.15               | 0.1                         |
-| **reg_lambda**                           | 1                  | 0.8                | 0.8                         |
-| **min_child_weight**                     | 4                  | 3                  | 3                           |
-| **gamma**                                | 0.15               | 0.1                | 0.1                         |
+| **n_estimators**                         | 600                | 600                | 1000                        |
+| **max_depth**                            | 8                  | 9                  | 10                          |
+| **learning_rate**                        | 0.025              | 0.02               | 0.01                        |
+| **subsample**                            | 0.85               | 0.85               | 0.9                         |
+| **colsample_bytree**                     | 0.8                | 0.85               | 0.9                         |
+| **colsample_bylevel**                    | 0.8                | 0.85               | 0.9                         |
+| **reg_alpha**                            | 0.2                | 0.15               | 0.05                        |
+| **reg_lambda**                           | 1                  | 0.8                | 0.5                         |
+| **min_child_weight**                     | 4                  | 3                  | 2                           |
+| **gamma**                                | 0.15               | 0.1                | 0.05                        |
 | **early_stopping_rounds**                | -                  | -                  | -                           |
 | **LIGHTGBM PARAMETERS**                  |                    |                    |                             |
-| **n_estimators**                         | 600                | 600                | 500                         |
-| **max_depth**                            | 8                  | 9                  | 8                           |
-| **learning_rate**                        | 0.025              | 0.02               | 0.025                       |
-| **num_leaves**                           | 60                 | 60                 | 50                          |
-| **subsample**                            | 0.85               | 0.85               | 0.85                        |
-| **colsample_bytree**                     | 0.8                | 0.85               | 0.85                        |
-| **colsample_bylevel**                    | 0.8                | 0.85               | 0.85                        |
+| **n_estimators**                         | 600                | 600                | 400                         |
+| **max_depth**                            | 8                  | 9                  | 7                           |
+| **learning_rate**                        | 0.025              | 0.02               | 0.03                        |
+| **num_leaves**                           | 60                 | 60                 | 40                          |
+| **subsample**                            | 0.85               | 0.85               | 0.8                         |
+| **colsample_bytree**                     | 0.8                | 0.85               | 0.8                         |
+| **colsample_bylevel**                    | 0.8                | 0.85               | 0.8                         |
 | **reg_alpha**                            | 0.2                | 0.15               | 0.1                         |
 | **reg_lambda**                           | 1                  | 0.8                | 0.8                         |
 | **min_child_weight**                     | 4                  | 3                  | 3                           |
 | **early_stopping_rounds**                | -                  | -                  | -                           |
 | **CATBOOST PARAMETERS**                  |                    |                    |                             |
-| **iterations**                           | 600                | 600                | 500                         |
-| **depth**                                | 8                  | 9                  | 8                           |
-| **learning_rate**                        | 0.025              | 0.02               | 0.025                       |
+| **iterations**                           | 600                | 600                | 400                         |
+| **depth**                                | 8                  | 9                  | 7                           |
+| **learning_rate**                        | 0.025              | 0.02               | 0.03                        |
 | **l2_leaf_reg**                          | 1                  | 0.8                | 0.8                         |
 | **early_stopping_rounds**                | -                  | -                  | -                           |
 | **RANDOM FOREST PARAMETERS**             |                    |                    |                             |
@@ -64,24 +64,24 @@
 | **Neural Network Meta layers**           | (64, 32)           | (64, 32)           | (64, 32)                    |
 | **Neural Network Meta max_iter**         | 300                | 300                | 300                         |
 | **METHOD PREDICTION PARAMETERS**         |                    |                    |                             |
-| **XGBoost Method n_estimators**          | 600                | 600                | 400                         |
-| **XGBoost Method max_depth**             | 8                  | 9                  | 7                           |
-| **XGBoost Method learning_rate**         | 0.025              | 0.02               | 0.03                        |
+| **XGBoost Method n_estimators**          | 600                | 600                | 600                         |
+| **XGBoost Method max_depth**             | 8                  | 9                  | 9                           |
+| **XGBoost Method learning_rate**         | 0.025              | 0.02               | 0.02                        |
 | **LightGBM Method n_estimators**         | 600                | 600                | 400                         |
 | **LightGBM Method max_depth**            | 8                  | 9                  | 7                           |
 | **LightGBM Method learning_rate**        | 0.025              | 0.02               | 0.03                        |
-| **Random Forest Method n_estimators**    | 600                | 600                | 500                         |
-| **Random Forest Method max_depth**       | 20                 | 18                 | 12                          |
-| **Neural Network Method layers**         | (128, 64, 32)      | (128, 64, 32)      | (128, 64)                   |
-| **Neural Network Method max_iter**       | 400                | 400                | 500                         |
+| **Random Forest Method n_estimators**    | 600                | 600                | 600                         |
+| **Random Forest Method max_depth**       | 20                 | 18                 | 18                          |
+| **Neural Network Method layers**         | (128, 64, 32)      | (128, 64, 32)      | (128, 64, 32)               |
+| **Neural Network Method max_iter**       | 400                | 400                | 400                         |
 
 ## **PERFORMANCE OPTIMIZATIONS**
 
-| **Model**             | **12-Core Processing** | **Feature Caching** | **Parallel Backend** |
-| --------------------------- | ---------------------------- | ------------------------- | -------------------------- |
-| **exe Base**          | ✅ Yes                       | ✅ Yes                    | loky                       |
-| **Two Runs**          | ✅ Yes                       | ✅ Yes                    | loky                       |
-| **Data Augmentation** | ✅ Yes                       | ✅ Yes                    | loky                       |
+| **Model**             | **12-Core Processing** | **Feature Caching** | **Parallel Backend** | **GPU Acceleration** |
+| --------------------------- | ---------------------------- | ------------------------- | -------------------------- | -------------------------- |
+| **exe Base**          | ✅ Yes                       | ✅ Yes                    | loky                       | ❌ No                      |
+| **Two Runs**          | ✅ Yes                       | ✅ Yes                    | loky                       | ❌ No                      |
+| **Data Augmentation** | ✅ Yes                       | ✅ Yes                    | loky                       | ✅ Yes (XGBoost + LightGBM) |
 
 ## **TECHNICAL IMPLEMENTATIONS**
 
@@ -105,6 +105,14 @@
 - **Cleanup Triggers**: GUI completion, program exit, atexit handler
 - **Implementation**: `shutil.rmtree()` and `os.remove()`
 
+### **GPU CONFIGURATION (Data Augmentation Model)**
+
+- **XGBoost GPU**: `device="cuda"`, `tree_method="hist"`
+- **LightGBM GPU**: `device="gpu"`, `gpu_platform_id=0`, `gpu_device_id=0`
+- **GPU Memory Management**: `CUDA_VISIBLE_DEVICES="0"`, automatic garbage collection
+- **Parallel Strategy**: XGBoost + LightGBM (GPU) || CatBoost + RandomForest + MLP (CPU)
+- **Performance**: Significant speedup for gradient boosting models
+
 ## **PERFORMANCE COMPARISON**
 
 ### **ACCURACY CHARACTERISTICS**
@@ -121,7 +129,7 @@
 | --------------------------- | --------------------------- | ---------------------------- | ---------------------------- | ----------------------------- | ------------------------------ |
 | **exe Base**          | 0.2                         | 1                            | 0.2                          | 1                             | 1                              |
 | **Two Runs**          | 0.2                         | 1                            | 0.2                          | 1                             | 1                              |
-| **Data Augmentation** | 0.2                         | 1                            | 0.2                          | 1                             | 1                              |
+| **Data Augmentation** | 0.05                        | 0.5                          | 0.1                          | 0.8                           | 0.8                            |
 
 ## **FEATURE SELECTION EVOLUTION**
 
@@ -149,6 +157,9 @@
 
 ### **ADVANCED FEATURES (Data Augmentation Model)**
 
+- **GPU Acceleration**: XGBoost + LightGBM on GPU for faster training
+- **Smart Data Augmentation**: 1.75x dataset size with bias threshold analysis
+- **Enhanced Statistical Features**: 200+ advanced features for better predictions
 - **Momentum Consistency**: Performance consistency analysis
 - **Pressure Resistance**: Ability to perform under pressure
 - **Clutch Factor**: Performance in close fights
@@ -164,3 +175,4 @@
 - **Game Plan Execution**: Strategy adherence
 - **Injury Resistance**: Durability and recovery
 - **Weight Cut Impact**: Performance impact of weight cuts
+- **Optimized Parameters**: Tuned for maximum accuracy with GPU acceleration
