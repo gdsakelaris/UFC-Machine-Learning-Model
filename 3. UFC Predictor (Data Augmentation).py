@@ -563,32 +563,6 @@ class AdvancedUFCPredictor:
                         sum(stats["recent_wins"][-2:]) / 2
                     )
 
-                # FORM CONSISTENCY - Calculate from actual variance in recent results
-                if len(stats["recent_wins"]) >= 2:
-                    # Get recent fight results (up to last 10)
-                    recent_sequence = (
-                        stats["recent_wins"][-10:] 
-                        if len(stats["recent_wins"]) >= 10 
-                        else stats["recent_wins"]
-                    )
-                    
-                    # Calculate standard deviation of results
-                    # 0 = all wins or all losses (consistent)
-                    # 0.5 = maximum variance (alternating W-L)
-                    std_dev = np.std(recent_sequence)
-                    
-                    # Convert to consistency score (higher = more consistent)
-                    consistency = 1.0 - std_dev
-                    
-                    # Ensure bounds [0, 1]
-                    consistency = max(0.0, min(1.0, consistency))
-                else:
-                    # Not enough fight history
-                    consistency = 0.5
-                
-                # Store in dataframe
-                df.at[idx, f"{prefix}_form_consistency_corrected"] = consistency
-
                 # Momentum features
                 df.at[idx, f"{prefix}_win_streak_corrected"] = self.calculate_streak(
                     stats["recent_wins"], True
@@ -943,7 +917,6 @@ class AdvancedUFCPredictor:
             "td_avg_trend",
             "age_adjusted_performance",
             "peak_indicator",
-            "form_consistency",
         ]
 
         for stat in diff_stats:
@@ -951,158 +924,6 @@ class AdvancedUFCPredictor:
                 df[f"r_{stat}_corrected"] - df[f"b_{stat}_corrected"]
             )
 
-        # Calculate recent opponent strength after all fighter stats are calculated
-        df = self.calculate_recent_opponent_strength(df)
-
-        return df
-
-    def calculate_recent_opponent_strength(self, df):
-        """
-        Calculate the true strength of recent opponents for each fighter.
-        This tracks the actual quality of opponents faced, not just the fighter's own performance.
-        """
-        print("Calculating recent opponent strength (strength of schedule)...\n")
-        
-        # Ensure data is sorted chronologically
-        df = df.sort_values("event_date").reset_index(drop=True)
-        
-        # Dictionary to store each fighter's opponent history
-        # Format: {fighter_name: [(opponent_stats_at_time, fight_date), ...]}
-        fighter_opponent_history = {}
-        
-        # Dictionary to store fighter stats at each point in time
-        # This will be populated from the existing corrected stats
-        # fighter_stats_timeline = {}  # Not used in current implementation
-        
-        # Initialize columns for opponent strength
-        for prefix in ["r", "b"]:
-            df[f"{prefix}_recent_opponent_strength"] = 0.0
-            df[f"{prefix}_avg_opponent_win_rate"] = 0.0
-            df[f"{prefix}_avg_opponent_finish_rate"] = 0.0
-            df[f"{prefix}_avg_opponent_experience"] = 0.0
-        
-        # Process each fight chronologically
-        for idx, row in df.iterrows():
-            if idx % 500 == 0:
-                print(f"   Processing opponent strength for fight {idx}/{len(df)}...")
-            
-            r_fighter = row["r_fighter"]
-            b_fighter = row["b_fighter"]
-            # event_date = row["event_date"]  # Not used in current implementation
-            
-            # Initialize fighter histories if not exists
-            if r_fighter not in fighter_opponent_history:
-                fighter_opponent_history[r_fighter] = []
-            if b_fighter not in fighter_opponent_history:
-                fighter_opponent_history[b_fighter] = []
-            
-            # CALCULATE OPPONENT STRENGTH BEFORE THIS FIGHT
-            # For each fighter, look at their opponent history
-            
-            for fighter, prefix, _ in [(r_fighter, "r", b_fighter), 
-                                       (b_fighter, "b", r_fighter)]:
-                
-                opponent_history = fighter_opponent_history[fighter]
-                
-                if len(opponent_history) > 0:
-                    # Get the last N opponents (up to 10)
-                    recent_opponents = opponent_history[-10:]
-                    
-                    # Calculate aggregate opponent strength metrics
-                    opponent_win_rates = []
-                    opponent_finish_rates = []
-                    opponent_experience_levels = []
-                    opponent_quality_scores = []
-                    
-                    for opp_stats in recent_opponents:
-                        # Each opp_stats is a dict of the opponent's stats at that time
-                        win_rate = opp_stats.get("win_rate", 0.5)
-                        finish_rate = opp_stats.get("finish_rate", 0.0)
-                        total_fights = opp_stats.get("total_fights", 0)
-                        recent_form = opp_stats.get("recent_form", 0.5)
-                        
-                        opponent_win_rates.append(win_rate)
-                        opponent_finish_rates.append(finish_rate)
-                        opponent_experience_levels.append(total_fights)
-                        
-                        # Calculate quality score for this opponent
-                        # Weight: 40% win rate, 30% finish rate, 20% recent form, 10% experience
-                        quality_score = (
-                            win_rate * 0.40 +
-                            finish_rate * 0.30 +
-                            recent_form * 0.20 +
-                            min(total_fights / 20, 1.0) * 0.10  # Cap experience at 20 fights
-                        )
-                        opponent_quality_scores.append(quality_score)
-                    
-                    # Calculate averages
-                    avg_opponent_win_rate = sum(opponent_win_rates) / len(opponent_win_rates)
-                    avg_opponent_finish_rate = sum(opponent_finish_rates) / len(opponent_finish_rates)
-                    avg_opponent_experience = sum(opponent_experience_levels) / len(opponent_experience_levels)
-                    
-                    # Calculate composite recent opponent strength
-                    # This is the main metric
-                    recent_opponent_strength = sum(opponent_quality_scores) / len(opponent_quality_scores)
-                    
-                    # Store in dataframe
-                    df.at[idx, f"{prefix}_recent_opponent_strength"] = recent_opponent_strength
-                    df.at[idx, f"{prefix}_avg_opponent_win_rate"] = avg_opponent_win_rate
-                    df.at[idx, f"{prefix}_avg_opponent_finish_rate"] = avg_opponent_finish_rate
-                    df.at[idx, f"{prefix}_avg_opponent_experience"] = avg_opponent_experience
-                else:
-                    # No previous opponents - use neutral values
-                    df.at[idx, f"{prefix}_recent_opponent_strength"] = 0.5
-                    df.at[idx, f"{prefix}_avg_opponent_win_rate"] = 0.5
-                    df.at[idx, f"{prefix}_avg_opponent_finish_rate"] = 0.0
-                    df.at[idx, f"{prefix}_avg_opponent_experience"] = 0.0
-            
-            # AFTER calculating opponent strength, record current opponent for future reference
-            # Store the opponent's stats at this point in time
-            
-            if pd.notna(row["winner"]):  # Only process completed fights
-                # For red fighter, their opponent was blue fighter
-                r_opponent_stats = {
-                    "win_rate": row["b_wins_corrected"] / max(row["b_wins_corrected"] + row["b_losses_corrected"], 1),
-                    "finish_rate": (row["b_ko_rate_corrected"] + row["b_sub_rate_corrected"]) / 2,
-                    "total_fights": row["b_wins_corrected"] + row["b_losses_corrected"],
-                    "recent_form": row["b_recent_form_corrected"],
-                    "slpm": row["b_pro_SLpM_corrected"],
-                    "td_avg": row["b_pro_td_avg_corrected"],
-                }
-                fighter_opponent_history[r_fighter].append(r_opponent_stats)
-                
-                # For blue fighter, their opponent was red fighter
-                b_opponent_stats = {
-                    "win_rate": row["r_wins_corrected"] / max(row["r_wins_corrected"] + row["r_losses_corrected"], 1),
-                    "finish_rate": (row["r_ko_rate_corrected"] + row["r_sub_rate_corrected"]) / 2,
-                    "total_fights": row["r_wins_corrected"] + row["r_losses_corrected"],
-                    "recent_form": row["r_recent_form_corrected"],
-                    "slpm": row["r_pro_SLpM_corrected"],
-                    "td_avg": row["r_pro_td_avg_corrected"],
-                }
-                fighter_opponent_history[b_fighter].append(b_opponent_stats)
-                
-                # Keep only last 10 opponents
-                if len(fighter_opponent_history[r_fighter]) > 10:
-                    fighter_opponent_history[r_fighter] = fighter_opponent_history[r_fighter][-10:]
-                if len(fighter_opponent_history[b_fighter]) > 10:
-                    fighter_opponent_history[b_fighter] = fighter_opponent_history[b_fighter][-10:]
-        
-        # Calculate differential features
-        df["recent_opponent_strength_diff"] = (
-            df["r_recent_opponent_strength"] - df["b_recent_opponent_strength"]
-        )
-        df["avg_opponent_win_rate_diff"] = (
-            df["r_avg_opponent_win_rate"] - df["b_avg_opponent_win_rate"]
-        )
-        df["avg_opponent_finish_rate_diff"] = (
-            df["r_avg_opponent_finish_rate"] - df["b_avg_opponent_finish_rate"]
-        )
-        df["avg_opponent_experience_diff"] = (
-            df["r_avg_opponent_experience"] - df["b_avg_opponent_experience"]
-        )
-        
-        print("Recent opponent strength calculation complete!\n")
         return df
 
     def augment_data_with_corner_swapping(self, df):
@@ -1269,6 +1090,7 @@ class AdvancedUFCPredictor:
             "ko_specialist_gap",
             "submission_specialist_gap",
             "experience_gap",
+            "skill_momentum",
             "finish_threat",
             "momentum_advantage",
             "pace_differential",
@@ -1298,11 +1120,12 @@ class AdvancedUFCPredictor:
             "ko_susceptibility_advantage",
             "sub_opportunity_advantage",
             "championship_pressure_advantage",
-            "fighter_quality_diff",
+            "opponent_quality_advantage",
             "technical_striker_advantage",
             "clinch_effectiveness_advantage",
+            "momentum_velocity",
             "championship_impact",
-            "fighter_quality_momentum",
+            "opponent_quality_momentum",
             "finishing_pressure_stress",
             "ring_rust_vs_momentum",
             "weight_class_adaptation",
@@ -1310,8 +1133,8 @@ class AdvancedUFCPredictor:
             "power_vs_technique",
             "cardio_advantage",
             "finish_pressure",
-            "composite_quality_gap",
-            "recent_opponent_strength_diff",
+            "opponent_quality_gap",
+            "recent_opponent_strength",
             "upset_potential",
         ]
 
@@ -1353,9 +1176,9 @@ class AdvancedUFCPredictor:
         if "stance_diff" in df_swapped.columns:
             df_swapped["stance_diff"] = -df_swapped["stance_diff"]
 
-        # Handle ring rust (logic needs to be reversed)
-        if "ring_rust_continuous" in df_swapped.columns:
-            df_swapped["ring_rust_continuous"] = -df_swapped["ring_rust_continuous"]
+        # Handle inactivity penalty (logic needs to be reversed)
+        if "inactivity_penalty" in df_swapped.columns:
+            df_swapped["inactivity_penalty"] = -df_swapped["inactivity_penalty"]
 
         print(f"Corner swapping complete. Created {len(df_swapped)} augmented fights.")
         return df_swapped
@@ -1563,27 +1386,25 @@ class AdvancedUFCPredictor:
             "weight_class_factor",
             "ring_rust_factor",
             "championship_pressure_advantage",  # This is the actual feature name
+            "momentum_swing",
             "style_clash_severity",
             "power_vs_technique",
             "cardio_advantage",
             "finish_pressure",
-            "composite_quality_gap",
-            "recent_opponent_strength_diff",
+            "opponent_quality_gap",
+            "recent_opponent_strength",
             "upset_potential",
             # NEW HIGH-IMPACT WINNER PREDICTION FEATURES
+            "recent_opponent_quality_diff",
             "finish_rate_diff",
             "stamina_factor_diff",
             "pressure_performance_diff",
             "comeback_ability_diff",
             "clutch_factor_diff",
             "recent_trend_diff",
-            "form_consistency_diff_corrected",
+            "momentum_shift_diff",
+            "form_consistency_diff",
             "upset_history_diff",
-            # NEW OPPONENT STRENGTH DIFFERENTIAL FEATURES
-            "recent_opponent_strength_diff",
-            "avg_opponent_win_rate_diff",
-            "avg_opponent_finish_rate_diff",
-            "avg_opponent_experience_diff",
         ]
 
         # Add neutral advantage features
@@ -1652,12 +1473,7 @@ class AdvancedUFCPredictor:
         df["r_total_fights"] = df["r_wins_corrected"] + df["r_losses_corrected"]
         df["b_total_fights"] = df["b_wins_corrected"] + df["b_losses_corrected"]
         df["experience_gap"] = df["r_total_fights"] - df["b_total_fights"]
-        # Symmetric ratio that handles zero fights properly
-        df["experience_ratio"] = np.where(
-            df["b_total_fights"] > 0,
-            df["r_total_fights"] / df["b_total_fights"],
-            np.where(df["r_total_fights"] > 0, 10.0, 1.0)  # Cap at 10x for extreme cases
-        )
+        df["experience_ratio"] = df["r_total_fights"] / (df["b_total_fights"] + 1)
 
         df["r_avg_fight_time"] = df["r_fight_time_minutes_corrected"] / (
             df["r_total_fights"] + 1
@@ -1667,7 +1483,9 @@ class AdvancedUFCPredictor:
         )
         df["avg_fight_time_diff"] = df["r_avg_fight_time"] - df["b_avg_fight_time"]
 
-        # skill_momentum removed - redundant with momentum_velocity and fighter_quality_momentum
+        df["skill_momentum"] = (
+            df["pro_SLpM_diff_corrected"] * df["recent_form_diff_corrected"]
+        )
         df["finish_threat"] = (
             df["r_ko_rate_corrected"] + df["r_sub_rate_corrected"]
         ) - (df["b_ko_rate_corrected"] + df["b_sub_rate_corrected"])
@@ -1676,10 +1494,10 @@ class AdvancedUFCPredictor:
             df["win_streak_diff_corrected"] - df["loss_streak_diff_corrected"]
         )
 
-        # Continuous ring rust penalty (scaled by months)
-        df["ring_rust_continuous"] = np.clip(
-            df["days_since_last_fight_diff_corrected"] / 180.0,  # Scale by 6 months
-            -2.0, 2.0  # Cap at ±2 years impact
+        df["inactivity_penalty"] = np.where(
+            df["days_since_last_fight_diff_corrected"] > 365,
+            -1,
+            np.where(df["days_since_last_fight_diff_corrected"] < -365, 1, 0),
         )
 
         df["pace_differential"] = (
@@ -1727,22 +1545,16 @@ class AdvancedUFCPredictor:
             df["experience_gap"] * df["pro_SLpM_diff_corrected"] / 50
         )
 
-        # Smooth veteran edge that scales with gap
-        df["veteran_edge"] = (
-            df["experience_gap"] * 
-            df["recent_form_diff_corrected"] * 
-            np.tanh(abs(df["experience_gap"]) / 5.0)  # Smooth scaling
+        df["veteran_edge"] = np.where(
+            np.abs(df["experience_gap"]) > 5,
+            df["experience_gap"] * df["recent_form_diff_corrected"],
+            0,
         )
 
-        # Novice gets penalized, veteran gets benefit (using 5 fights as threshold)
         df["novice_vulnerability"] = np.where(
-            df["r_total_fights"] < 5,
-            -abs(df["experience_gap"]) * 0.5,  # Red is novice → penalty
-            np.where(
-                df["b_total_fights"] < 5,
-                abs(df["experience_gap"]) * 0.5,   # Blue is novice → benefit to Red
-                0
-            )
+            (df["r_total_fights"] < 10) | (df["b_total_fights"] < 10),
+            -np.abs(df["experience_gap"]) * 0.5,
+            0,
         )
 
         # Experience gap historical win rate
@@ -1795,9 +1607,8 @@ class AdvancedUFCPredictor:
         df["grappler_advantage"] = df["r_grappler_score"] - df["b_grappler_score"]
 
         # Reach advantage in striking context
-        # Reach matters more in striking-heavy matchups (for either fighter)
-        df["effective_reach_advantage"] = df["reach_diff"] * np.where(
-            abs(df["striker_advantage"]) > 0.2, 1.5, 1.0
+        df["effective_reach_advantage"] = np.where(
+            df["striker_advantage"] > 0.2, df["reach_diff"] * 1.5, df["reach_diff"]
         )
 
         # Stance matchup
@@ -1920,12 +1731,18 @@ class AdvancedUFCPredictor:
         df["title_fight_ko_factor"] = np.where(df["is_title_bout"] == 1, 1.2, 1.0)
         df["five_round_advantage"] = np.where(df["total_rounds"] == 5, 1.15, 1.0)
 
-        # Recent form and momentum analysis (simplified direct calculation)
-        df["momentum_advantage"] = (
-            (df["r_recent_form_corrected"] - df["b_recent_form_corrected"]) * 0.4 +
-            (df["r_win_streak_corrected"] - df["b_win_streak_corrected"]) / 10.0 * 0.3 +
-            (df["r_recent_finish_rate_corrected"] - df["b_recent_finish_rate_corrected"]) * 0.3
+        # Recent form and momentum analysis
+        df["r_momentum_score"] = (
+            df["r_recent_form_corrected"] * 0.4
+            + df["r_win_streak_corrected"] / 10.0 * 0.3
+            + df["r_recent_finish_rate_corrected"] * 0.3
         )
+        df["b_momentum_score"] = (
+            df["b_recent_form_corrected"] * 0.4
+            + df["b_win_streak_corrected"] / 10.0 * 0.3
+            + df["b_recent_finish_rate_corrected"] * 0.3
+        )
+        df["momentum_advantage"] = df["r_momentum_score"] - df["b_momentum_score"]
 
         # Age and experience interaction
         df["age_experience_interaction"] = (
@@ -2040,24 +1857,25 @@ class AdvancedUFCPredictor:
             df["r_championship_pressure"] - df["b_championship_pressure"]
         )
 
-        # Fighter quality score (composite of recent performance)
-        # 60% recent win rate + 40% recent finish rate
-        df["r_fighter_quality"] = (
+        # Recent opponent quality analysis (using available features)
+        df["r_opponent_quality"] = (
             df["r_recent_form_corrected"] * 0.6
             + df["r_recent_finish_rate_corrected"] * 0.4
         )
-        df["b_fighter_quality"] = (
+        df["b_opponent_quality"] = (
             df["b_recent_form_corrected"] * 0.6
             + df["b_recent_finish_rate_corrected"] * 0.4
         )
-        # Note: fighter_quality_diff removed - redundant with recent_form_diff + finish_rate_diff
+        df["opponent_quality_advantage"] = (
+            df["r_opponent_quality"] - df["b_opponent_quality"]
+        )
 
         # Fight ending probability by round
-        # Average finish rate of both fighters (not multiplication)
         df["early_finish_probability"] = (
-            (df["r_ko_rate_corrected"] + df["r_sub_rate_corrected"]) +
-            (df["b_ko_rate_corrected"] + df["b_sub_rate_corrected"])
-        ) / 2
+            (df["r_ko_rate_corrected"] + df["r_sub_rate_corrected"])
+            * (df["b_ko_rate_corrected"] + df["b_sub_rate_corrected"])
+            * 0.5
+        )
 
         # Technical striking vs brawling analysis
         df["r_technical_striker"] = np.where(
@@ -2098,7 +1916,10 @@ class AdvancedUFCPredictor:
         # APE INDEX ADVANTAGE (Reach - Height) - Critical for striking range
         df["ape_index_advantage"] = df["ape_index_diff"]
 
-        # momentum_velocity removed - redundant with momentum_advantage
+        # ENHANCED MOMENTUM FEATURES
+        df["momentum_velocity"] = (
+            df["r_recent_form_corrected"] - df["b_recent_form_corrected"]
+        ) * (df["r_win_streak_corrected"] - df["b_win_streak_corrected"])
 
         # FIGHTER STYLE MATCHUP DEPTH
         df["style_matchup_depth"] = (
@@ -2114,10 +1935,9 @@ class AdvancedUFCPredictor:
             * (df["r_recent_form_corrected"] - df["b_recent_form_corrected"])
         )
 
-        # FIGHTER QUALITY MOMENTUM
-        # Interaction between fighter quality and recent form
-        df["fighter_quality_momentum"] = (
-            df["r_fighter_quality"] - df["b_fighter_quality"]
+        # OPPONENT QUALITY MOMENTUM
+        df["opponent_quality_momentum"] = (
+            df["r_opponent_quality"] - df["b_opponent_quality"]
         ) * (df["r_recent_form_corrected"] - df["b_recent_form_corrected"])
 
         # FINISHING PRESSURE UNDER STRESS
@@ -2235,7 +2055,12 @@ class AdvancedUFCPredictor:
             * (df["r_recent_form_corrected"] - df["b_recent_form_corrected"])
         )
 
-        # momentum_swing removed - redundant with momentum_advantage
+        # MOMENTUM SWING - Recent performance trends
+        df["momentum_swing"] = (
+            df["r_recent_form_corrected"]
+            - df["b_recent_form_corrected"]
+            + (df["r_win_streak_corrected"] - df["b_win_streak_corrected"]) * 0.1
+        )
 
         # STYLE CLASH SEVERITY already created above
 
@@ -2264,22 +2089,26 @@ class AdvancedUFCPredictor:
             * 0.2
         )
 
-        # Recent opponent strength should now be calculated by calculate_recent_opponent_strength method
-        # No fallback needed as it's calculated in fix_data_leakage
+        # Create recent opponent strength columns if they don't exist
+        if "r_recent_opponent_strength" not in df.columns:
+            df["r_recent_opponent_strength"] = df[
+                "r_opponent_quality"
+            ]  # Use opponent quality as proxy
+        if "b_recent_opponent_strength" not in df.columns:
+            df["b_recent_opponent_strength"] = df[
+                "b_opponent_quality"
+            ]  # Use opponent quality as proxy
 
-        # COMPOSITE QUALITY GAP - Fighter quality + opponent strength
-        # Combines fighter's own performance quality with strength of opposition faced
-        df["composite_quality_gap"] = (
-            df["r_fighter_quality"]
-            - df["b_fighter_quality"]
+        # OPPONENT QUALITY GAP - Quality of recent opponents
+        df["opponent_quality_gap"] = (
+            df["r_opponent_quality"]
+            - df["b_opponent_quality"]
             + (df["r_recent_opponent_strength"] - df["b_recent_opponent_strength"])
             * 0.5
         )
 
-        # RECENT OPPONENT STRENGTH - Strength of recent competition (differential)
-        # Positive = Red fighter faced stronger opponents
-        # Negative = Blue fighter faced stronger opponents
-        df["recent_opponent_strength_diff"] = (
+        # RECENT OPPONENT STRENGTH - Strength of recent competition
+        df["recent_opponent_strength"] = (
             df["r_recent_opponent_strength"] - df["b_recent_opponent_strength"]
         )
 
@@ -2295,7 +2124,10 @@ class AdvancedUFCPredictor:
         # NEW HIGH-IMPACT WINNER PREDICTION FEATURES
         # ============================================================================
         
-        # RECENT OPPONENT QUALITY - Removed redundant feature that mixed opponent strength with fighter's own record
+        # RECENT OPPONENT QUALITY - Quality of recent opponents
+        df["r_recent_opponent_quality"] = df["r_recent_opponent_strength"] * 0.7 + df["r_wins_corrected"] * 0.3
+        df["b_recent_opponent_quality"] = df["b_recent_opponent_strength"] * 0.7 + df["b_wins_corrected"] * 0.3
+        df["recent_opponent_quality_diff"] = df["r_recent_opponent_quality"] - df["b_recent_opponent_quality"]
         
         # FINISH RATE - Recent finishing ability
         df["r_finish_rate"] = (df["r_ko_rate_corrected"] + df["r_sub_rate_corrected"]) / 2
@@ -2345,14 +2177,15 @@ class AdvancedUFCPredictor:
         df["b_recent_trend"] = df["b_recent_form_corrected"] * df["b_win_streak_corrected"]
         df["recent_trend_diff"] = df["r_recent_trend"] - df["b_recent_trend"]
         
-        # momentum_shift_diff removed - redundant with momentum_advantage
+        # MOMENTUM SHIFT - Change in performance momentum
+        df["r_momentum_shift"] = df["r_win_streak_corrected"] - df["r_loss_streak_corrected"]
+        df["b_momentum_shift"] = df["b_win_streak_corrected"] - df["b_loss_streak_corrected"]
+        df["momentum_shift_diff"] = df["r_momentum_shift"] - df["b_momentum_shift"]
         
-        # FORM CONSISTENCY - How consistent recent performance is (pre-calculated in fix_data_leakage)
-        # These were already calculated chronologically to prevent data leakage
-        if "form_consistency_diff_corrected" not in df.columns:
-            # This shouldn't happen, but provide fallback
-            print("Warning: form_consistency_diff_corrected not found, using default")
-            df["form_consistency_diff_corrected"] = 0.0
+        # FORM CONSISTENCY - How consistent recent performance is
+        df["r_form_consistency"] = 1.0 - np.abs(df["r_recent_form_corrected"] - 0.5) * 2  # Closer to 0.5 = more consistent
+        df["b_form_consistency"] = 1.0 - np.abs(df["b_recent_form_corrected"] - 0.5) * 2
+        df["form_consistency_diff"] = df["r_form_consistency"] - df["b_form_consistency"]
         
         # UPSET HISTORY - History of causing/being upset
         df["r_upset_history"] = np.where(
@@ -2378,9 +2211,10 @@ class AdvancedUFCPredictor:
                 "ko_specialist_gap",
                 "submission_specialist_gap",
                 "experience_gap",
+                "skill_momentum",
                 "finish_threat",
                 "momentum_advantage",
-                "ring_rust_continuous",
+                "inactivity_penalty",
                 "pace_differential",
                 "r_total_fights",
                 "b_total_fights",
@@ -2416,7 +2250,7 @@ class AdvancedUFCPredictor:
                 "cardio_advantage",
                 "weight_class_ko_factor",
                 "championship_pressure_advantage",
-                "fighter_quality_diff",
+                "opponent_quality_advantage",
                 "early_finish_probability",
                 "technical_striker_advantage",
                 "clinch_effectiveness_advantage",
@@ -2427,17 +2261,19 @@ class AdvancedUFCPredictor:
                 "weight_class_factor",
                 "ring_rust_factor",
                 "championship_pressure",
+                "momentum_swing",
                 "style_clash_severity",
                 "power_vs_technique",
                 "cardio_advantage", # potentially causes error
                 "finish_pressure",
-                "composite_quality_gap",
-                "recent_opponent_strength_diff",
+                "opponent_quality_gap",
+                "recent_opponent_strength",
                 "upset_potential",
                 # ENHANCED ACCURACY FEATURES
+                "momentum_velocity",
                 "style_matchup_depth",
                 "championship_impact",
-                "fighter_quality_momentum",
+                "opponent_quality_momentum",
                 "finishing_pressure_stress",
                 "ring_rust_vs_momentum",
                 "weight_class_adaptation",
@@ -3559,17 +3395,23 @@ class AdvancedUFCPredictor:
                 )
                 - (b_stats["sub_rate"] * b_stats["pro_sub_avg"]),
                 "experience_gap": r_total_fights - b_total_fights,
-                # skill_momentum removed - redundant with momentum_velocity and fighter_quality_momentum
+                "skill_momentum": (
+                    (r_stats["pro_SLpM"] - b_stats["pro_SLpM"])
+                    * (r_stats["recent_form"] - b_stats["recent_form"])
+                ),
                 "finish_threat": (r_stats["ko_rate"] + r_stats["sub_rate"])
                 - (b_stats["ko_rate"] + b_stats["sub_rate"]),
                 "momentum_advantage": (
                     (r_stats["win_streak"] - b_stats["win_streak"])
                     - (r_stats["loss_streak"] - b_stats["loss_streak"])
                 ),
-                "ring_rust_continuous": np.clip(
-                    (r_stats["days_since_last_fight"] - b_stats["days_since_last_fight"]) / 180.0,
-                    -2.0, 2.0
-                ),
+                "inactivity_penalty": -1
+                if r_stats["days_since_last_fight"] - b_stats["days_since_last_fight"]
+                > 365
+                else 1
+                if b_stats["days_since_last_fight"] - r_stats["days_since_last_fight"]
+                > 365
+                else 0,
                 "pace_differential": (r_stats["pro_SLpM"] + r_stats["pro_td_avg"])
                 - (b_stats["pro_SLpM"] + b_stats["pro_td_avg"]),
                 "experience_ratio": r_total_fights / (b_total_fights + 1),
@@ -3615,22 +3457,18 @@ class AdvancedUFCPredictor:
             / 50
         )
 
-        # Smooth veteran edge that scales with gap
-        experience_gap = r_total_fights - b_total_fights
-        recent_form_diff = r_stats["recent_form"] - b_stats["recent_form"]
         fight_features["veteran_edge"] = (
-            experience_gap * 
-            recent_form_diff * 
-            np.tanh(abs(experience_gap) / 5.0)  # Smooth scaling
+            fight_features["experience_gap"]
+            * (r_stats["recent_form"] - b_stats["recent_form"])
+            if abs(fight_features["experience_gap"]) > 5
+            else 0
         )
 
-        # Novice gets penalized, veteran gets benefit (using 5 fights as threshold)
-        if r_total_fights < 5:
-            fight_features["novice_vulnerability"] = -abs(experience_gap) * 0.5  # Red is novice → penalty
-        elif b_total_fights < 5:
-            fight_features["novice_vulnerability"] = abs(experience_gap) * 0.5   # Blue is novice → benefit to Red
-        else:
-            fight_features["novice_vulnerability"] = 0
+        fight_features["novice_vulnerability"] = (
+            -abs(fight_features["experience_gap"]) * 0.5
+            if r_total_fights < 10 or b_total_fights < 10
+            else 0
+        )
 
         fight_features["exp_gap_historical_win_rate"] = 0.5
 
@@ -3663,9 +3501,10 @@ class AdvancedUFCPredictor:
         fight_features["r_grappler_score"] = r_grappler_score
         fight_features["b_grappler_score"] = b_grappler_score
 
-        # Reach matters more in striking-heavy matchups (for either fighter)
-        fight_features["effective_reach_advantage"] = fight_features["reach_diff"] * (
-            1.5 if abs(fight_features["striker_advantage"]) > 0.2 else 1.0
+        fight_features["effective_reach_advantage"] = (
+            fight_features["reach_diff"] * 1.5
+            if fight_features["striker_advantage"] > 0.2
+            else fight_features["reach_diff"]
         )
 
         if (
@@ -4014,28 +3853,30 @@ class AdvancedUFCPredictor:
         # DECISION PROBABILITY
         dec_base = w_dec_rate
 
-        # Factors that favor decisions (multiplicative effects)
-        decision_multiplier = 1.0
+        # Factors that favor decisions
+        decision_factors = []
 
         # High output but low finishing rate
         if w_slpm > 4.0 and w_ko_rate < 0.15:
-            decision_multiplier *= 1.2  # High volume, low power
+            decision_factors.append(1.3)
 
         # High takedown rate but low submission rate
         if w_td_avg > 2.0 and w_sub_rate < 0.10:
-            decision_multiplier *= 1.15  # Grappler without submissions
+            decision_factors.append(1.2)
 
         # Opponent durability
         if l_durability > 0.7:
-            decision_multiplier *= 1.25  # Durable opponent
+            decision_factors.append(1.4)
 
         # Distance fighting preference
         if w_distance_pct > 0.7:
-            decision_multiplier *= 1.1  # Distance fighter
+            decision_factors.append(1.1)
 
         # Clinch fighting (often leads to decisions)
         if w_clinch_pct > 0.3:
-            decision_multiplier *= 1.1  # Clinch fighter
+            decision_factors.append(1.15)
+
+        decision_multiplier = np.mean(decision_factors) if decision_factors else 1.0
         
         # Enhanced decision probability with new factors
         dec_prob = dec_base * decision_multiplier * (
@@ -4705,5 +4546,5 @@ if __name__ == "__main__":
 
 
 # ~ 13 Minutes
-# ✅ Winners correct:
-# ✅ Winner + method correct:
+# ✅ Winners correct: 152 / 218 → 69.7%
+# ✅ Winner + method correct: 81 / 218 → 37.2%
