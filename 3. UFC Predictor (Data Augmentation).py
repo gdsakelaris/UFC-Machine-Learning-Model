@@ -191,8 +191,6 @@ class AdvancedUFCPredictor:
         # Set TensorFlow random seed if available
         if HAS_TENSORFLOW:
             try:
-                import tensorflow as tf
-
                 tf.random.set_seed(42)
                 # Enable deterministic operations for consistency
                 tf.config.experimental.enable_op_determinism()
@@ -2907,7 +2905,7 @@ class AdvancedUFCPredictor:
                 "random_state": 42,
                 "eval_metric": "logloss",
                 "tree_method": "hist",
-                "device": "cuda",  # GPU acceleration
+                "device": "cpu",  # CPU for deterministic results
                 "seed": 42,
                 "enable_categorical": True,
                 "max_delta_step": 1,
@@ -2953,9 +2951,7 @@ class AdvancedUFCPredictor:
                             reg_alpha=0.1,  # Keep same
                             reg_lambda=0.8,  # Keep same
                             min_child_weight=3,  # Keep same
-                            device="gpu",  # GPU acceleration
-                            gpu_platform_id=0,  # Specify GPU platform
-                            gpu_device_id=0,  # Specify GPU device
+                            device="cpu",  # CPU for deterministic results
                             random_state=42,
                             verbose=-1,
                         ),
@@ -3302,7 +3298,7 @@ class AdvancedUFCPredictor:
                             colsample_bytree=0.8,  # 0.85 -> 0.8 (faster training)
                             reg_alpha=0.15,
                             reg_lambda=0.8,
-                            device="gpu",  # GPU acceleration
+                            device="cpu",  # CPU for deterministic results
                             random_state=42,
                             verbose=-1,
                         ),
@@ -3580,7 +3576,7 @@ class AdvancedUFCPredictor:
                     "random_state": 42,
                     "eval_metric": "logloss",
                     "tree_method": "hist",
-                    "device": "cuda",  # GPU acceleration
+                    "device": "cpu",  # CPU for deterministic results
                     "seed": 42,
                 }
 
@@ -5119,6 +5115,6 @@ if __name__ == "__main__":
         # Don't exit, just print the error for debugging
 
 
-# ~ 14 Minutes
-# ✅ Winners correct:
-# ✅ Winner + method correct:
+# ~ 12 Minutes
+# ✅ Winner: 172/229 → 75.11%
+# ✅ Winner + method correct: 93/229 → 40.61%
