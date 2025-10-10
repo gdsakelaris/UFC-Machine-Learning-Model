@@ -5113,8 +5113,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Error in UFC Predictor execution: {e}")
         # Don't exit, just print the error for debugging
-
-
-# ~ 12 Minutes
-# ✅ Winner: 172/229 → 75.11%
-# ✅ Winner + method correct: 93/229 → 40.61%
