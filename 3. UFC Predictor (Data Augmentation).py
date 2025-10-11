@@ -3,12 +3,11 @@ import os
 import random
 import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog, messagebox
-import json
 import pandas as pd
 import numpy as np
 import io
-from contextlib import redirect_stdout, redirect_stderr
-from sklearn.model_selection import train_test_split, TimeSeriesSplit, cross_val_score
+from contextlib import redirect_stdout
+from sklearn.model_selection import train_test_split, TimeSeriesSplit
 from sklearn.ensemble import (
     RandomForestClassifier,
     VotingClassifier,
@@ -19,7 +18,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.feature_selection import SelectPercentile, f_classif
-from sklearn.metrics import classification_report, accuracy_score
+from sklearn.metrics import log_loss
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
@@ -267,6 +266,790 @@ class AdvancedUFCPredictor:
 
         peak_score = experience_factor * 0.4 + age_factor * 0.3 + form_factor * 0.3
         return peak_score
+
+    # ===== ADVANCED TEMPORAL FEATURE METHODS =====
+    
+    def calculate_fighter_trajectory(self, df, fighter_col, window):
+        """Calculate fighter performance trajectory over last N fights"""
+        trajectories = []
+        for idx, row in df.iterrows():
+            fighter = row[fighter_col]
+            if pd.isna(fighter):
+                trajectories.append(0.0)
+                continue
+                
+            try:
+                # Get all fights for this fighter up to current fight
+                fighter_fights = df[df[fighter_col] == fighter].copy()
+                if 'event_date' in fighter_fights.columns:
+                    fighter_fights = fighter_fights.sort_values('event_date')
+                
+                if len(fighter_fights) < 2:
+                    trajectories.append(0.0)
+                    continue
+                    
+                # Get last N fights (excluding current)
+                recent_fights = fighter_fights.iloc[:-1].tail(window)
+            except (KeyError, IndexError):
+                trajectories.append(0.0)
+                continue
+            
+            if len(recent_fights) < 2:
+                trajectories.append(0.0)
+                continue
+                
+            # Calculate trajectory as slope of win rate over time
+            win_rates = []
+            for i, fight in recent_fights.iterrows():
+                if 'winner' in fight and 'r_fighter' in fight and 'b_fighter' in fight:
+                    if fight['r_fighter'] == fighter:
+                        win_rates.append(1.0 if fight['winner'] == 'Red' else 0.0)
+                    elif fight['b_fighter'] == fighter:
+                        win_rates.append(1.0 if fight['winner'] == 'Blue' else 0.0)
+                    else:
+                        win_rates.append(0.5)  # Neutral if fighter not found
+                else:
+                    win_rates.append(0.5)
+            
+            if len(win_rates) >= 2:
+                # Calculate linear regression slope
+                x = np.arange(len(win_rates))
+                try:
+                    slope, _, _, _, _ = linregress(x, win_rates)
+                    trajectories.append(slope)
+                except (ValueError, ZeroDivisionError):
+                    trajectories.append(0.0)
+            else:
+                trajectories.append(0.0)
+                
+        return np.array(trajectories)
+
+    def calculate_opponent_quality(self, df, fighter_col):
+        """Calculate average opponent quality for each fighter"""
+        qualities = []
+        for idx, row in df.iterrows():
+            fighter = row[fighter_col]
+            if pd.isna(fighter):
+                qualities.append(0.0)
+                continue
+                
+            try:
+                # Get all fights for this fighter up to current fight
+                fighter_fights = df[df[fighter_col] == fighter].copy()
+                if 'event_date' in fighter_fights.columns:
+                    fighter_fights = fighter_fights.sort_values('event_date')
+                
+                if len(fighter_fights) < 2:
+                    qualities.append(0.0)
+                    continue
+                    
+                # Get last 5 fights (excluding current)
+                recent_fights = fighter_fights.iloc[:-1].tail(5)
+            except (KeyError, IndexError):
+                qualities.append(0.0)
+                continue
+            
+            opponent_qualities = []
+            for i, fight in recent_fights.iterrows():
+                if 'r_fighter' in fight and 'b_fighter' in fight:
+                    if fight['r_fighter'] == fighter:
+                        opponent = fight['b_fighter']
+                    else:
+                        opponent = fight['r_fighter']
+                    
+                    # Calculate opponent's win rate
+                    opponent_fights = df[(df['r_fighter'] == opponent) | (df['b_fighter'] == opponent)]
+                    if len(opponent_fights) > 0:
+                        wins = 0
+                        for _, opp_fight in opponent_fights.iterrows():
+                            if 'winner' in opp_fight:
+                                if (opp_fight['r_fighter'] == opponent and opp_fight['winner'] == 'Red') or \
+                                   (opp_fight['b_fighter'] == opponent and opp_fight['winner'] == 'Blue'):
+                                    wins += 1
+                        win_rate = wins / len(opponent_fights) if len(opponent_fights) > 0 else 0.5
+                        opponent_qualities.append(win_rate)
+                    else:
+                        opponent_qualities.append(0.5)
+            
+            if opponent_qualities:
+                qualities.append(np.mean(opponent_qualities))
+            else:
+                qualities.append(0.5)
+                
+        return np.array(qualities)
+
+    def calculate_fight_frequency(self, df, fighter_col):
+        """Calculate fight frequency (fights per year) for each fighter"""
+        frequencies = []
+        for idx, row in df.iterrows():
+            fighter = row[fighter_col]
+            if pd.isna(fighter):
+                frequencies.append(0.0)
+                continue
+                
+            try:
+                # Get all fights for this fighter up to current fight
+                fighter_fights = df[df[fighter_col] == fighter].copy()
+                if 'event_date' in fighter_fights.columns:
+                    fighter_fights = fighter_fights.sort_values('event_date')
+                    fighter_fights = fighter_fights.iloc[:-1]  # Exclude current fight
+            except (KeyError, IndexError):
+                frequencies.append(0.0)
+                continue
+                
+                if len(fighter_fights) >= 2:
+                    # Calculate time span
+                    try:
+                        first_fight = pd.to_datetime(fighter_fights['event_date'].iloc[0])
+                        last_fight = pd.to_datetime(fighter_fights['event_date'].iloc[-1])
+                        time_span_years = (last_fight - first_fight).days / 365.25
+                        
+                        if time_span_years > 0:
+                            frequency = len(fighter_fights) / time_span_years
+                            frequencies.append(frequency)
+                        else:
+                            frequencies.append(0.0)
+                    except (ValueError, TypeError, ZeroDivisionError):
+                        frequencies.append(0.0)
+                else:
+                    frequencies.append(0.0)
+            else:
+                frequencies.append(0.0)
+                
+        return np.array(frequencies)
+
+    def calculate_career_stage(self, df, fighter_col):
+        """Calculate career stage: 0=rookie, 1=developing, 2=prime, 3=declining, 4=veteran"""
+        stages = []
+        for idx, row in df.iterrows():
+            fighter = row[fighter_col]
+            if pd.isna(fighter):
+                stages.append(2.0)  # Default to prime
+                continue
+                
+            try:
+                # Get all fights for this fighter up to current fight
+                fighter_fights = df[df[fighter_col] == fighter].copy()
+                if 'event_date' in fighter_fights.columns:
+                    fighter_fights = fighter_fights.sort_values('event_date')
+                
+                total_fights = len(fighter_fights) - 1  # Exclude current fight
+                age = row.get('r_age_at_event' if fighter_col == 'r_fighter' else 'b_age_at_event', 25)
+            except (KeyError, IndexError):
+                stages.append(2.0)  # Default to prime
+                continue
+            
+            if total_fights <= 3:
+                stage = 0  # Rookie
+            elif total_fights <= 8:
+                stage = 1  # Developing
+            elif total_fights <= 20 and age <= 32:
+                stage = 2  # Prime
+            elif total_fights <= 30 and age <= 35:
+                stage = 3  # Declining
+            else:
+                stage = 4  # Veteran
+                
+            stages.append(float(stage))
+            
+        return np.array(stages)
+
+    # ===== CONTEXTUAL FEATURE METHODS =====
+    
+    def calculate_weight_class_factor(self, df):
+        """Calculate weight class specific factors"""
+        factors = []
+        for idx, row in df.iterrows():
+            weight_class = row.get('weight_class', 'Unknown')
+            
+            # Different weight classes have different fighting dynamics
+            if 'Heavyweight' in str(weight_class):
+                factor = 1.2  # More KO power, less technical
+            elif 'Light Heavyweight' in str(weight_class):
+                factor = 1.1  # Good balance of power and technique
+            elif 'Middleweight' in str(weight_class):
+                factor = 1.0  # Baseline
+            elif 'Welterweight' in str(weight_class):
+                factor = 0.95  # More technical, less power
+            elif 'Lightweight' in str(weight_class):
+                factor = 0.9  # Very technical, speed focused
+            elif 'Featherweight' in str(weight_class):
+                factor = 0.85  # High pace, technical
+            elif 'Bantamweight' in str(weight_class):
+                factor = 0.8  # Very high pace, technical
+            elif 'Flyweight' in str(weight_class):
+                factor = 0.75  # Highest pace, most technical
+            else:
+                factor = 1.0  # Default
+                
+            factors.append(factor)
+            
+        return np.array(factors)
+
+    def calculate_location_advantage(self, df):
+        """Calculate location-based advantage"""
+        advantages = []
+        for idx, row in df.iterrows():
+            location = row.get('event_location', 'Unknown')
+            
+            # Simple location advantage calculation
+            # In reality, this would be more complex based on fighter origins
+            if 'Las Vegas' in str(location) or 'Nevada' in str(location):
+                advantage = 0.0  # Neutral venue
+            elif 'New York' in str(location) or 'New Jersey' in str(location):
+                advantage = 0.0  # Neutral venue
+            else:
+                advantage = 0.0  # Default neutral
+                
+            advantages.append(advantage)
+            
+        return np.array(advantages)
+
+    def calculate_event_significance(self, df):
+        """Calculate event significance factor"""
+        significances = []
+        for idx, row in df.iterrows():
+            is_title = row.get('is_title_bout', 0)
+            total_rounds = row.get('total_rounds', 3)
+            event_name = row.get('event_name', '')
+            
+            # Title fights are more significant
+            title_factor = 1.5 if is_title else 1.0
+            
+            # 5-round fights are more significant
+            rounds_factor = 1.2 if total_rounds == 5 else 1.0
+            
+            # Main event factor (simplified)
+            main_event_factor = 1.1 if 'main event' in str(event_name).lower() else 1.0
+            
+            significance = title_factor * rounds_factor * main_event_factor
+            significances.append(significance)
+            
+        return np.array(significances)
+
+    def calculate_referee_factor(self, df):
+        """Calculate referee-specific factors"""
+        factors = []
+        for idx, row in df.iterrows():
+            referee = row.get('referee', 'Unknown')
+            
+            # Simple referee factor (in reality, would be based on historical data)
+            # Some refs are known for stopping fights early, others let them go longer
+            if 'Herb' in str(referee):
+                factor = 1.0  # Neutral
+            elif 'Mazzagatti' in str(referee):
+                factor = 0.9  # Known for late stoppages
+            else:
+                factor = 1.0  # Default neutral
+                
+            factors.append(factor)
+            
+        return np.array(factors)
+
+    # ===== ADVANCED STATISTICAL FEATURE METHODS =====
+    
+    def calculate_momentum_quality(self, df, fighter_col):
+        """Calculate momentum with quality weighting"""
+        momentums = []
+        for idx, row in df.iterrows():
+            fighter = row[fighter_col]
+            if pd.isna(fighter):
+                momentums.append(0.0)
+                continue
+                
+            try:
+                # Get recent fights for this fighter
+                fighter_fights = df[df[fighter_col] == fighter].copy()
+                if 'event_date' in fighter_fights.columns:
+                    fighter_fights = fighter_fights.sort_values('event_date')
+                recent_fights = fighter_fights.iloc[:-1].tail(5)  # Last 5 fights
+            except (KeyError, IndexError):
+                momentums.append(0.0)
+                continue
+            
+            if len(recent_fights) == 0:
+                momentums.append(0.0)
+                continue
+                
+            weighted_wins = 0
+            total_weight = 0
+            
+            for i, fight in recent_fights.iterrows():
+                # Weight more recent fights higher
+                weight = 1.0 / (len(recent_fights) - i)
+                
+                # Check if fighter won
+                won = False
+                if 'winner' in fight and 'r_fighter' in fight and 'b_fighter' in fight:
+                    if fight['r_fighter'] == fighter and fight['winner'] == 'Red':
+                        won = True
+                    elif fight['b_fighter'] == fighter and fight['winner'] == 'Blue':
+                        won = True
+                
+                # Add opponent quality weighting
+                opponent_quality = 0.5  # Default
+                if 'r_fighter' in fight and 'b_fighter' in fight:
+                    opponent = fight['b_fighter'] if fight['r_fighter'] == fighter else fight['r_fighter']
+                    opponent_fights = df[(df['r_fighter'] == opponent) | (df['b_fighter'] == opponent)]
+                    if len(opponent_fights) > 0:
+                        wins = 0
+                        for _, opp_fight in opponent_fights.iterrows():
+                            if 'winner' in opp_fight:
+                                if (opp_fight['r_fighter'] == opponent and opp_fight['winner'] == 'Red') or \
+                                   (opp_fight['b_fighter'] == opponent and opp_fight['winner'] == 'Blue'):
+                                    wins += 1
+                        opponent_quality = wins / len(opponent_fights) if len(opponent_fights) > 0 else 0.5
+                
+                # Weight by opponent quality
+                weight *= (0.5 + opponent_quality)
+                
+                if won:
+                    weighted_wins += weight
+                total_weight += weight
+            
+            momentum = weighted_wins / total_weight if total_weight > 0 else 0.0
+            momentums.append(momentum)
+            
+        return np.array(momentums)
+
+    def calculate_pressure_performance(self, df, fighter_col):
+        """Calculate performance under pressure (title fights, main events)"""
+        performances = []
+        for idx, row in df.iterrows():
+            fighter = row[fighter_col]
+            if pd.isna(fighter):
+                performances.append(0.5)
+                continue
+                
+            try:
+                # Get high-pressure fights for this fighter
+                fighter_fights = df[df[fighter_col] == fighter].copy()
+                if 'event_date' in fighter_fights.columns:
+                    fighter_fights = fighter_fights.sort_values('event_date')
+                fighter_fights = fighter_fights.iloc[:-1]  # Exclude current fight
+            except (KeyError, IndexError):
+                performances.append(0.5)
+                continue
+            
+            # Filter for high-pressure fights
+            high_pressure_fights = fighter_fights[
+                (fighter_fights.get('is_title_bout', 0) == 1) |
+                (fighter_fights.get('total_rounds', 3) == 5)
+            ]
+            
+            if len(high_pressure_fights) == 0:
+                performances.append(0.5)  # Default neutral
+                continue
+                
+            wins = 0
+            for _, fight in high_pressure_fights.iterrows():
+                if 'winner' in fight and 'r_fighter' in fight and 'b_fighter' in fight:
+                    if (fight['r_fighter'] == fighter and fight['winner'] == 'Red') or \
+                       (fight['b_fighter'] == fighter and fight['winner'] == 'Blue'):
+                        wins += 1
+            
+            performance = wins / len(high_pressure_fights) if len(high_pressure_fights) > 0 else 0.5
+            performances.append(performance)
+            
+        return np.array(performances)
+
+    def calculate_style_matchup(self, df):
+        """Calculate style matchup advantage"""
+        advantages = []
+        for idx, row in df.iterrows():
+            r_stance = row.get('r_stance', 'Orthodox')
+            b_stance = row.get('b_stance', 'Orthodox')
+            
+            # Stance matchup analysis
+            if r_stance == 'Southpaw' and b_stance == 'Orthodox':
+                advantage = 0.1  # Southpaw advantage
+            elif r_stance == 'Orthodox' and b_stance == 'Southpaw':
+                advantage = -0.1  # Southpaw disadvantage
+            elif r_stance == 'Switch' and b_stance != 'Switch':
+                advantage = 0.05  # Switch advantage
+            elif b_stance == 'Switch' and r_stance != 'Switch':
+                advantage = -0.05  # Switch disadvantage
+            else:
+                advantage = 0.0  # Neutral
+                
+            advantages.append(advantage)
+            
+        return np.array(advantages)
+
+    def calculate_physical_advantage_composite(self, df):
+        """Calculate composite physical advantage"""
+        advantages = []
+        for idx, row in df.iterrows():
+            height_diff = row.get('height_diff', 0)
+            reach_diff = row.get('reach_diff', 0)
+            weight_diff = row.get('weight_diff', 0)
+            age_diff = row.get('age_at_event_diff', 0)
+            
+            # Normalize and weight each factor
+            height_adv = np.tanh(height_diff / 3.0) * 0.3  # Height advantage
+            reach_adv = np.tanh(reach_diff / 3.0) * 0.4   # Reach advantage
+            weight_adv = np.tanh(weight_diff / 10.0) * 0.2  # Weight advantage
+            age_adv = np.tanh(-age_diff / 5.0) * 0.1      # Age advantage (younger is better)
+            
+            composite = height_adv + reach_adv + weight_adv + age_adv
+            advantages.append(composite)
+            
+        return np.array(advantages)
+
+    def calculate_fight_iq_differential(self, df):
+        """Calculate fight IQ differential based on technical metrics"""
+        diffs = []
+        for idx, row in df.iterrows():
+            # Technical metrics that indicate fight IQ
+            r_acc = row.get('r_pro_sig_str_acc_corrected', 0.5)
+            b_acc = row.get('b_pro_sig_str_acc_corrected', 0.5)
+            r_def = row.get('r_pro_str_def_corrected', 0.5)
+            b_def = row.get('b_pro_str_def_corrected', 0.5)
+            r_td_acc = row.get('r_pro_td_acc_corrected', 0.5)
+            b_td_acc = row.get('b_pro_td_acc_corrected', 0.5)
+            
+            # Calculate fight IQ score
+            r_iq = (r_acc + r_def + r_td_acc) / 3.0
+            b_iq = (b_acc + b_def + b_td_acc) / 3.0
+            
+            diff = r_iq - b_iq
+            diffs.append(diff)
+            
+        return np.array(diffs)
+
+    def calculate_mental_toughness_differential(self, df):
+        """Calculate mental toughness differential"""
+        diffs = []
+        for idx, row in df.iterrows():
+            # Factors that indicate mental toughness
+            r_wins = row.get('r_wins_corrected', 0)
+            b_wins = row.get('b_wins_corrected', 0)
+            r_losses = row.get('r_losses_corrected', 0)
+            b_losses = row.get('b_losses_corrected', 0)
+            
+            # Calculate comeback ability (wins after losses)
+            r_comeback = r_wins / (r_losses + 1) if r_losses > 0 else (r_wins if r_wins > 0 else 0.5)
+            b_comeback = b_wins / (b_losses + 1) if b_losses > 0 else (b_wins if b_wins > 0 else 0.5)
+            
+            diff = r_comeback - b_comeback
+            diffs.append(diff)
+            
+        return np.array(diffs)
+
+    def calculate_injury_resistance_differential(self, df):
+        """Calculate injury resistance differential"""
+        diffs = []
+        for idx, row in df.iterrows():
+            # Factors that indicate injury resistance
+            r_fights = row.get('r_total_fights', 0)
+            b_fights = row.get('b_total_fights', 0)
+            r_avg_time = row.get('r_avg_fight_time', 0)
+            b_avg_time = row.get('b_avg_fight_time', 0)
+            
+            # More fights and longer average fight times indicate durability
+            r_avg_time_safe = r_avg_time if r_avg_time > 0 else 7.5  # Default to 7.5 minutes
+            b_avg_time_safe = b_avg_time if b_avg_time > 0 else 7.5  # Default to 7.5 minutes
+            r_durability = r_fights * (r_avg_time_safe / 15.0)  # Normalize by 15 minutes
+            b_durability = b_fights * (b_avg_time_safe / 15.0)
+            
+            diff = r_durability - b_durability
+            diffs.append(diff)
+            
+        return np.array(diffs)
+
+    def calculate_weight_cut_impact_differential(self, df):
+        """Calculate weight cut impact differential"""
+        diffs = []
+        for idx, row in df.iterrows():
+            # Weight class and weight difference can indicate cut difficulty
+            weight_class = row.get('weight_class', 'Unknown')
+            weight_diff = row.get('weight_diff', 0)
+            
+            # Heavier fighters in lower weight classes may have harder cuts
+            if 'Flyweight' in str(weight_class):
+                cut_factor = 1.2
+            elif 'Bantamweight' in str(weight_class):
+                cut_factor = 1.1
+            elif 'Featherweight' in str(weight_class):
+                cut_factor = 1.0
+            elif 'Lightweight' in str(weight_class):
+                cut_factor = 0.9
+            elif 'Welterweight' in str(weight_class):
+                cut_factor = 0.8
+            else:
+                cut_factor = 1.0
+                
+            # Positive weight difference means red corner is heavier (harder cut)
+            impact = weight_diff * cut_factor * 0.01  # Scale down
+            diffs.append(impact)
+            
+        return np.array(diffs)
+
+    # ===== HYPERPARAMETER OPTIMIZATION METHODS =====
+    
+    def optimize_hyperparameters(self, X, y, model_type='xgb', n_trials=50):
+        """Optimize hyperparameters using Bayesian optimization"""
+        print(f"Optimizing {model_type} hyperparameters with {n_trials} trials...")
+        
+        if model_type == 'xgb' and HAS_XGBOOST:
+            return self._optimize_xgb_hyperparameters(X, y, n_trials)
+        elif model_type == 'lgbm' and HAS_LIGHTGBM:
+            return self._optimize_lgbm_hyperparameters(X, y, n_trials)
+        elif model_type == 'catboost' and HAS_CATBOOST:
+            return self._optimize_catboost_hyperparameters(X, y, n_trials)
+        else:
+            print(f"Model type {model_type} not available, using default parameters")
+            return {}
+
+    def _optimize_xgb_hyperparameters(self, X, y, n_trials):
+        """Optimize XGBoost hyperparameters using simple grid search"""
+        best_params = {}
+        best_score = 0
+        
+        # Define parameter grid
+        param_grid = {
+            'n_estimators': [800, 1000, 1200],
+            'max_depth': [8, 10, 12],
+            'learning_rate': [0.008, 0.01, 0.015],
+            'subsample': [0.85, 0.9, 0.95],
+            'colsample_bytree': [0.85, 0.9, 0.95],
+            'reg_alpha': [0.03, 0.05, 0.08],
+            'reg_lambda': [0.4, 0.5, 0.6],
+            'min_child_weight': [1, 2, 3],
+            'gamma': [0.03, 0.05, 0.08]
+        }
+        
+        # Use TimeSeriesSplit for validation
+        tscv = TimeSeriesSplit(n_splits=3)
+        
+        for i in range(min(n_trials, 27)):  # Limit to reasonable number
+            # Sample parameters
+            params = {}
+            for key, values in param_grid.items():
+                params[key] = np.random.choice(values)
+            
+            # Add fixed parameters
+            params.update({
+                'n_jobs': -1,
+                'random_state': 42,
+                'eval_metric': 'logloss',
+                'tree_method': 'hist',
+                'device': 'cpu',
+                'seed': 42,
+                'enable_categorical': True
+            })
+            
+            # Cross-validation
+            scores = []
+            for train_idx, val_idx in tscv.split(X):
+                X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+                y_train, y_val = y[train_idx], y[val_idx]
+                
+                model = XGBClassifier(**params)
+                model.fit(X_train, y_train)
+                y_pred = model.predict_proba(X_val)[:, 1]
+                score = log_loss(y_val, y_pred)
+                scores.append(score)
+            
+            avg_score = np.mean(scores)
+            if avg_score > best_score:
+                best_score = avg_score
+                best_params = params.copy()
+                print(f"New best score: {best_score:.4f}")
+        
+        print(f"Best XGBoost parameters: {best_params}")
+        return best_params
+
+    def _optimize_lgbm_hyperparameters(self, X, y, n_trials):
+        """Optimize LightGBM hyperparameters"""
+        best_params = {}
+        best_score = 0
+        
+        param_grid = {
+            'n_estimators': [300, 400, 500],
+            'max_depth': [6, 7, 8],
+            'learning_rate': [0.025, 0.03, 0.035],
+            'num_leaves': [30, 40, 50],
+            'subsample': [0.75, 0.8, 0.85],
+            'colsample_bytree': [0.75, 0.8, 0.85],
+            'reg_alpha': [0.08, 0.1, 0.12],
+            'reg_lambda': [0.7, 0.8, 0.9]
+        }
+        
+        tscv = TimeSeriesSplit(n_splits=3)
+        
+        for i in range(min(n_trials, 27)):
+            params = {}
+            for key, values in param_grid.items():
+                params[key] = np.random.choice(values)
+            
+            params.update({
+                'device': 'cpu',
+                'random_state': 42,
+                'verbose': -1
+            })
+            
+            scores = []
+            for train_idx, val_idx in tscv.split(X):
+                X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+                y_train, y_val = y[train_idx], y[val_idx]
+                
+                model = LGBMClassifier(**params)
+                model.fit(X_train, y_train)
+                y_pred = model.predict_proba(X_val)[:, 1]
+                score = log_loss(y_val, y_pred)
+                scores.append(score)
+            
+            avg_score = np.mean(scores)
+            if avg_score > best_score:
+                best_score = avg_score
+                best_params = params.copy()
+                print(f"New best LGBM score: {best_score:.4f}")
+        
+        print(f"Best LightGBM parameters: {best_params}")
+        return best_params
+
+    def _optimize_catboost_hyperparameters(self, X, y, n_trials):
+        """Optimize CatBoost hyperparameters"""
+        best_params = {}
+        best_score = 0
+        
+        param_grid = {
+            'iterations': [300, 400, 500],
+            'depth': [6, 7, 8],
+            'learning_rate': [0.025, 0.03, 0.035],
+            'l2_leaf_reg': [0.7, 0.8, 0.9]
+        }
+        
+        tscv = TimeSeriesSplit(n_splits=3)
+        
+        for i in range(min(n_trials, 27)):
+            params = {}
+            for key, values in param_grid.items():
+                params[key] = np.random.choice(values)
+            
+            params.update({
+                'task_type': 'CPU',
+                'random_state': 42,
+                'verbose': 0
+            })
+            
+            scores = []
+            for train_idx, val_idx in tscv.split(X):
+                X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+                y_train, y_val = y[train_idx], y[val_idx]
+                
+                model = CatBoostClassifier(**params)
+                model.fit(X_train, y_train)
+                y_pred = model.predict_proba(X_val)[:, 1]
+                score = log_loss(y_val, y_pred)
+                scores.append(score)
+            
+            avg_score = np.mean(scores)
+            if avg_score > best_score:
+                best_score = avg_score
+                best_params = params.copy()
+                print(f"New best CatBoost score: {best_score:.4f}")
+        
+        print(f"Best CatBoost parameters: {best_params}")
+        return best_params
+
+    # ===== ENHANCED ENSEMBLE METHODS =====
+    
+    def create_dynamic_ensemble(self, base_models, X, y):
+        """Create dynamic ensemble with confidence-based weighting"""
+        print("Creating dynamic ensemble with confidence-based weighting...")
+        
+        # Train base models
+        trained_models = {}
+        for name, model in base_models:
+            print(f"Training {name}...")
+            model.fit(X, y)
+            trained_models[name] = model
+        
+        # Create meta-features for dynamic weighting
+        meta_features = self._create_meta_features(X, trained_models)
+        
+        # Train dynamic weighting model
+        dynamic_weights = self._train_dynamic_weights(meta_features, y)
+        
+        return trained_models, dynamic_weights
+
+    def _create_meta_features(self, X, trained_models):
+        """Create meta-features for dynamic weighting"""
+        meta_features = []
+        
+        for name, model in trained_models.items():
+            # Get predictions and confidence
+            pred_proba = model.predict_proba(X)
+            confidence = np.max(pred_proba, axis=1)
+            
+            # Get feature importance (if available)
+            if hasattr(model, 'feature_importances_'):
+                importance = model.feature_importances_
+            else:
+                importance = np.zeros(X.shape[1])
+            
+            meta_features.extend([confidence, importance])
+        
+        return np.column_stack(meta_features)
+
+    def _train_dynamic_weights(self, meta_features, y):
+        """Train dynamic weighting model"""
+        # Simple linear model for dynamic weighting
+        from sklearn.linear_model import Ridge
+        
+        # Create target for weighting (accuracy on validation set)
+        tscv = TimeSeriesSplit(n_splits=3)
+        weights_target = []
+        
+        for train_idx, val_idx in tscv.split(meta_features):
+            X_train, X_val = meta_features[train_idx], meta_features[val_idx]
+            y_train, y_val = y[train_idx], y[val_idx]
+            
+            # Calculate accuracy for each model
+            val_acc = []
+            for i in range(0, meta_features.shape[1], 2):  # Every other feature is confidence
+                confidence = X_val[:, i]
+                # Simple accuracy proxy based on confidence
+                acc = np.mean(confidence)
+                val_acc.append(acc)
+            
+            weights_target.extend(val_acc)
+        
+        # Train Ridge regression for dynamic weighting
+        weight_model = Ridge(alpha=0.1)
+        weight_model.fit(meta_features, weights_target)
+        
+        return weight_model
+
+    def predict_with_dynamic_ensemble(self, X, trained_models, dynamic_weights):
+        """Make predictions with dynamic ensemble"""
+        predictions = []
+        confidences = []
+        
+        for name, model in trained_models.items():
+            pred_proba = model.predict_proba(X)
+            pred = model.predict(X)
+            confidence = np.max(pred_proba, axis=1)
+            
+            predictions.append(pred_proba)
+            confidences.append(confidence)
+        
+        # Create meta-features for dynamic weighting
+        meta_features = self._create_meta_features(X, trained_models)
+        
+        # Get dynamic weights
+        weights = dynamic_weights.predict(meta_features)
+        weights = np.maximum(weights, 0)  # Ensure non-negative
+        weights = weights / np.sum(weights, axis=1, keepdims=True)  # Normalize
+        
+        # Weighted ensemble prediction
+        final_pred = np.zeros_like(predictions[0])
+        for i, pred in enumerate(predictions):
+            final_pred += weights[:, i:i+1] * pred
+        
+        return final_pred
 
     def build_deep_learning_model(self, num_features, num_fighters):
         """Build enhanced TensorFlow deep learning model with fighter embeddings and method prediction"""
@@ -1459,6 +2242,167 @@ class AdvancedUFCPredictor:
             for feature in new_features:
                 if feature not in feature_columns:
                     feature_columns.append(feature)
+
+        # ===== ADVANCED TEMPORAL FEATURES =====
+        print("Adding advanced temporal features...")
+        
+        # Fighter trajectory analysis (last 3, 5, 10 fights)
+        try:
+            for window in [3, 5, 10]:
+                df[f"r_trajectory_{window}"] = self.calculate_fighter_trajectory(df, "r_fighter", window)
+                df[f"b_trajectory_{window}"] = self.calculate_fighter_trajectory(df, "b_fighter", window)
+                df[f"trajectory_diff_{window}"] = df[f"r_trajectory_{window}"] - df[f"b_trajectory_{window}"]
+                feature_columns.extend([f"r_trajectory_{window}", f"b_trajectory_{window}", f"trajectory_diff_{window}"])
+        except Exception as e:
+            print(f"Warning: Error in trajectory features: {e}")
+            # Add default values
+            for window in [3, 5, 10]:
+                df[f"r_trajectory_{window}"] = 0.0
+                df[f"b_trajectory_{window}"] = 0.0
+                df[f"trajectory_diff_{window}"] = 0.0
+                feature_columns.extend([f"r_trajectory_{window}", f"b_trajectory_{window}", f"trajectory_diff_{window}"])
+
+        # Opponent quality progression
+        try:
+            df["r_opponent_quality"] = self.calculate_opponent_quality(df, "r_fighter")
+            df["b_opponent_quality"] = self.calculate_opponent_quality(df, "b_fighter")
+            df["opponent_quality_diff"] = df["r_opponent_quality"] - df["b_opponent_quality"]
+            feature_columns.extend(["r_opponent_quality", "b_opponent_quality", "opponent_quality_diff"])
+        except Exception as e:
+            print(f"Warning: Error in opponent quality features: {e}")
+            df["r_opponent_quality"] = 0.5
+            df["b_opponent_quality"] = 0.5
+            df["opponent_quality_diff"] = 0.0
+            feature_columns.extend(["r_opponent_quality", "b_opponent_quality", "opponent_quality_diff"])
+
+        # Fight frequency impact (ring rust vs overtraining)
+        try:
+            df["r_fight_frequency"] = self.calculate_fight_frequency(df, "r_fighter")
+            df["b_fight_frequency"] = self.calculate_fight_frequency(df, "b_fighter")
+            df["fight_frequency_diff"] = df["r_fight_frequency"] - df["b_fight_frequency"]
+            feature_columns.extend(["r_fight_frequency", "b_fight_frequency", "fight_frequency_diff"])
+        except Exception as e:
+            print(f"Warning: Error in fight frequency features: {e}")
+            df["r_fight_frequency"] = 0.0
+            df["b_fight_frequency"] = 0.0
+            df["fight_frequency_diff"] = 0.0
+            feature_columns.extend(["r_fight_frequency", "b_fight_frequency", "fight_frequency_diff"])
+
+        # Career stage modeling
+        try:
+            df["r_career_stage"] = self.calculate_career_stage(df, "r_fighter")
+            df["b_career_stage"] = self.calculate_career_stage(df, "b_fighter")
+            df["career_stage_diff"] = df["r_career_stage"] - df["b_career_stage"]
+            feature_columns.extend(["r_career_stage", "b_career_stage", "career_stage_diff"])
+        except Exception as e:
+            print(f"Warning: Error in career stage features: {e}")
+            df["r_career_stage"] = 2.0
+            df["b_career_stage"] = 2.0
+            df["career_stage_diff"] = 0.0
+            feature_columns.extend(["r_career_stage", "b_career_stage", "career_stage_diff"])
+
+        # ===== CONTEXTUAL FEATURES =====
+        print("Adding contextual features...")
+        
+        # Weight class dynamics
+        df["weight_class_factor"] = self.calculate_weight_class_factor(df)
+        feature_columns.append("weight_class_factor")
+
+        # Fight location impact
+        df["location_advantage"] = self.calculate_location_advantage(df)
+        feature_columns.append("location_advantage")
+
+        # Event significance
+        df["event_significance"] = self.calculate_event_significance(df)
+        feature_columns.append("event_significance")
+
+        # Referee tendencies (if available)
+        if "referee" in df.columns:
+            df["referee_factor"] = self.calculate_referee_factor(df)
+            feature_columns.append("referee_factor")
+
+        # ===== ADVANCED STATISTICAL FEATURES =====
+        print("Adding advanced statistical features...")
+        
+        # Momentum indicators with quality weighting
+        try:
+            df["r_momentum_quality"] = self.calculate_momentum_quality(df, "r_fighter")
+            df["b_momentum_quality"] = self.calculate_momentum_quality(df, "b_fighter")
+            df["momentum_quality_diff"] = df["r_momentum_quality"] - df["b_momentum_quality"]
+            feature_columns.extend(["r_momentum_quality", "b_momentum_quality", "momentum_quality_diff"])
+        except Exception as e:
+            print(f"Warning: Error in momentum features: {e}")
+            df["r_momentum_quality"] = 0.5
+            df["b_momentum_quality"] = 0.5
+            df["momentum_quality_diff"] = 0.0
+            feature_columns.extend(["r_momentum_quality", "b_momentum_quality", "momentum_quality_diff"])
+
+        # Pressure performance
+        try:
+            df["r_pressure_performance"] = self.calculate_pressure_performance(df, "r_fighter")
+            df["b_pressure_performance"] = self.calculate_pressure_performance(df, "b_fighter")
+            df["pressure_performance_diff"] = df["r_pressure_performance"] - df["b_pressure_performance"]
+            feature_columns.extend(["r_pressure_performance", "b_pressure_performance", "pressure_performance_diff"])
+        except Exception as e:
+            print(f"Warning: Error in pressure performance features: {e}")
+            df["r_pressure_performance"] = 0.5
+            df["b_pressure_performance"] = 0.5
+            df["pressure_performance_diff"] = 0.0
+            feature_columns.extend(["r_pressure_performance", "b_pressure_performance", "pressure_performance_diff"])
+
+        # Style matchup analysis
+        try:
+            df["style_matchup_advantage"] = self.calculate_style_matchup(df)
+            feature_columns.append("style_matchup_advantage")
+        except Exception as e:
+            print(f"Warning: Error in style matchup features: {e}")
+            df["style_matchup_advantage"] = 0.0
+            feature_columns.append("style_matchup_advantage")
+
+        # Physical advantage composite
+        try:
+            df["physical_advantage_composite"] = self.calculate_physical_advantage_composite(df)
+            feature_columns.append("physical_advantage_composite")
+        except Exception as e:
+            print(f"Warning: Error in physical advantage features: {e}")
+            df["physical_advantage_composite"] = 0.0
+            feature_columns.append("physical_advantage_composite")
+
+        # Fight IQ differential
+        try:
+            df["fight_iq_diff"] = self.calculate_fight_iq_differential(df)
+            feature_columns.append("fight_iq_diff")
+        except Exception as e:
+            print(f"Warning: Error in fight IQ features: {e}")
+            df["fight_iq_diff"] = 0.0
+            feature_columns.append("fight_iq_diff")
+
+        # Mental toughness differential
+        try:
+            df["mental_toughness_diff"] = self.calculate_mental_toughness_differential(df)
+            feature_columns.append("mental_toughness_diff")
+        except Exception as e:
+            print(f"Warning: Error in mental toughness features: {e}")
+            df["mental_toughness_diff"] = 0.0
+            feature_columns.append("mental_toughness_diff")
+
+        # Injury resistance and durability
+        try:
+            df["injury_resistance_diff"] = self.calculate_injury_resistance_differential(df)
+            feature_columns.append("injury_resistance_diff")
+        except Exception as e:
+            print(f"Warning: Error in injury resistance features: {e}")
+            df["injury_resistance_diff"] = 0.0
+            feature_columns.append("injury_resistance_diff")
+
+        # Weight cut impact
+        try:
+            df["weight_cut_impact_diff"] = self.calculate_weight_cut_impact_differential(df)
+            feature_columns.append("weight_cut_impact_diff")
+        except Exception as e:
+            print(f"Warning: Error in weight cut impact features: {e}")
+            df["weight_cut_impact_diff"] = 0.0
+            feature_columns.append("weight_cut_impact_diff")
 
         # Core derived features
         df["net_striking_advantage"] = (
@@ -2852,16 +3796,56 @@ class AdvancedUFCPredictor:
             # If no winner_method_simple column, create default method labels
             y_method = np.zeros(len(df), dtype=int)
 
-        (
-            X_train,
-            X_test,
-            y_winner_train,
-            y_winner_test,
-            y_method_train,
-            y_method_test,
-        ) = train_test_split(
-            X, y_winner, y_method, test_size=0.2, random_state=42, stratify=y_winner
-        )
+        # ===== ENHANCED VALIDATION STRATEGY =====
+        print("\n📊 IMPLEMENTING ENHANCED VALIDATION STRATEGY...")
+        
+        # Use TimeSeriesSplit for temporal validation
+        tscv = TimeSeriesSplit(n_splits=5)
+        
+        # For final train/test split, use stratified split but with time awareness
+        try:
+            if 'event_date' in df.columns:
+                # Sort by event date for temporal split
+                df_sorted = df.sort_values('event_date')
+                # Reset index to avoid index issues
+                df_sorted = df_sorted.reset_index(drop=True)
+                X_sorted = X.loc[df_sorted.index].reset_index(drop=True)
+                y_winner_sorted = y_winner[df_sorted.index]
+                y_method_sorted = y_method[df_sorted.index]
+                
+                # Use 80% for training, 20% for testing (temporal split)
+                split_idx = int(0.8 * len(X_sorted))
+                X_train = X_sorted.iloc[:split_idx]
+                X_test = X_sorted.iloc[split_idx:]
+                y_winner_train = y_winner_sorted[:split_idx]
+                y_winner_test = y_winner_sorted[split_idx:]
+                y_method_train = y_method_sorted[:split_idx]
+                y_method_test = y_method_sorted[split_idx:]
+            else:
+                # Fallback to stratified split if no date column
+                (
+                    X_train,
+                    X_test,
+                    y_winner_train,
+                    y_winner_test,
+                    y_method_train,
+                    y_method_test,
+                ) = train_test_split(
+                    X, y_winner, y_method, test_size=0.2, random_state=42, stratify=y_winner
+                )
+        except (KeyError, IndexError) as e:
+            print(f"Warning: Error in temporal split, using standard split: {e}")
+            # Fallback to standard stratified split
+            (
+                X_train,
+                X_test,
+                y_winner_train,
+                y_winner_test,
+                y_method_train,
+                y_method_test,
+            ) = train_test_split(
+                X, y_winner, y_method, test_size=0.2, random_state=42, stratify=y_winner
+            )
 
         print("\n" + "=" * 80)
         print("TRAINING ADVANCED STACKED ENSEMBLE MODEL")
@@ -2878,7 +3862,37 @@ class AdvancedUFCPredictor:
             [("num", numeric_transformer, feature_columns)]
         )
 
-        # Build base models for stacking
+        # ===== HYPERPARAMETER OPTIMIZATION =====
+        print("\n🔧 OPTIMIZING HYPERPARAMETERS...")
+        
+        # Optimize XGBoost parameters
+        if HAS_XGBOOST:
+            print("Optimizing XGBoost hyperparameters...")
+            xgb_optimized = self.optimize_hyperparameters(X_train, y_winner_train, 'xgb', n_trials=20)
+            if not xgb_optimized:
+                xgb_optimized = {}  # Use defaults if optimization fails
+        else:
+            xgb_optimized = {}
+            
+        # Optimize LightGBM parameters
+        if HAS_LIGHTGBM:
+            print("Optimizing LightGBM hyperparameters...")
+            lgbm_optimized = self.optimize_hyperparameters(X_train, y_winner_train, 'lgbm', n_trials=20)
+            if not lgbm_optimized:
+                lgbm_optimized = {}
+        else:
+            lgbm_optimized = {}
+            
+        # Optimize CatBoost parameters
+        if HAS_CATBOOST:
+            print("Optimizing CatBoost hyperparameters...")
+            catboost_optimized = self.optimize_hyperparameters(X_train, y_winner_train, 'catboost', n_trials=20)
+            if not catboost_optimized:
+                catboost_optimized = {}
+        else:
+            catboost_optimized = {}
+
+        # Build base models for stacking with optimized parameters
         # GPU Usage Strategy:
         # Sequential execution: XGBoost + LightGBM (GPU) + CatBoost + RandomForest + MLP (CPU)
         base_models = []
@@ -2888,19 +3902,19 @@ class AdvancedUFCPredictor:
             # Use balanced weights since data augmentation eliminates bias
             scale_pos = 1.0  # Balanced since we have equal red/blue representation after augmentation
 
-            # Create XGBoost classifier - DRASTICALLY IMPROVED FOR WINNER PREDICTION
+            # Create XGBoost classifier with optimized parameters
             xgb_params = {
-                "n_estimators": 1000,  # 500 -> 1000 (much more trees for better accuracy)
-                "max_depth": 10,  # 8 -> 10 (deeper trees for complex patterns)
-                "learning_rate": 0.01,  # 0.025 -> 0.01 (slower learning for better convergence)
-                "subsample": 0.9,  # 0.85 -> 0.9 (higher subsample for better performance)
-                "colsample_bytree": 0.9,  # 0.85 -> 0.9 (higher for better feature usage)
-                "colsample_bylevel": 0.9,  # 0.85 -> 0.9 (higher for better feature usage)
+                "n_estimators": xgb_optimized.get("n_estimators", 1000),
+                "max_depth": xgb_optimized.get("max_depth", 10),
+                "learning_rate": xgb_optimized.get("learning_rate", 0.01),
+                "subsample": xgb_optimized.get("subsample", 0.9),
+                "colsample_bytree": xgb_optimized.get("colsample_bytree", 0.9),
+                "colsample_bylevel": xgb_optimized.get("colsample_bylevel", 0.9),
                 "n_jobs": -1,
-                "reg_alpha": 0.05,  # 0.1 -> 0.05 (less regularization for more complexity)
-                "reg_lambda": 0.5,  # 0.8 -> 0.5 (less regularization for more complexity)
-                "min_child_weight": 2,  # 3 -> 2 (more sensitive to small changes)
-                "gamma": 0.05,  # 0.1 -> 0.05 (less pruning for more complexity)
+                "reg_alpha": xgb_optimized.get("reg_alpha", 0.05),
+                "reg_lambda": xgb_optimized.get("reg_lambda", 0.5),
+                "min_child_weight": xgb_optimized.get("min_child_weight", 2),
+                "gamma": xgb_optimized.get("gamma", 0.05),
                 "scale_pos_weight": scale_pos,
                 "random_state": 42,
                 "eval_metric": "logloss",
@@ -2909,7 +3923,6 @@ class AdvancedUFCPredictor:
                 "seed": 42,
                 "enable_categorical": True,
                 "max_delta_step": 1,
-                # EARLY STOPPING: Removed - requires validation set in pipeline
             }
 
             xgb_classifier = XGBClassifier(**xgb_params)
@@ -2942,15 +3955,15 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         LGBMClassifier(
-                            n_estimators=400,  # 500 -> 400 (faster training)
-                            max_depth=7,  # 8 -> 7 (faster training)
-                            learning_rate=0.03,  # 0.025 -> 0.03 (faster convergence)
-                            num_leaves=40,  # 50 -> 40 (faster training)
-                            subsample=0.8,  # 0.85 -> 0.8 (faster training)
-                            colsample_bytree=0.8,  # 0.85 -> 0.8 (faster training)
-                            reg_alpha=0.1,  # Keep same
-                            reg_lambda=0.8,  # Keep same
-                            min_child_weight=3,  # Keep same
+                            n_estimators=lgbm_optimized.get("n_estimators", 400),
+                            max_depth=lgbm_optimized.get("max_depth", 7),
+                            learning_rate=lgbm_optimized.get("learning_rate", 0.03),
+                            num_leaves=lgbm_optimized.get("num_leaves", 40),
+                            subsample=lgbm_optimized.get("subsample", 0.8),
+                            colsample_bytree=lgbm_optimized.get("colsample_bytree", 0.8),
+                            reg_alpha=lgbm_optimized.get("reg_alpha", 0.1),
+                            reg_lambda=lgbm_optimized.get("reg_lambda", 0.8),
+                            min_child_weight=lgbm_optimized.get("min_child_weight", 3),
                             device="cpu",  # CPU for deterministic results
                             random_state=42,
                             verbose=-1,
@@ -2975,10 +3988,10 @@ class AdvancedUFCPredictor:
                     (
                         "classifier",
                         CatBoostClassifier(
-                            iterations=400,  # 500 -> 400 (faster training)
-                            depth=7,  # 8 -> 7 (faster training)
-                            learning_rate=0.03,  # 0.025 -> 0.03 (faster convergence)
-                            l2_leaf_reg=0.8,  # Keep same
+                            iterations=catboost_optimized.get("iterations", 400),
+                            depth=catboost_optimized.get("depth", 7),
+                            learning_rate=catboost_optimized.get("learning_rate", 0.03),
+                            l2_leaf_reg=catboost_optimized.get("l2_leaf_reg", 0.8),
                             task_type="CPU",  # Use CPU to avoid persistent GPU conflicts
                             random_state=42,
                             verbose=0,
