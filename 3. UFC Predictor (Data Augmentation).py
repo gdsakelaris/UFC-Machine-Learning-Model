@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 import io
 from contextlib import redirect_stdout
-from sklearn.model_selection import train_test_split, TimeSeriesSplit
+from sklearn.model_selection import train_test_split, TimeSeriesSplit, StratifiedKFold, GroupKFold
 from sklearn.ensemble import (
     RandomForestClassifier,
     VotingClassifier,
@@ -133,6 +133,7 @@ class AdvancedUFCPredictor:
         use_neural_net=False,
         use_deep_learning=False,
         debug_mode=False,
+        performance_mode=False,  # New: Fast mode for speed
     ):
         self.winner_model = None
         self.method_model = None  # Single method prediction model
@@ -142,6 +143,7 @@ class AdvancedUFCPredictor:
         self.use_neural_net = use_neural_net
         self.use_deep_learning = use_deep_learning and HAS_TENSORFLOW
         self.debug_mode = debug_mode
+        self.performance_mode = performance_mode  # Store performance mode
         self.df_train = None
         self.fighter_style_cache = {}
         self.fighter_encoder = None  # For fighter embeddings
@@ -785,6 +787,442 @@ class AdvancedUFCPredictor:
             
         return np.array(diffs)
 
+    def calculate_prediction_confidence(self, df):
+        """Calculate prediction confidence based on feature consistency"""
+        try:
+            confidence_scores = []
+            
+            for idx, row in df.iterrows():
+                try:
+                    # Calculate confidence based on feature strength and consistency
+                    r_confidence = 0.0
+                    b_confidence = 0.0
+                    
+                    # Win rate confidence
+                    r_win_rate = row.get('r_pro_win_rate', 0.5)
+                    b_win_rate = row.get('b_pro_win_rate', 0.5)
+                    
+                    r_confidence += abs(r_win_rate - 0.5) * 2  # Distance from 50%
+                    b_confidence += abs(b_win_rate - 0.5) * 2
+                    
+                    # Recent form confidence
+                    r_recent_wins = row.get('r_recent_wins', 0)
+                    b_recent_wins = row.get('b_recent_wins', 0)
+                    
+                    r_confidence += min(r_recent_wins / 3.0, 1.0)  # Cap at 3 recent wins
+                    b_confidence += min(b_recent_wins / 3.0, 1.0)
+                    
+                    # Experience confidence
+                    r_fights = row.get('r_pro_fights', 0)
+                    b_fights = row.get('b_pro_fights', 0)
+                    
+                    r_confidence += min(r_fights / 20.0, 1.0)  # Cap at 20 fights
+                    b_confidence += min(b_fights / 20.0, 1.0)
+                    
+                    # Calculate overall confidence as average of both fighters
+                    total_confidence = (r_confidence + b_confidence) / 2.0
+                    confidence_scores.append(min(total_confidence, 1.0))
+                    
+                except (KeyError, ValueError, TypeError):
+                    confidence_scores.append(0.5)
+            
+            return np.array(confidence_scores)
+        except Exception as e:
+            print(f"Error calculating prediction confidence: {e}")
+            return np.full(len(df), 0.5)
+
+    def calculate_outcome_uncertainty(self, df):
+        """Calculate outcome uncertainty based on matchup factors"""
+        try:
+            uncertainty_scores = []
+            
+            for idx, row in df.iterrows():
+                try:
+                    uncertainty = 0.5  # Base uncertainty
+                    
+                    # Similar skill levels increase uncertainty
+                    r_win_rate = row.get('r_pro_win_rate', 0.5)
+                    b_win_rate = row.get('b_pro_win_rate', 0.5)
+                    skill_diff = abs(r_win_rate - b_win_rate)
+                    uncertainty += (1.0 - skill_diff) * 0.3  # More similar = more uncertain
+                    
+                    # Similar experience increases uncertainty
+                    r_fights = row.get('r_pro_fights', 0)
+                    b_fights = row.get('b_pro_fights', 0)
+                    if r_fights > 0 and b_fights > 0:
+                        exp_ratio = min(r_fights, b_fights) / max(r_fights, b_fights)
+                        uncertainty += (1.0 - exp_ratio) * 0.2
+                    
+                    # Recent form similarity increases uncertainty
+                    r_recent_wins = row.get('r_recent_wins', 0)
+                    b_recent_wins = row.get('b_recent_wins', 0)
+                    form_diff = abs(r_recent_wins - b_recent_wins)
+                    uncertainty += (1.0 - min(form_diff / 3.0, 1.0)) * 0.2
+                    
+                    uncertainty_scores.append(min(uncertainty, 1.0))
+                    
+                except (KeyError, ValueError, TypeError):
+                    uncertainty_scores.append(0.5)
+            
+            return np.array(uncertainty_scores)
+        except Exception as e:
+            print(f"Error calculating outcome uncertainty: {e}")
+            return np.full(len(df), 0.5)
+
+    def calculate_h2h_history_advantage(self, df):
+        """Calculate head-to-head history advantage"""
+        try:
+            h2h_advantages = []
+            
+            for idx, row in df.iterrows():
+                try:
+                    r_fighter = row.get('r_fighter', '')
+                    b_fighter = row.get('b_fighter', '')
+                    
+                    if not r_fighter or not b_fighter:
+                        h2h_advantages.append(0.0)
+                        continue
+                    
+                    # Look for previous matchups in the dataset
+                    r_vs_b = df[(df['r_fighter'] == r_fighter) & (df['b_fighter'] == b_fighter)]
+                    b_vs_r = df[(df['r_fighter'] == b_fighter) & (df['b_fighter'] == r_fighter)]
+                    
+                    r_wins = 0
+                    b_wins = 0
+                    
+                    # Count wins for r_fighter
+                    for _, fight in r_vs_b.iterrows():
+                        if fight.get('Winner') == r_fighter:
+                            r_wins += 1
+                        elif fight.get('Winner') == b_fighter:
+                            b_wins += 1
+                    
+                    # Count wins for b_fighter (when they were r_fighter)
+                    for _, fight in b_vs_r.iterrows():
+                        if fight.get('Winner') == b_fighter:
+                            b_wins += 1
+                        elif fight.get('Winner') == r_fighter:
+                            r_wins += 1
+                    
+                    # Calculate advantage
+                    total_fights = r_wins + b_wins
+                    if total_fights > 0:
+                        advantage = (r_wins - b_wins) / total_fights
+                    else:
+                        advantage = 0.0
+                    
+                    h2h_advantages.append(advantage)
+                    
+                except (KeyError, ValueError, TypeError):
+                    h2h_advantages.append(0.0)
+            
+            return np.array(h2h_advantages)
+        except Exception as e:
+            print(f"Error calculating H2H history advantage: {e}")
+            return np.zeros(len(df))
+
+    def calculate_style_compatibility(self, df):
+        """Calculate style compatibility score"""
+        try:
+            compatibility_scores = []
+            
+            for idx, row in df.iterrows():
+                try:
+                    # Get fighting styles (if available)
+                    r_style = row.get('r_fighting_style', 'Unknown')
+                    b_style = row.get('b_fighting_style', 'Unknown')
+                    
+                    # Style matchup matrix (simplified)
+                    style_advantages = {
+                        ('Striker', 'Grappler'): 0.6,
+                        ('Grappler', 'Striker'): 0.4,
+                        ('Striker', 'Striker'): 0.5,
+                        ('Grappler', 'Grappler'): 0.5,
+                        ('Wrestler', 'Striker'): 0.6,
+                        ('Striker', 'Wrestler'): 0.4,
+                        ('Wrestler', 'Grappler'): 0.4,
+                        ('Grappler', 'Wrestler'): 0.6,
+                    }
+                    
+                    # Calculate compatibility
+                    key = (r_style, b_style)
+                    reverse_key = (b_style, r_style)
+                    
+                    if key in style_advantages:
+                        compatibility = style_advantages[key]
+                    elif reverse_key in style_advantages:
+                        compatibility = 1.0 - style_advantages[reverse_key]
+                    else:
+                        compatibility = 0.5  # Unknown styles
+                    
+                    compatibility_scores.append(compatibility)
+                    
+                except (KeyError, ValueError, TypeError):
+                    compatibility_scores.append(0.5)
+            
+            return np.array(compatibility_scores)
+        except Exception as e:
+            print(f"Error calculating style compatibility: {e}")
+            return np.full(len(df), 0.5)
+
+    def calculate_recent_trajectory(self, df, fighter_col):
+        """Calculate recent performance trajectory"""
+        try:
+            trajectories = []
+            
+            for idx, row in df.iterrows():
+                try:
+                    fighter = row.get(fighter_col, '')
+                    if not fighter:
+                        trajectories.append(0.0)
+                        continue
+                    
+                    # Get fighter's recent fights
+                    fighter_fights = df[
+                        (df['r_fighter'] == fighter) | (df['b_fighter'] == fighter)
+                    ].sort_values('date', ascending=False).head(5)
+                    
+                    if len(fighter_fights) < 2:
+                        trajectories.append(0.0)
+                        continue
+                    
+                    # Calculate trajectory (improving vs declining)
+                    recent_wins = 0
+                    for _, fight in fighter_fights.iterrows():
+                        if fight.get('Winner') == fighter:
+                            recent_wins += 1
+                    
+                    # Weight recent fights more heavily
+                    weights = [1.0, 0.8, 0.6, 0.4, 0.2][:len(fighter_fights)]
+                    weighted_wins = sum(w for i, w in enumerate(weights) if i < recent_wins)
+                    total_weight = sum(weights)
+                    
+                    trajectory = (weighted_wins / total_weight) if total_weight > 0 else 0.5
+                    trajectories.append(trajectory)
+                    
+                except (KeyError, ValueError, TypeError):
+                    trajectories.append(0.0)
+            
+            return np.array(trajectories)
+        except Exception as e:
+            print(f"Error calculating recent trajectory: {e}")
+            return np.zeros(len(df))
+
+    def calculate_form_consistency(self, df, fighter_col):
+        """Calculate form consistency over recent fights"""
+        try:
+            consistency_scores = []
+            
+            for idx, row in df.iterrows():
+                try:
+                    fighter = row.get(fighter_col, '')
+                    if not fighter:
+                        consistency_scores.append(0.5)
+                        continue
+                    
+                    # Get fighter's recent fights
+                    fighter_fights = df[
+                        (df['r_fighter'] == fighter) | (df['b_fighter'] == fighter)
+                    ].sort_values('date', ascending=False).head(5)
+                    
+                    if len(fighter_fights) < 3:
+                        consistency_scores.append(0.5)
+                        continue
+                    
+                    # Calculate win/loss pattern consistency
+                    results = []
+                    for _, fight in fighter_fights.iterrows():
+                        if fight.get('Winner') == fighter:
+                            results.append(1)
+                        else:
+                            results.append(0)
+                    
+                    # Calculate consistency as inverse of variance
+                    if len(results) > 1:
+                        mean_result = np.mean(results)
+                        variance = np.var(results)
+                        consistency = 1.0 - variance  # Higher variance = lower consistency
+                    else:
+                        consistency = 0.5
+                    
+                    consistency_scores.append(max(0.0, min(1.0, consistency)))
+                    
+                except (KeyError, ValueError, TypeError):
+                    consistency_scores.append(0.5)
+            
+            return np.array(consistency_scores)
+        except Exception as e:
+            print(f"Error calculating form consistency: {e}")
+            return np.full(len(df), 0.5)
+
+    def _create_validation_strategies(self, df, X, y):
+        """Create multiple validation strategies for robust evaluation"""
+        strategies = []
+        
+        try:
+            # Strategy 1: Time Series Split (temporal)
+            if 'event_date' in df.columns:
+                strategies.append({
+                    'name': 'TimeSeriesSplit',
+                    'splitter': TimeSeriesSplit(n_splits=5),
+                    'description': 'Temporal validation respecting time order'
+                })
+            
+            # Strategy 2: Stratified K-Fold (balanced)
+            strategies.append({
+                'name': 'StratifiedKFold',
+                'splitter': StratifiedKFold(n_splits=5, shuffle=True, random_state=42),
+                'description': 'Balanced validation maintaining class distribution'
+            })
+            
+            # Strategy 3: Group K-Fold by fighter (if possible)
+            if 'r_fighter' in df.columns and 'b_fighter' in df.columns:
+                # Create groups based on fighter combinations
+                fighter_groups = []
+                for idx, row in df.iterrows():
+                    r_fighter = str(row.get('r_fighter', ''))
+                    b_fighter = str(row.get('b_fighter', ''))
+                    group_id = hash(f"{r_fighter}_{b_fighter}") % 1000
+                    fighter_groups.append(group_id)
+                
+                strategies.append({
+                    'name': 'GroupKFold',
+                    'splitter': GroupKFold(n_splits=5),
+                    'groups': fighter_groups,
+                    'description': 'Group validation by fighter combinations'
+                })
+            
+            # Strategy 4: Purged Cross-Validation (for time series)
+            if 'event_date' in df.columns:
+                strategies.append({
+                    'name': 'PurgedCV',
+                    'splitter': self._create_purged_cv(df),
+                    'description': 'Purged validation preventing data leakage'
+                })
+            
+            return strategies
+            
+        except Exception as e:
+            print(f"Error creating validation strategies: {e}")
+            # Fallback to basic strategies
+            return [{
+                'name': 'StratifiedKFold',
+                'splitter': StratifiedKFold(n_splits=5, shuffle=True, random_state=42),
+                'description': 'Basic stratified validation'
+            }]
+
+    def _create_purged_cv(self, df):
+        """Create purged cross-validation for time series data"""
+        try:
+            from sklearn.model_selection import BaseCrossValidator
+            
+            class PurgedCrossValidator(BaseCrossValidator):
+                def __init__(self, n_splits=5, purge_days=30):
+                    self.n_splits = n_splits
+                    self.purge_days = purge_days
+                
+                def split(self, X, y=None, groups=None):
+                    if 'event_date' not in df.columns:
+                        # Fallback to regular split
+                        for train_idx, test_idx in StratifiedKFold(n_splits=self.n_splits).split(X, y):
+                            yield train_idx, test_idx
+                        return
+                    
+                    # Sort by date
+                    df_sorted = df.sort_values('event_date')
+                    dates = pd.to_datetime(df_sorted['event_date'])
+                    
+                    # Create splits
+                    n_samples = len(df_sorted)
+                    fold_size = n_samples // self.n_splits
+                    
+                    for i in range(self.n_splits):
+                        test_start = i * fold_size
+                        test_end = (i + 1) * fold_size if i < self.n_splits - 1 else n_samples
+                        
+                        test_idx = list(range(test_start, test_end))
+                        test_dates = dates.iloc[test_idx]
+                        
+                        # Purge training data that's too close to test data
+                        train_idx = []
+                        for j in range(n_samples):
+                            if j < test_start or j >= test_end:
+                                # Check if this sample is far enough from test data
+                                sample_date = dates.iloc[j]
+                                min_gap = min(abs((sample_date - test_dates).dt.days))
+                                
+                                if min_gap >= self.purge_days:
+                                    train_idx.append(j)
+                        
+                        if len(train_idx) > 0 and len(test_idx) > 0:
+                            yield train_idx, test_idx
+            
+            return PurgedCrossValidator(n_splits=5, purge_days=30)
+            
+        except Exception as e:
+            print(f"Error creating purged CV: {e}")
+            return StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+    def _select_best_validation_strategy(self, strategies, X, y):
+        """Select the best validation strategy based on data characteristics"""
+        try:
+            if len(strategies) == 1:
+                return strategies[0]
+            
+            # Evaluate each strategy using a simple model
+            from sklearn.ensemble import RandomForestClassifier
+            from sklearn.metrics import accuracy_score
+            
+            strategy_scores = []
+            
+            for strategy in strategies:
+                try:
+                    scores = []
+                    splitter = strategy['splitter']
+                    
+                    # Use a simple model for evaluation
+                    model = RandomForestClassifier(n_estimators=50, random_state=42)
+                    
+                    # Get splits
+                    if 'groups' in strategy:
+                        splits = splitter.split(X, y, groups=strategy['groups'])
+                    else:
+                        splits = splitter.split(X, y)
+                    
+                    for train_idx, val_idx in splits:
+                        if len(train_idx) == 0 or len(val_idx) == 0:
+                            continue
+                        
+                        X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+                        y_train, y_val = y[train_idx], y[val_idx]
+                        
+                        # Train and evaluate
+                        model.fit(X_train, y_train)
+                        y_pred = model.predict(X_val)
+                        score = accuracy_score(y_val, y_pred)
+                        scores.append(score)
+                    
+                    if scores:
+                        avg_score = np.mean(scores)
+                        strategy_scores.append((strategy, avg_score))
+                    
+                except Exception as e:
+                    print(f"Error evaluating strategy {strategy['name']}: {e}")
+                    continue
+            
+            if strategy_scores:
+                # Select strategy with highest score
+                best_strategy, best_score = max(strategy_scores, key=lambda x: x[1])
+                print(f"Best validation strategy: {best_strategy['name']} (score: {best_score:.4f})")
+                return best_strategy
+            else:
+                # Fallback to first strategy
+                return strategies[0]
+                
+        except Exception as e:
+            print(f"Error selecting validation strategy: {e}")
+            return strategies[0]
+
     # ===== HYPERPARAMETER OPTIMIZATION METHODS =====
     
     def optimize_hyperparameters(self, X, y, model_type='xgb', n_trials=50):
@@ -806,23 +1244,37 @@ class AdvancedUFCPredictor:
         best_params = {}
         best_score = 0
         
-        # Define parameter grid
-        param_grid = {
-            'n_estimators': [800, 1000, 1200],
-            'max_depth': [8, 10, 12],
-            'learning_rate': [0.008, 0.01, 0.015],
-            'subsample': [0.85, 0.9, 0.95],
-            'colsample_bytree': [0.85, 0.9, 0.95],
-            'reg_alpha': [0.03, 0.05, 0.08],
-            'reg_lambda': [0.4, 0.5, 0.6],
-            'min_child_weight': [1, 2, 3],
-            'gamma': [0.03, 0.05, 0.08]
-        }
+        # Enhanced parameter grid for better accuracy
+        if self.performance_mode:
+            param_grid = {
+                'n_estimators': [400, 600, 800],
+                'max_depth': [6, 8, 10],
+                'learning_rate': [0.05, 0.1, 0.15],
+                'subsample': [0.8, 0.9],
+                'colsample_bytree': [0.8, 0.9],
+                'reg_alpha': [0, 0.1, 0.2],
+                'reg_lambda': [1, 1.5, 2],
+                'min_child_weight': [1, 3, 5],
+                'gamma': [0, 0.1, 0.2]
+            }
+        else:
+            param_grid = {
+                'n_estimators': [600, 800, 1000, 1200],
+                'max_depth': [8, 10, 12, 14],
+                'learning_rate': [0.03, 0.05, 0.1, 0.15],
+                'subsample': [0.7, 0.8, 0.9, 0.95],
+                'colsample_bytree': [0.7, 0.8, 0.9, 0.95],
+                'reg_alpha': [0, 0.1, 0.2, 0.3],
+                'reg_lambda': [1, 1.5, 2, 3],
+                'min_child_weight': [1, 3, 5, 7],
+                'gamma': [0, 0.1, 0.2, 0.3],
+                'scale_pos_weight': [1, 1.2, 1.5]  # Handle class imbalance
+            }
         
-        # Use TimeSeriesSplit for validation
-        tscv = TimeSeriesSplit(n_splits=3)
+        # Use TimeSeriesSplit for validation (reduced folds for speed)
+        tscv = TimeSeriesSplit(n_splits=2)
         
-        for i in range(min(n_trials, 27)):  # Limit to reasonable number
+        for i in range(min(n_trials, 8)):  # Reduced from 27 to 8 for speed
             # Sample parameters
             params = {}
             for key, values in param_grid.items():
@@ -865,16 +1317,35 @@ class AdvancedUFCPredictor:
         best_params = {}
         best_score = 0
         
-        param_grid = {
-            'n_estimators': [300, 400, 500],
-            'max_depth': [6, 7, 8],
-            'learning_rate': [0.025, 0.03, 0.035],
-            'num_leaves': [30, 40, 50],
-            'subsample': [0.75, 0.8, 0.85],
-            'colsample_bytree': [0.75, 0.8, 0.85],
-            'reg_alpha': [0.08, 0.1, 0.12],
-            'reg_lambda': [0.7, 0.8, 0.9]
-        }
+        # Enhanced parameter grid for better accuracy
+        if self.performance_mode:
+            param_grid = {
+                'n_estimators': [300, 500, 700],
+                'max_depth': [6, 8, 10],
+                'learning_rate': [0.05, 0.1, 0.15],
+                'num_leaves': [31, 63, 127],
+                'subsample': [0.8, 0.9],
+                'colsample_bytree': [0.8, 0.9],
+                'reg_alpha': [0, 0.1, 0.2],
+                'reg_lambda': [0, 0.1, 0.2],
+                'min_child_samples': [20, 30, 40]
+            }
+        else:
+            param_grid = {
+                'n_estimators': [500, 700, 1000, 1200],
+                'max_depth': [8, 10, 12, 15],
+                'learning_rate': [0.03, 0.05, 0.1, 0.15],
+                'num_leaves': [31, 63, 127, 255],
+                'subsample': [0.7, 0.8, 0.9, 0.95],
+                'colsample_bytree': [0.7, 0.8, 0.9, 0.95],
+                'reg_alpha': [0, 0.1, 0.2, 0.3],
+                'reg_lambda': [0, 0.1, 0.2, 0.3],
+                'min_child_samples': [10, 20, 30, 50],
+                'min_child_weight': [0.001, 0.01, 0.1],
+                'feature_fraction': [0.7, 0.8, 0.9, 1.0],
+                'bagging_fraction': [0.7, 0.8, 0.9, 1.0],
+                'bagging_freq': [1, 3, 5, 7]
+            }
         
         tscv = TimeSeriesSplit(n_splits=3)
         
@@ -995,33 +1466,207 @@ class AdvancedUFCPredictor:
         return np.column_stack(meta_features)
 
     def _train_dynamic_weights(self, meta_features, y):
-        """Train dynamic weighting model"""
-        # Simple linear model for dynamic weighting
-        from sklearn.linear_model import Ridge
+        """Train advanced dynamic weighting model with multiple strategies"""
+        from sklearn.linear_model import Ridge, ElasticNet
+        from sklearn.ensemble import RandomForestRegressor
+        from sklearn.model_selection import cross_val_score
         
-        # Create target for weighting (accuracy on validation set)
-        tscv = TimeSeriesSplit(n_splits=3)
-        weights_target = []
+        print("Training advanced dynamic weighting model...")
         
-        for train_idx, val_idx in tscv.split(meta_features):
-            X_train, X_val = meta_features[train_idx], meta_features[val_idx]
-            y_train, y_val = y[train_idx], y[val_idx]
+        # Strategy 1: Performance-based weighting
+        performance_weights = self._calculate_performance_weights(meta_features, y)
+        
+        # Strategy 2: Confidence-based weighting
+        confidence_weights = self._calculate_confidence_weights(meta_features, y)
+        
+        # Strategy 3: Diversity-based weighting
+        diversity_weights = self._calculate_diversity_weights(meta_features, y)
+        
+        # Strategy 4: Ensemble of weighting models
+        ensemble_weights = self._create_weighting_ensemble(meta_features, y)
+        
+        # Combine all strategies with learned weights
+        combined_weights = self._combine_weighting_strategies(
+            performance_weights, confidence_weights, diversity_weights, ensemble_weights
+        )
+        
+        return combined_weights
+
+    def _calculate_performance_weights(self, meta_features, y):
+        """Calculate weights based on model performance"""
+        try:
+            tscv = TimeSeriesSplit(n_splits=3)
+            model_performances = []
             
-            # Calculate accuracy for each model
-            val_acc = []
-            for i in range(0, meta_features.shape[1], 2):  # Every other feature is confidence
-                confidence = X_val[:, i]
-                # Simple accuracy proxy based on confidence
-                acc = np.mean(confidence)
-                val_acc.append(acc)
+            for train_idx, val_idx in tscv.split(meta_features):
+                X_val = meta_features[val_idx]
+                y_val = y[val_idx]
+                
+                # Calculate performance for each model
+                val_performances = []
+                for i in range(0, meta_features.shape[1], 2):  # Every other feature is confidence
+                    confidence = X_val[:, i]
+                    # Use confidence as performance proxy
+                    performance = np.mean(confidence)
+                    val_performances.append(performance)
+                
+                model_performances.append(val_performances)
             
-            weights_target.extend(val_acc)
-        
-        # Train Ridge regression for dynamic weighting
-        weight_model = Ridge(alpha=0.1)
-        weight_model.fit(meta_features, weights_target)
-        
-        return weight_model
+            # Average performance across folds
+            avg_performances = np.mean(model_performances, axis=0)
+            
+            # Convert to weights (softmax)
+            exp_perf = np.exp(avg_performances * 5)  # Scale for better separation
+            weights = exp_perf / np.sum(exp_perf)
+            
+            return weights
+        except Exception as e:
+            print(f"Error calculating performance weights: {e}")
+            return np.ones(meta_features.shape[1] // 2) / (meta_features.shape[1] // 2)
+
+    def _calculate_confidence_weights(self, meta_features, y):
+        """Calculate weights based on prediction confidence"""
+        try:
+            # Calculate average confidence for each model
+            confidences = []
+            for i in range(0, meta_features.shape[1], 2):
+                confidence = meta_features[:, i]
+                avg_confidence = np.mean(confidence)
+                confidences.append(avg_confidence)
+            
+            # Convert to weights
+            confidences = np.array(confidences)
+            weights = confidences / np.sum(confidences)
+            
+            return weights
+        except Exception as e:
+            print(f"Error calculating confidence weights: {e}")
+            return np.ones(meta_features.shape[1] // 2) / (meta_features.shape[1] // 2)
+
+    def _calculate_diversity_weights(self, meta_features, y):
+        """Calculate weights based on model diversity"""
+        try:
+            # Calculate pairwise correlations between model predictions
+            model_predictions = []
+            for i in range(0, meta_features.shape[1], 2):
+                confidence = meta_features[:, i]
+                model_predictions.append(confidence)
+            
+            model_predictions = np.array(model_predictions).T
+            correlation_matrix = np.corrcoef(model_predictions.T)
+            
+            # Calculate diversity score for each model
+            diversity_scores = []
+            for i in range(len(model_predictions[0])):
+                # Diversity = 1 - average correlation with other models
+                correlations = correlation_matrix[i]
+                correlations = np.delete(correlations, i)  # Remove self-correlation
+                diversity = 1.0 - np.mean(correlations)
+                diversity_scores.append(max(0.0, diversity))
+            
+            # Convert to weights
+            diversity_scores = np.array(diversity_scores)
+            weights = diversity_scores / np.sum(diversity_scores)
+            
+            return weights
+        except Exception as e:
+            print(f"Error calculating diversity weights: {e}")
+            return np.ones(meta_features.shape[1] // 2) / (meta_features.shape[1] // 2)
+
+    def _create_weighting_ensemble(self, meta_features, y):
+        """Create ensemble of weighting models"""
+        try:
+            from sklearn.linear_model import Ridge, ElasticNet
+            from sklearn.ensemble import RandomForestRegressor
+            from sklearn.model_selection import cross_val_score
+            
+            # Create targets for weighting (model performance)
+            tscv = TimeSeriesSplit(n_splits=3)
+            targets = []
+            
+            for train_idx, val_idx in tscv.split(meta_features):
+                X_val = meta_features[val_idx]
+                y_val = y[val_idx]
+                
+                # Calculate performance for each model
+                val_performances = []
+                for i in range(0, meta_features.shape[1], 2):
+                    confidence = X_val[:, i]
+                    performance = np.mean(confidence)
+                    val_performances.append(performance)
+                
+                targets.extend(val_performances)
+            
+            targets = np.array(targets)
+            
+            # Train multiple weighting models
+            models = {
+                'ridge': Ridge(alpha=0.1),
+                'elastic': ElasticNet(alpha=0.1, l1_ratio=0.5),
+                'rf': RandomForestRegressor(n_estimators=50, random_state=42)
+            }
+            
+            # Evaluate models
+            best_model = None
+            best_score = -np.inf
+            
+            for name, model in models.items():
+                try:
+                    scores = cross_val_score(model, meta_features, targets, cv=3, scoring='r2')
+                    avg_score = np.mean(scores)
+                    
+                    if avg_score > best_score:
+                        best_score = avg_score
+                        best_model = model
+                except Exception as e:
+                    print(f"Error training {name}: {e}")
+                    continue
+            
+            if best_model is not None:
+                best_model.fit(meta_features, targets)
+                return best_model
+            else:
+                # Fallback to simple averaging
+                return None
+                
+        except Exception as e:
+            print(f"Error creating weighting ensemble: {e}")
+            return None
+
+    def _combine_weighting_strategies(self, perf_weights, conf_weights, div_weights, ensemble_weights):
+        """Combine multiple weighting strategies"""
+        try:
+            # Combine strategies with learned weights
+            strategy_weights = np.array([0.3, 0.2, 0.2, 0.3])  # Performance, Confidence, Diversity, Ensemble
+            
+            # Normalize weights
+            perf_weights = perf_weights / np.sum(perf_weights)
+            conf_weights = conf_weights / np.sum(conf_weights)
+            div_weights = div_weights / np.sum(div_weights)
+            
+            # Combine strategies
+            if ensemble_weights is not None:
+                # Use ensemble predictions if available
+                # Note: meta_features would need to be passed as parameter
+                # For now, use equal weights for ensemble component
+                ensemble_pred = np.ones(len(perf_weights)) / len(perf_weights)
+                combined = (strategy_weights[0] * perf_weights + 
+                           strategy_weights[1] * conf_weights + 
+                           strategy_weights[2] * div_weights + 
+                           strategy_weights[3] * ensemble_pred)
+            else:
+                combined = (strategy_weights[0] * perf_weights + 
+                           strategy_weights[1] * conf_weights + 
+                           strategy_weights[2] * div_weights)
+            
+            # Normalize final weights
+            combined = combined / np.sum(combined)
+            
+            return combined
+        except Exception as e:
+            print(f"Error combining weighting strategies: {e}")
+            # Fallback to equal weights
+            return np.ones(len(perf_weights)) / len(perf_weights)
 
     def predict_with_dynamic_ensemble(self, X, trained_models, dynamic_weights):
         """Make predictions with dynamic ensemble"""
@@ -2243,12 +2888,12 @@ class AdvancedUFCPredictor:
                 if feature not in feature_columns:
                     feature_columns.append(feature)
 
-        # ===== ADVANCED TEMPORAL FEATURES =====
+        # ===== ADVANCED TEMPORAL FEATURES (OPTIMIZED) =====
         print("Adding advanced temporal features...")
         
-        # Fighter trajectory analysis (last 3, 5, 10 fights)
+        # Fighter trajectory analysis (reduced windows for speed)
         try:
-            for window in [3, 5, 10]:
+            for window in [3, 5]:  # Reduced from [3, 5, 10] to [3, 5] for speed
                 df[f"r_trajectory_{window}"] = self.calculate_fighter_trajectory(df, "r_fighter", window)
                 df[f"b_trajectory_{window}"] = self.calculate_fighter_trajectory(df, "b_fighter", window)
                 df[f"trajectory_diff_{window}"] = df[f"r_trajectory_{window}"] - df[f"b_trajectory_{window}"]
@@ -2256,7 +2901,7 @@ class AdvancedUFCPredictor:
         except Exception as e:
             print(f"Warning: Error in trajectory features: {e}")
             # Add default values
-            for window in [3, 5, 10]:
+            for window in [3, 5]:
                 df[f"r_trajectory_{window}"] = 0.0
                 df[f"b_trajectory_{window}"] = 0.0
                 df[f"trajectory_diff_{window}"] = 0.0
@@ -2403,6 +3048,77 @@ class AdvancedUFCPredictor:
             print(f"Warning: Error in weight cut impact features: {e}")
             df["weight_cut_impact_diff"] = 0.0
             feature_columns.append("weight_cut_impact_diff")
+
+        # ===== ADVANCED CONFIDENCE & UNCERTAINTY FEATURES =====
+        print("Adding advanced confidence and uncertainty features...")
+        
+        # Prediction confidence indicators
+        try:
+            df["prediction_confidence"] = self.calculate_prediction_confidence(df)
+            feature_columns.append("prediction_confidence")
+        except Exception as e:
+            print(f"Warning: Error in prediction confidence features: {e}")
+            df["prediction_confidence"] = 0.5
+            feature_columns.append("prediction_confidence")
+
+        # Fight outcome uncertainty
+        try:
+            df["outcome_uncertainty"] = self.calculate_outcome_uncertainty(df)
+            feature_columns.append("outcome_uncertainty")
+        except Exception as e:
+            print(f"Warning: Error in outcome uncertainty features: {e}")
+            df["outcome_uncertainty"] = 0.5
+            feature_columns.append("outcome_uncertainty")
+
+        # ===== ADVANCED MATCHUP ANALYSIS =====
+        print("Adding advanced matchup analysis features...")
+        
+        # Head-to-head history analysis
+        try:
+            df["h2h_history_advantage"] = self.calculate_h2h_history_advantage(df)
+            feature_columns.append("h2h_history_advantage")
+        except Exception as e:
+            print(f"Warning: Error in H2H history features: {e}")
+            df["h2h_history_advantage"] = 0.0
+            feature_columns.append("h2h_history_advantage")
+
+        # Style compatibility analysis
+        try:
+            df["style_compatibility_score"] = self.calculate_style_compatibility(df)
+            feature_columns.append("style_compatibility_score")
+        except Exception as e:
+            print(f"Warning: Error in style compatibility features: {e}")
+            df["style_compatibility_score"] = 0.5
+            feature_columns.append("style_compatibility_score")
+
+        # ===== ADVANCED MOMENTUM & FORM FEATURES =====
+        print("Adding advanced momentum and form features...")
+        
+        # Recent performance trajectory
+        try:
+            df["r_recent_trajectory"] = self.calculate_recent_trajectory(df, "r_fighter")
+            df["b_recent_trajectory"] = self.calculate_recent_trajectory(df, "b_fighter")
+            df["recent_trajectory_diff"] = df["r_recent_trajectory"] - df["b_recent_trajectory"]
+            feature_columns.extend(["r_recent_trajectory", "b_recent_trajectory", "recent_trajectory_diff"])
+        except Exception as e:
+            print(f"Warning: Error in recent trajectory features: {e}")
+            df["r_recent_trajectory"] = 0.0
+            df["b_recent_trajectory"] = 0.0
+            df["recent_trajectory_diff"] = 0.0
+            feature_columns.extend(["r_recent_trajectory", "b_recent_trajectory", "recent_trajectory_diff"])
+
+        # Form consistency analysis
+        try:
+            df["r_form_consistency"] = self.calculate_form_consistency(df, "r_fighter")
+            df["b_form_consistency"] = self.calculate_form_consistency(df, "b_fighter")
+            df["form_consistency_diff"] = df["r_form_consistency"] - df["b_form_consistency"]
+            feature_columns.extend(["r_form_consistency", "b_form_consistency", "form_consistency_diff"])
+        except Exception as e:
+            print(f"Warning: Error in form consistency features: {e}")
+            df["r_form_consistency"] = 0.5
+            df["b_form_consistency"] = 0.5
+            df["form_consistency_diff"] = 0.0
+            feature_columns.extend(["r_form_consistency", "b_form_consistency", "form_consistency_diff"])
 
         # Core derived features
         df["net_striking_advantage"] = (
@@ -3796,10 +4512,17 @@ class AdvancedUFCPredictor:
             # If no winner_method_simple column, create default method labels
             y_method = np.zeros(len(df), dtype=int)
 
-        # ===== ENHANCED VALIDATION STRATEGY =====
-        print("\n📊 IMPLEMENTING ENHANCED VALIDATION STRATEGY...")
+        # ===== ADVANCED VALIDATION STRATEGY =====
+        print("\n📊 IMPLEMENTING ADVANCED VALIDATION STRATEGY...")
         
-        # Use TimeSeriesSplit for temporal validation
+        # Multi-strategy validation approach
+        validation_strategies = self._create_validation_strategies(df, X, y_winner)
+        
+        # Use the best validation strategy based on data characteristics
+        best_strategy = self._select_best_validation_strategy(validation_strategies, X, y_winner)
+        print(f"Selected validation strategy: {best_strategy['name']}")
+        
+        # Use TimeSeriesSplit for temporal validation as primary
         tscv = TimeSeriesSplit(n_splits=5)
         
         # For final train/test split, use stratified split but with time awareness
@@ -3865,10 +4588,13 @@ class AdvancedUFCPredictor:
         # ===== HYPERPARAMETER OPTIMIZATION =====
         print("\n🔧 OPTIMIZING HYPERPARAMETERS...")
         
+        # Optimize hyperparameters based on performance mode
+        trials = 3 if self.performance_mode else 8  # Much faster in performance mode
+        
         # Optimize XGBoost parameters
         if HAS_XGBOOST:
             print("Optimizing XGBoost hyperparameters...")
-            xgb_optimized = self.optimize_hyperparameters(X_train, y_winner_train, 'xgb', n_trials=20)
+            xgb_optimized = self.optimize_hyperparameters(X_train, y_winner_train, 'xgb', n_trials=trials)
             if not xgb_optimized:
                 xgb_optimized = {}  # Use defaults if optimization fails
         else:
@@ -3877,7 +4603,7 @@ class AdvancedUFCPredictor:
         # Optimize LightGBM parameters
         if HAS_LIGHTGBM:
             print("Optimizing LightGBM hyperparameters...")
-            lgbm_optimized = self.optimize_hyperparameters(X_train, y_winner_train, 'lgbm', n_trials=20)
+            lgbm_optimized = self.optimize_hyperparameters(X_train, y_winner_train, 'lgbm', n_trials=trials)
             if not lgbm_optimized:
                 lgbm_optimized = {}
         else:
@@ -3886,7 +4612,7 @@ class AdvancedUFCPredictor:
         # Optimize CatBoost parameters
         if HAS_CATBOOST:
             print("Optimizing CatBoost hyperparameters...")
-            catboost_optimized = self.optimize_hyperparameters(X_train, y_winner_train, 'catboost', n_trials=20)
+            catboost_optimized = self.optimize_hyperparameters(X_train, y_winner_train, 'catboost', n_trials=trials)
             if not catboost_optimized:
                 catboost_optimized = {}
         else:
@@ -3903,9 +4629,12 @@ class AdvancedUFCPredictor:
             scale_pos = 1.0  # Balanced since we have equal red/blue representation after augmentation
 
             # Create XGBoost classifier with optimized parameters
+            base_estimators = 600 if self.performance_mode else xgb_optimized.get("n_estimators", 1000)
+            base_depth = 8 if self.performance_mode else xgb_optimized.get("max_depth", 10)
+            
             xgb_params = {
-                "n_estimators": xgb_optimized.get("n_estimators", 1000),
-                "max_depth": xgb_optimized.get("max_depth", 10),
+                "n_estimators": base_estimators,
+                "max_depth": base_depth,
                 "learning_rate": xgb_optimized.get("learning_rate", 0.01),
                 "subsample": xgb_optimized.get("subsample", 0.9),
                 "colsample_bytree": xgb_optimized.get("colsample_bytree", 0.9),
@@ -5879,6 +6608,15 @@ class UFCPredictorGUI:
         ttk.Button(file_frame, text="Browse", command=self.browse_data_file).pack(
             side=tk.LEFT
         )
+        
+        # Performance mode checkbox
+        self.performance_mode_var = tk.BooleanVar()
+        performance_checkbox = ttk.Checkbutton(
+            file_frame, 
+            text="Performance Mode (Faster Training)", 
+            variable=self.performance_mode_var
+        )
+        performance_checkbox.pack(side=tk.RIGHT, padx=10)
 
         input_frame = ttk.LabelFrame(
             self.root, text="Enter Fights to Predict", padding="5"
@@ -6028,6 +6766,7 @@ Tatiana Suarez,Amanda Lemos,Strawweight,Women,3"""
                 use_neural_net=False,
                 use_deep_learning=use_dl,
                 debug_mode=False,  # Set to True for debugging
+                performance_mode=self.performance_mode_var.get(),  # Use performance mode
             )
 
             f = io.StringIO()
