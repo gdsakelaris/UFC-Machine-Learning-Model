@@ -788,43 +788,174 @@ class AdvancedUFCPredictor:
         return np.array(diffs)
 
     def calculate_prediction_confidence(self, df):
-        """Calculate prediction confidence based on feature consistency"""
+        """Calculate advanced prediction confidence based on comprehensive feature analysis"""
         try:
             confidence_scores = []
             
             for idx, row in df.iterrows():
                 try:
-                    # Calculate confidence based on feature strength and consistency
+                    # Calculate confidence based on multiple feature categories
                     r_confidence = 0.0
                     b_confidence = 0.0
                     
-                    # Win rate confidence
+                    # ===== BASIC PERFORMANCE METRICS =====
+                    # Win rate confidence (0-2 points)
                     r_win_rate = row.get('r_pro_win_rate', 0.5)
                     b_win_rate = row.get('b_pro_win_rate', 0.5)
-                    
-                    r_confidence += abs(r_win_rate - 0.5) * 2  # Distance from 50%
+                    r_confidence += abs(r_win_rate - 0.5) * 2
                     b_confidence += abs(b_win_rate - 0.5) * 2
                     
-                    # Recent form confidence
+                    # Recent form confidence (0-1 points)
                     r_recent_wins = row.get('r_recent_wins', 0)
                     b_recent_wins = row.get('b_recent_wins', 0)
-                    
-                    r_confidence += min(r_recent_wins / 3.0, 1.0)  # Cap at 3 recent wins
+                    r_confidence += min(r_recent_wins / 3.0, 1.0)
                     b_confidence += min(b_recent_wins / 3.0, 1.0)
                     
-                    # Experience confidence
+                    # Experience confidence (0-1 points)
                     r_fights = row.get('r_pro_fights', 0)
                     b_fights = row.get('b_pro_fights', 0)
-                    
-                    r_confidence += min(r_fights / 20.0, 1.0)  # Cap at 20 fights
+                    r_confidence += min(r_fights / 20.0, 1.0)
                     b_confidence += min(b_fights / 20.0, 1.0)
                     
-                    # Calculate overall confidence as average of both fighters
-                    total_confidence = (r_confidence + b_confidence) / 2.0
-                    confidence_scores.append(min(total_confidence, 1.0))
+                    # ===== STRIKING/GRAPPLING METRICS (All 8 Key UFC Stats) =====
                     
-                except (KeyError, ValueError, TypeError):
-                    confidence_scores.append(0.5)
+                    # 1. Significant Strikes Landed per Minute (0-0.8 points)
+                    r_slpm = row.get('r_pro_SLpM_corrected', 0)
+                    b_slpm = row.get('b_pro_SLpM_corrected', 0)
+                    r_confidence += min(r_slpm / 5.0, 0.8)  # Cap at 5 strikes per minute
+                    b_confidence += min(b_slpm / 5.0, 0.8)
+                    
+                    # 2. Significant Striking Accuracy (0-0.6 points)
+                    r_str_acc = row.get('r_pro_sig_str_acc_corrected', 0.5)
+                    b_str_acc = row.get('b_pro_sig_str_acc_corrected', 0.5)
+                    r_confidence += (r_str_acc - 0.5) * 1.2  # Distance from 50% accuracy
+                    b_confidence += (b_str_acc - 0.5) * 1.2
+                    
+                    # 3. Significant Strikes Absorbed per Minute (0-0.4 points) - LOWER is better
+                    r_sapm = row.get('r_pro_SApM_corrected', 0)
+                    b_sapm = row.get('b_pro_SApM_corrected', 0)
+                    r_confidence += (1.0 - min(r_sapm / 6.0, 1.0)) * 0.4  # Lower SApM = higher confidence
+                    b_confidence += (1.0 - min(b_sapm / 6.0, 1.0)) * 0.4
+                    
+                    # 4. Significant Strike Defence (0-0.6 points)
+                    r_str_def = row.get('r_pro_str_def_corrected', 0.5)
+                    b_str_def = row.get('b_pro_str_def_corrected', 0.5)
+                    r_confidence += (r_str_def - 0.5) * 1.2  # Distance from 50% defense
+                    b_confidence += (b_str_def - 0.5) * 1.2
+                    
+                    # 5. Average Takedowns Landed per 15 minutes (0-0.5 points)
+                    r_td_avg = row.get('r_pro_TDAvg', 0)
+                    b_td_avg = row.get('b_pro_TDAvg', 0)
+                    r_confidence += min(r_td_avg / 3.0, 0.5)  # Cap at 3 takedowns per fight
+                    b_confidence += min(b_td_avg / 3.0, 0.5)
+                    
+                    # 6. Takedown Accuracy (0-0.4 points)
+                    r_td_acc = row.get('r_pro_td_acc_corrected', 0.5)
+                    b_td_acc = row.get('b_pro_td_acc_corrected', 0.5)
+                    r_confidence += (r_td_acc - 0.5) * 0.8  # Distance from 50% accuracy
+                    b_confidence += (b_td_acc - 0.5) * 0.8
+                    
+                    # 7. Takedown Defense (0-0.4 points)
+                    r_td_def = row.get('r_pro_td_def_corrected', 0.5)
+                    b_td_def = row.get('b_pro_td_def_corrected', 0.5)
+                    r_confidence += (r_td_def - 0.5) * 0.8  # Distance from 50% defense
+                    b_confidence += (b_td_def - 0.5) * 0.8
+                    
+                    # 8. Average Submissions Attempted per 15 minutes (0-0.3 points)
+                    r_sub_avg = row.get('r_pro_sub_avg_corrected', 0)
+                    b_sub_avg = row.get('b_pro_sub_avg_corrected', 0)
+                    r_confidence += min(r_sub_avg / 2.0, 0.3)  # Cap at 2 submissions per fight
+                    b_confidence += min(b_sub_avg / 2.0, 0.3)
+                    
+                    # ===== PHYSICAL ADVANTAGES =====
+                    # Height/reach advantage confidence (0-0.5 points)
+                    height_diff = row.get('height_diff', 0)
+                    reach_diff = row.get('reach_diff', 0)
+                    if height_diff > 0:
+                        r_confidence += min(height_diff / 10.0, 0.25)  # Cap at 10 inches
+                    else:
+                        b_confidence += min(abs(height_diff) / 10.0, 0.25)
+                    if reach_diff > 0:
+                        r_confidence += min(reach_diff / 10.0, 0.25)
+                    else:
+                        b_confidence += min(abs(reach_diff) / 10.0, 0.25)
+                    
+                    # Age advantage confidence (0-0.5 points)
+                    r_age = row.get('r_age', 30)
+                    b_age = row.get('b_age', 30)
+                    age_diff = abs(r_age - b_age)
+                    if age_diff > 5:  # Significant age difference
+                        if r_age < b_age:  # Red corner younger
+                            r_confidence += min(age_diff / 20.0, 0.5)
+                        else:  # Blue corner younger
+                            b_confidence += min(age_diff / 20.0, 0.5)
+                    
+                    # ===== EXPERIENCE QUALITY =====
+                    # Title fight experience confidence (0-0.5 points)
+                    r_title_fights = row.get('r_title_fights', 0)
+                    b_title_fights = row.get('b_title_fights', 0)
+                    r_confidence += min(r_title_fights / 5.0, 0.5)
+                    b_confidence += min(b_title_fights / 5.0, 0.5)
+                    
+                    # Main event experience confidence (0-0.5 points)
+                    r_main_events = row.get('r_main_events', 0)
+                    b_main_events = row.get('b_main_events', 0)
+                    r_confidence += min(r_main_events / 10.0, 0.5)
+                    b_confidence += min(b_main_events / 10.0, 0.5)
+                    
+                    # ===== MOMENTUM & FORM =====
+                    # Recent trajectory confidence (0-0.5 points)
+                    r_trajectory = row.get('r_recent_trajectory', 0.5)
+                    b_trajectory = row.get('b_recent_trajectory', 0.5)
+                    r_confidence += abs(r_trajectory - 0.5) * 0.5
+                    b_confidence += abs(b_trajectory - 0.5) * 0.5
+                    
+                    # Form consistency confidence (0-0.5 points)
+                    r_consistency = row.get('r_form_consistency', 0.5)
+                    b_consistency = row.get('b_form_consistency', 0.5)
+                    r_confidence += r_consistency * 0.5
+                    b_confidence += b_consistency * 0.5
+                    
+                    # ===== EXTERNAL FACTORS =====
+                    # Home advantage confidence (0-0.3 points)
+                    home_advantage = row.get('home_advantage', 0)
+                    if home_advantage > 0:
+                        r_confidence += min(home_advantage, 0.3)
+                    elif home_advantage < 0:
+                        b_confidence += min(abs(home_advantage), 0.3)
+                    
+                    # Weight cut impact confidence (0-0.3 points)
+                    weight_cut_diff = row.get('weight_cut_impact_diff', 0)
+                    if weight_cut_diff > 0:
+                        r_confidence += min(weight_cut_diff * 10, 0.3)
+                    elif weight_cut_diff < 0:
+                        b_confidence += min(abs(weight_cut_diff) * 10, 0.3)
+                    
+                    # ===== STYLE MATCHUP =====
+                    # Style compatibility confidence (0-0.5 points)
+                    style_compatibility = row.get('style_compatibility_score', 0.5)
+                    if style_compatibility > 0.5:
+                        r_confidence += (style_compatibility - 0.5) * 0.5
+                    else:
+                        b_confidence += (0.5 - style_compatibility) * 0.5
+                    
+                    # ===== FINAL CONFIDENCE CALCULATION =====
+                    # Normalize and combine fighter confidences
+                    total_confidence = (r_confidence + b_confidence) / 2.0
+                    
+                    # Apply confidence scaling (max possible is ~8 points)
+                    scaled_confidence = min(total_confidence / 8.0, 1.0)
+                    confidence_scores.append(scaled_confidence)
+                    
+                except (KeyError, ValueError, TypeError) as e:
+                    # Fallback to basic confidence calculation
+                    try:
+                        r_win_rate = row.get('r_pro_win_rate', 0.5)
+                        b_win_rate = row.get('b_pro_win_rate', 0.5)
+                        basic_confidence = (abs(r_win_rate - 0.5) + abs(b_win_rate - 0.5)) / 2.0
+                        confidence_scores.append(min(basic_confidence, 1.0))
+                    except:
+                        confidence_scores.append(0.5)
             
             return np.array(confidence_scores)
         except Exception as e:
@@ -832,37 +963,165 @@ class AdvancedUFCPredictor:
             return np.full(len(df), 0.5)
 
     def calculate_outcome_uncertainty(self, df):
-        """Calculate outcome uncertainty based on matchup factors"""
+        """Calculate advanced outcome uncertainty based on comprehensive matchup analysis"""
         try:
             uncertainty_scores = []
             
             for idx, row in df.iterrows():
                 try:
-                    uncertainty = 0.5  # Base uncertainty
+                    uncertainty = 0.3  # Base uncertainty (lower than before)
                     
-                    # Similar skill levels increase uncertainty
+                    # ===== SKILL LEVEL SIMILARITY =====
+                    # Win rate similarity (0-0.2 points)
                     r_win_rate = row.get('r_pro_win_rate', 0.5)
                     b_win_rate = row.get('b_pro_win_rate', 0.5)
                     skill_diff = abs(r_win_rate - b_win_rate)
-                    uncertainty += (1.0 - skill_diff) * 0.3  # More similar = more uncertain
+                    uncertainty += (1.0 - skill_diff) * 0.2
                     
-                    # Similar experience increases uncertainty
+                    # ===== STRIKING/GRAPPLING SIMILARITY (All 8 Key UFC Stats) =====
+                    
+                    # 1. Significant Strikes Landed per Minute similarity (0-0.06 points)
+                    r_slpm = row.get('r_pro_SLpM_corrected', 0)
+                    b_slpm = row.get('b_pro_SLpM_corrected', 0)
+                    if r_slpm > 0 or b_slpm > 0:
+                        slpm_diff = abs(r_slpm - b_slpm) / max(r_slpm, b_slpm, 1)
+                        uncertainty += (1.0 - min(slpm_diff, 1.0)) * 0.06
+                    
+                    # 2. Significant Striking Accuracy similarity (0-0.05 points)
+                    r_str_acc = row.get('r_pro_sig_str_acc_corrected', 0.5)
+                    b_str_acc = row.get('b_pro_sig_str_acc_corrected', 0.5)
+                    str_acc_diff = abs(r_str_acc - b_str_acc)
+                    uncertainty += (1.0 - min(str_acc_diff * 2, 1.0)) * 0.05
+                    
+                    # 3. Significant Strikes Absorbed per Minute similarity (0-0.04 points)
+                    r_sapm = row.get('r_pro_SApM_corrected', 0)
+                    b_sapm = row.get('b_pro_SApM_corrected', 0)
+                    if r_sapm > 0 or b_sapm > 0:
+                        sapm_diff = abs(r_sapm - b_sapm) / max(r_sapm, b_sapm, 1)
+                        uncertainty += (1.0 - min(sapm_diff, 1.0)) * 0.04
+                    
+                    # 4. Significant Strike Defence similarity (0-0.05 points)
+                    r_str_def = row.get('r_pro_str_def_corrected', 0.5)
+                    b_str_def = row.get('b_pro_str_def_corrected', 0.5)
+                    str_def_diff = abs(r_str_def - b_str_def)
+                    uncertainty += (1.0 - min(str_def_diff * 2, 1.0)) * 0.05
+                    
+                    # 5. Average Takedowns Landed per 15 minutes similarity (0-0.04 points)
+                    r_td_avg = row.get('r_pro_TDAvg', 0)
+                    b_td_avg = row.get('b_pro_TDAvg', 0)
+                    if r_td_avg > 0 or b_td_avg > 0:
+                        td_avg_diff = abs(r_td_avg - b_td_avg) / max(r_td_avg, b_td_avg, 1)
+                        uncertainty += (1.0 - min(td_avg_diff, 1.0)) * 0.04
+                    
+                    # 6. Takedown Accuracy similarity (0-0.03 points)
+                    r_td_acc = row.get('r_pro_td_acc_corrected', 0.5)
+                    b_td_acc = row.get('b_pro_td_acc_corrected', 0.5)
+                    td_acc_diff = abs(r_td_acc - b_td_acc)
+                    uncertainty += (1.0 - min(td_acc_diff * 2, 1.0)) * 0.03
+                    
+                    # 7. Takedown Defense similarity (0-0.03 points)
+                    r_td_def = row.get('r_pro_td_def_corrected', 0.5)
+                    b_td_def = row.get('b_pro_td_def_corrected', 0.5)
+                    td_def_diff = abs(r_td_def - b_td_def)
+                    uncertainty += (1.0 - min(td_def_diff * 2, 1.0)) * 0.03
+                    
+                    # 8. Average Submissions Attempted per 15 minutes similarity (0-0.02 points)
+                    r_sub_avg = row.get('r_pro_sub_avg_corrected', 0)
+                    b_sub_avg = row.get('b_pro_sub_avg_corrected', 0)
+                    if r_sub_avg > 0 or b_sub_avg > 0:
+                        sub_avg_diff = abs(r_sub_avg - b_sub_avg) / max(r_sub_avg, b_sub_avg, 1)
+                        uncertainty += (1.0 - min(sub_avg_diff, 1.0)) * 0.02
+                    
+                    # ===== EXPERIENCE SIMILARITY =====
+                    # Total fights similarity (0-0.15 points)
                     r_fights = row.get('r_pro_fights', 0)
                     b_fights = row.get('b_pro_fights', 0)
                     if r_fights > 0 and b_fights > 0:
                         exp_ratio = min(r_fights, b_fights) / max(r_fights, b_fights)
-                        uncertainty += (1.0 - exp_ratio) * 0.2
+                        uncertainty += (1.0 - exp_ratio) * 0.15
                     
-                    # Recent form similarity increases uncertainty
+                    # Title fight experience similarity (0-0.1 points)
+                    r_title_fights = row.get('r_title_fights', 0)
+                    b_title_fights = row.get('b_title_fights', 0)
+                    if r_title_fights > 0 or b_title_fights > 0:
+                        title_diff = abs(r_title_fights - b_title_fights) / max(r_title_fights, b_title_fights, 1)
+                        uncertainty += (1.0 - min(title_diff, 1.0)) * 0.1
+                    
+                    # ===== PHYSICAL ATTRIBUTES SIMILARITY =====
+                    # Age similarity (0-0.1 points)
+                    r_age = row.get('r_age', 30)
+                    b_age = row.get('b_age', 30)
+                    age_diff = abs(r_age - b_age)
+                    uncertainty += min(age_diff / 20.0, 1.0) * 0.1
+                    
+                    # Height similarity (0-0.1 points)
+                    height_diff = abs(row.get('height_diff', 0))
+                    uncertainty += min(height_diff / 10.0, 1.0) * 0.1
+                    
+                    # Reach similarity (0-0.1 points)
+                    reach_diff = abs(row.get('reach_diff', 0))
+                    uncertainty += min(reach_diff / 10.0, 1.0) * 0.1
+                    
+                    # ===== RECENT FORM SIMILARITY =====
+                    # Recent wins similarity (0-0.15 points)
                     r_recent_wins = row.get('r_recent_wins', 0)
                     b_recent_wins = row.get('b_recent_wins', 0)
                     form_diff = abs(r_recent_wins - b_recent_wins)
-                    uncertainty += (1.0 - min(form_diff / 3.0, 1.0)) * 0.2
+                    uncertainty += (1.0 - min(form_diff / 3.0, 1.0)) * 0.15
                     
-                    uncertainty_scores.append(min(uncertainty, 1.0))
+                    # Recent trajectory similarity (0-0.1 points)
+                    r_trajectory = row.get('r_recent_trajectory', 0.5)
+                    b_trajectory = row.get('b_recent_trajectory', 0.5)
+                    trajectory_diff = abs(r_trajectory - b_trajectory)
+                    uncertainty += (1.0 - min(trajectory_diff * 2, 1.0)) * 0.1
                     
-                except (KeyError, ValueError, TypeError):
-                    uncertainty_scores.append(0.5)
+                    # ===== STYLE SIMILARITY =====
+                    # Fighting style similarity (0-0.1 points)
+                    r_style = str(row.get('r_fighting_style', 'Unknown'))
+                    b_style = str(row.get('b_fighting_style', 'Unknown'))
+                    if r_style == b_style and r_style != 'Unknown':
+                        uncertainty += 0.1  # Same style = more uncertain
+                    
+                    # Style compatibility uncertainty (0-0.1 points)
+                    style_compatibility = row.get('style_compatibility_score', 0.5)
+                    uncertainty += abs(style_compatibility - 0.5) * 0.1
+                    
+                    # ===== EXTERNAL FACTORS SIMILARITY =====
+                    # Home advantage similarity (0-0.05 points)
+                    home_advantage = abs(row.get('home_advantage', 0))
+                    uncertainty += min(home_advantage, 0.05)
+                    
+                    # Weight cut impact similarity (0-0.05 points)
+                    weight_cut_diff = abs(row.get('weight_cut_impact_diff', 0))
+                    uncertainty += min(weight_cut_diff * 5, 0.05)
+                    
+                    # ===== MOMENTUM SIMILARITY =====
+                    # Form consistency similarity (0-0.1 points)
+                    r_consistency = row.get('r_form_consistency', 0.5)
+                    b_consistency = row.get('b_form_consistency', 0.5)
+                    consistency_diff = abs(r_consistency - b_consistency)
+                    uncertainty += (1.0 - min(consistency_diff * 2, 1.0)) * 0.1
+                    
+                    # ===== PREDICTION CONFIDENCE INVERSE =====
+                    # Lower confidence = higher uncertainty (0-0.2 points)
+                    prediction_confidence = row.get('prediction_confidence', 0.5)
+                    uncertainty += (1.0 - prediction_confidence) * 0.2
+                    
+                    # ===== FINAL UNCERTAINTY CALCULATION =====
+                    # Cap uncertainty at 1.0 and ensure minimum of 0.1
+                    final_uncertainty = max(0.1, min(uncertainty, 1.0))
+                    uncertainty_scores.append(final_uncertainty)
+                    
+                except (KeyError, ValueError, TypeError) as e:
+                    # Fallback to basic uncertainty calculation
+                    try:
+                        r_win_rate = row.get('r_pro_win_rate', 0.5)
+                        b_win_rate = row.get('b_pro_win_rate', 0.5)
+                        skill_diff = abs(r_win_rate - b_win_rate)
+                        basic_uncertainty = 0.5 + (1.0 - skill_diff) * 0.3
+                        uncertainty_scores.append(min(basic_uncertainty, 1.0))
+                    except:
+                        uncertainty_scores.append(0.5)
             
             return np.array(uncertainty_scores)
         except Exception as e:
