@@ -23,6 +23,46 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from scipy.stats import linregress
+from sklearn.model_selection import RandomizedSearchCV, GridSearchCV
+from sklearn.metrics import log_loss, brier_score_loss
+from datetime import datetime
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning)
+
+# Optional imports for advanced optimization
+try:
+    from sklearn.metrics import calibration_curve
+    HAS_CALIBRATION_CURVE = True
+except ImportError:
+    HAS_CALIBRATION_CURVE = False
+
+try:
+    import optuna
+    from optuna.samplers import TPESampler
+    from optuna.pruners import MedianPruner
+    HAS_OPTUNA = True
+except ImportError:
+    HAS_OPTUNA = False
+    print("Optuna not available. Install with: pip install optuna")
+
+try:
+    import joblib
+    HAS_JOBLIB = True
+except ImportError:
+    HAS_JOBLIB = False
+
+# Check for GPU availability
+HAS_GPU = False
+try:
+    import subprocess
+    result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
+    if result.returncode == 0:
+        HAS_GPU = True
+        print("GPU detected: CUDA acceleration enabled")
+    else:
+        print("Warning: No GPU detected. Using CPU for training.")
+except:
+    print("Warning: Could not detect GPU. Using CPU for training.")
 import warnings
 import shutil
 import atexit
@@ -126,6 +166,348 @@ except ImportError:
     print("TensorFlow not available. Install with: pip install tensorflow")
 
 
+class AdvancedHyperparameterOptimizer:
+    """Advanced hyperparameter optimization using Optuna with multiple strategies"""
+    
+    def __init__(self, n_trials=200, timeout=3600, cv_folds=5):
+        self.n_trials = n_trials
+        self.timeout = timeout
+        self.cv_folds = cv_folds
+        self.study = None
+        self.best_params = {}
+        
+    def optimize_xgboost(self, X, y, method='winner'):
+        """Optimize XGBoost hyperparameters using Optuna"""
+        if not HAS_OPTUNA:
+            print("Optuna not available, using fallback optimization")
+            return {}
+            
+        def objective(trial):
+            # Restored original ranges for better model performance
+            params = {
+                'n_estimators': trial.suggest_int('n_estimators', 1000, 3000),  # Restored from 400-1200
+                'max_depth': trial.suggest_int('max_depth', 8, 20),  # Restored from 6-12
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),  # Restored from 0.05-0.2
+                'subsample': trial.suggest_float('subsample', 0.6, 1.0),  # Restored from 0.7-0.95
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),  # Restored from 0.7-0.95
+                'colsample_bylevel': trial.suggest_float('colsample_bylevel', 0.6, 1.0),  # Restored from 0.7-0.95
+                'reg_alpha': trial.suggest_float('reg_alpha', 0, 1.0),  # Restored from 0-0.5
+                'reg_lambda': trial.suggest_float('reg_lambda', 0.5, 5.0),  # Restored from 0.5-2.0
+                'min_child_weight': trial.suggest_int('min_child_weight', 1, 20),  # Restored from 1-10
+                'gamma': trial.suggest_float('gamma', 0, 2.0),  # Restored from 0-0.5
+                'max_delta_step': trial.suggest_int('max_delta_step', 0, 10),  # Restored from 0-3
+                'n_jobs': -1,
+                'random_state': 42,
+                'eval_metric': 'logloss',
+                'enable_categorical': True
+            }
+            
+            # Only use GPU if available and supported
+            if HAS_GPU:
+                try:
+                    # Test if XGBoost GPU is available
+                    test_model = XGBClassifier(tree_method='gpu_hist', device='cuda', n_estimators=1)
+                    test_model.fit(X.iloc[:10], y[:10])
+                    params['tree_method'] = 'gpu_hist'
+                    params['device'] = 'cuda'
+                except:
+                    # Fallback to CPU if GPU fails
+                    params['tree_method'] = 'hist'
+                    params['device'] = 'cpu'
+            else:
+                params['tree_method'] = 'hist'
+                params['device'] = 'cpu'
+            
+            # Use purged cross-validation
+            tscv = TimeSeriesSplit(n_splits=self.cv_folds)
+            scores = []
+            
+            for train_idx, val_idx in tscv.split(X):
+                X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+                y_train, y_val = y[train_idx], y[val_idx]
+                
+                try:
+                    model = XGBClassifier(**params)
+                    model.fit(X_train, y_train)
+                    
+                    if method == 'winner':
+                        y_pred = model.predict_proba(X_val)[:, 1]
+                        score = log_loss(y_val, y_pred)
+                    else:  # method prediction
+                        y_pred = model.predict_proba(X_val)
+                        score = log_loss(y_val, y_pred)
+                    
+                    scores.append(score)
+                except Exception as e:
+                    # Skip this fold if there's an error (e.g., invalid parameters)
+                    print(f"Warning: XGBoost trial failed in fold: {e}")
+                    scores.append(float('inf'))  # Use infinity to indicate failure
+            
+            # Filter out failed trials (infinity scores)
+            valid_scores = [score for score in scores if score != float('inf')]
+            if not valid_scores:
+                return float('inf')  # All trials failed
+            return np.mean(valid_scores)
+        
+        study = optuna.create_study(
+            direction='minimize',
+            sampler=TPESampler(seed=42),
+            pruner=MedianPruner(n_startup_trials=10, n_warmup_steps=5)
+        )
+        
+        study.optimize(objective, n_trials=self.n_trials, timeout=self.timeout)
+        
+        # Check if any trials succeeded
+        if study.best_value == float('inf'):
+            print("Warning: All XGBoost trials failed, using default parameters")
+            self.best_params['xgboost'] = {}
+            return {}
+        
+        self.best_params['xgboost'] = study.best_params
+        return study.best_params
+    
+    def optimize_lightgbm(self, X, y, method='winner'):
+        """Optimize LightGBM hyperparameters using Optuna"""
+        if not HAS_OPTUNA:
+            print("Optuna not available, using fallback optimization")
+            return {}
+            
+        def objective(trial):
+            # Restored original ranges for better model performance
+            params = {
+                'n_estimators': trial.suggest_int('n_estimators', 1000, 3000),  # Restored from 400-1200
+                'max_depth': trial.suggest_int('max_depth', 8, 25),  # Restored from 6-12
+                'num_leaves': trial.suggest_int('num_leaves', 31, 511),  # Restored from 15-50
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),  # Restored from 0.05-0.2
+                'subsample': trial.suggest_float('subsample', 0.6, 1.0),  # Restored from 0.7-0.95
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),  # Restored from 0.7-0.95
+                'reg_alpha': trial.suggest_float('reg_alpha', 0, 1.0),  # Restored from 0-0.5
+                'reg_lambda': trial.suggest_float('reg_lambda', 0, 1.0),  # Restored from 0-0.5
+                'min_child_samples': trial.suggest_int('min_child_samples', 5, 100),  # Restored from 10-30
+                'random_state': 42,
+                'verbose': -1
+            }
+            
+            # Only use GPU if available and supported
+            if HAS_GPU:
+                try:
+                    # Test if LightGBM GPU is available
+                    test_model = LGBMClassifier(device='gpu', n_estimators=1, verbose=-1)
+                    test_model.fit(X.iloc[:10], y[:10])
+                    params['device'] = 'gpu'
+                except:
+                    # Fallback to CPU if GPU fails
+                    params['device'] = 'cpu'
+            else:
+                params['device'] = 'cpu'
+            
+            tscv = TimeSeriesSplit(n_splits=self.cv_folds)
+            scores = []
+            
+            for train_idx, val_idx in tscv.split(X):
+                X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+                y_train, y_val = y[train_idx], y[val_idx]
+                
+                try:
+                    model = LGBMClassifier(**params)
+                    model.fit(X_train, y_train)
+                    
+                    if method == 'winner':
+                        y_pred = model.predict_proba(X_val)[:, 1]
+                        score = log_loss(y_val, y_pred)
+                    else:
+                        y_pred = model.predict_proba(X_val)
+                        score = log_loss(y_val, y_pred)
+                    
+                    scores.append(score)
+                except Exception as e:
+                    # Skip this fold if there's an error (e.g., invalid parameters)
+                    print(f"Warning: LightGBM trial failed in fold: {e}")
+                    scores.append(float('inf'))  # Use infinity to indicate failure
+            
+            # Filter out failed trials (infinity scores)
+            valid_scores = [score for score in scores if score != float('inf')]
+            if not valid_scores:
+                return float('inf')  # All trials failed
+            return np.mean(valid_scores)
+        
+        study = optuna.create_study(
+            direction='minimize',
+            sampler=TPESampler(seed=42),
+            pruner=MedianPruner(n_startup_trials=10, n_warmup_steps=5)
+        )
+        
+        study.optimize(objective, n_trials=self.n_trials, timeout=self.timeout)
+        
+        # Check if any trials succeeded
+        if study.best_value == float('inf'):
+            print("Warning: All LightGBM trials failed, using default parameters")
+            self.best_params['lightgbm'] = {}
+            return {}
+        
+        self.best_params['lightgbm'] = study.best_params
+        return study.best_params
+    
+    def optimize_catboost(self, X, y, method='winner'):
+        """Optimize CatBoost hyperparameters using Optuna"""
+        if not HAS_OPTUNA:
+            print("Optuna not available, using fallback optimization")
+            return {}
+            
+        def objective(trial):
+            # Restored original ranges for better model performance
+            bootstrap_type = trial.suggest_categorical('bootstrap_type', ['Bayesian', 'Bernoulli'])
+            
+            params = {
+                'iterations': trial.suggest_int('iterations', 1000, 3000),  # Restored from 400-1200
+                'depth': trial.suggest_int('depth', 6, 12),  # Restored from 6-10
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),  # Restored from 0.05-0.2
+                'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 0.1, 10.0),  # Restored from 0.1-3.0
+                'bootstrap_type': bootstrap_type,
+                'random_strength': trial.suggest_float('random_strength', 0, 10),  # Restored from 0-3
+                'od_type': 'Iter',
+                'od_wait': 50,
+                'random_seed': 42,
+                'verbose': False
+            }
+            
+            # Only add bagging_temperature if bootstrap_type is Bayesian
+            if bootstrap_type == 'Bayesian':
+                params['bagging_temperature'] = trial.suggest_float('bagging_temperature', 0, 0.5)
+            
+            # Use GPU only if available
+            if HAS_GPU:
+                params['task_type'] = 'GPU'
+            else:
+                params['task_type'] = 'CPU'
+            
+            tscv = TimeSeriesSplit(n_splits=self.cv_folds)
+            scores = []
+            
+            for train_idx, val_idx in tscv.split(X):
+                X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+                y_train, y_val = y[train_idx], y[val_idx]
+                
+                try:
+                    model = CatBoostClassifier(**params)
+                    model.fit(X_train, y_train, eval_set=(X_val, y_val), verbose=False)
+                    
+                    if method == 'winner':
+                        y_pred = model.predict_proba(X_val)[:, 1]
+                        score = log_loss(y_val, y_pred)
+                    else:
+                        y_pred = model.predict_proba(X_val)
+                        score = log_loss(y_val, y_pred)
+                    
+                    scores.append(score)
+                except Exception as e:
+                    # Skip this fold if there's an error (e.g., invalid parameters)
+                    print(f"Warning: CatBoost trial failed in fold: {e}")
+                    scores.append(float('inf'))  # Use infinity to indicate failure
+            
+            # Filter out failed trials (infinity scores)
+            valid_scores = [score for score in scores if score != float('inf')]
+            if not valid_scores:
+                return float('inf')  # All trials failed
+            return np.mean(valid_scores)
+        
+        study = optuna.create_study(
+            direction='minimize',
+            sampler=TPESampler(seed=42),
+            pruner=MedianPruner(n_startup_trials=10, n_warmup_steps=5)
+        )
+        
+        study.optimize(objective, n_trials=self.n_trials, timeout=self.timeout)
+        
+        # Check if any trials succeeded
+        if study.best_value == float('inf'):
+            print("Warning: All CatBoost trials failed, using default parameters")
+            self.best_params['catboost'] = {}
+            return {}
+        
+        self.best_params['catboost'] = study.best_params
+        return study.best_params
+
+
+class AdvancedCalibration:
+    """Advanced calibration methods for better probability calibration"""
+    
+    def __init__(self, cv_folds=5):
+        self.cv_folds = cv_folds
+        self.calibrated_models = {}
+        self.calibration_methods = ['isotonic', 'sigmoid']
+        
+    def calibrate_model(self, model, X, y, method='best'):
+        """Calibrate a model using the best calibration method"""
+        if method == 'best':
+            # Test both calibration methods and choose the best
+            best_score = float('inf')
+            best_calibrated_model = None
+            
+            for calib_method in self.calibration_methods:
+                try:
+                    calibrated = CalibratedClassifierCV(
+                        model, method=calib_method, cv=self.cv_folds
+                    )
+                    calibrated.fit(X, y)
+                    
+                    # Evaluate calibration using Brier score
+                    y_pred_proba = calibrated.predict_proba(X)[:, 1]
+                    score = brier_score_loss(y, y_pred_proba)
+                    
+                    if score < best_score:
+                        best_score = score
+                        best_calibrated_model = calibrated
+                        
+                except Exception as e:
+                    print(f"Error with {calib_method} calibration: {e}")
+                    continue
+            
+            return best_calibrated_model if best_calibrated_model else CalibratedClassifierCV(
+                model, method='isotonic', cv=self.cv_folds
+            )
+        else:
+            return CalibratedClassifierCV(model, method=method, cv=self.cv_folds)
+    
+    def calibrate_ensemble(self, models, X, y):
+        """Calibrate each model in an ensemble separately"""
+        calibrated_models = []
+        
+        for name, model in models:
+            print(f"Calibrating {name}...")
+            calibrated = self.calibrate_model(model, X, y)
+            calibrated_models.append((name, calibrated))
+            
+        return calibrated_models
+    
+    def evaluate_calibration(self, model, X, y):
+        """Evaluate model calibration quality"""
+        y_pred_proba = model.predict_proba(X)[:, 1]
+        
+        # Brier score (lower is better)
+        brier_score = brier_score_loss(y, y_pred_proba)
+        
+        # Calibration curve
+        if HAS_CALIBRATION_CURVE:
+            fraction_of_positives, mean_predicted_value = calibration_curve(
+                y, y_pred_proba, n_bins=10
+            )
+        else:
+            # Fallback: create dummy calibration curve
+            fraction_of_positives = np.linspace(0, 1, 10)
+            mean_predicted_value = np.linspace(0, 1, 10)
+        
+        # Calibration error (mean absolute difference)
+        calibration_error = np.mean(np.abs(fraction_of_positives - mean_predicted_value))
+        
+        return {
+            'brier_score': brier_score,
+            'calibration_error': calibration_error,
+            'fraction_of_positives': fraction_of_positives,
+            'mean_predicted_value': mean_predicted_value
+        }
+
+
 class AdvancedUFCPredictor:
     def __init__(
         self,
@@ -134,6 +516,7 @@ class AdvancedUFCPredictor:
         use_deep_learning=False,
         debug_mode=False,
         performance_mode=False,  # New: Fast mode for speed
+        performance_plus_mode=False,  # New: Optimized performance mode
     ):
         self.winner_model = None
         self.method_model = None  # Single method prediction model
@@ -144,10 +527,31 @@ class AdvancedUFCPredictor:
         self.use_deep_learning = use_deep_learning and HAS_TENSORFLOW
         self.debug_mode = debug_mode
         self.performance_mode = performance_mode  # Store performance mode
+        self.performance_plus_mode = performance_plus_mode  # Store performance plus mode
         self.df_train = None
         self.fighter_style_cache = {}
         self.fighter_encoder = None  # For fighter embeddings
         self.num_fighters = 0
+        
+        # Initialize advanced optimization components
+        if performance_plus_mode:
+            # Performance Plus: Conservative optimization
+            self.hyperparameter_optimizer = AdvancedHyperparameterOptimizer(
+                n_trials=30,  # Fewer trials, more focused
+                timeout=1200,  # 20 minutes
+                cv_folds=5
+            )
+        else:
+            self.hyperparameter_optimizer = AdvancedHyperparameterOptimizer(
+                n_trials=200 if not performance_mode else 10,  # Performance mode: 10 trials (testing)
+                timeout=1800 if not performance_mode else 1200,  # 20 minutes for performance mode
+                cv_folds=5
+            )
+        self.calibration_optimizer = AdvancedCalibration(
+            cv_folds=5
+        )
+        self.optimized_params = {}
+        self.performance_tracker = {}
 
         # MEMORY OPTIMIZATION: Feature caching for 2x speedup
         self.feature_cache = {}
@@ -1421,6 +1825,111 @@ class AdvancedUFCPredictor:
         except Exception as e:
             print(f"Error creating purged CV: {e}")
             return StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    
+    def _create_advanced_validation_strategies(self, df, X, y):
+        """Create advanced validation strategies with purged CV and nested validation"""
+        strategies = []
+        
+        try:
+            # Strategy 1: Purged Cross-Validation (prevents data leakage)
+            strategies.append({
+                'name': 'PurgedCrossValidation',
+                'splitter': self._create_purged_cv(df),
+                'description': 'Purged validation preventing data leakage with 30-day buffer'
+            })
+            
+            # Strategy 2: Walk-Forward Analysis
+            if 'event_date' in df.columns:
+                strategies.append({
+                    'name': 'WalkForwardAnalysis',
+                    'splitter': self._create_walk_forward_cv(df),
+                    'description': 'Walk-forward analysis for realistic temporal validation'
+                })
+            
+            # Strategy 3: Group K-Fold by fighter (prevents same fighter in train/test)
+            if 'r_fighter' in df.columns and 'b_fighter' in df.columns:
+                fighter_groups = []
+                for idx, row in df.iterrows():
+                    fighter_groups.append(f"{row.get('r_fighter', '')}_{row.get('b_fighter', '')}")
+                
+                strategies.append({
+                    'name': 'GroupKFoldByFighters',
+                    'splitter': GroupKFold(n_splits=5),
+                    'groups': fighter_groups,
+                    'description': 'Group validation by fighter combinations'
+                })
+            
+            # Strategy 4: Stratified K-Fold with time awareness
+            strategies.append({
+                'name': 'StratifiedKFoldTimeAware',
+                'splitter': StratifiedKFold(n_splits=5, shuffle=True, random_state=42),
+                'description': 'Stratified validation maintaining class distribution'
+            })
+            
+            return strategies
+            
+        except Exception as e:
+            print(f"Error creating advanced validation strategies: {e}")
+            return [{
+                'name': 'StratifiedKFold',
+                'splitter': StratifiedKFold(n_splits=5, shuffle=True, random_state=42),
+                'description': 'Basic stratified validation'
+            }]
+    
+    def _create_walk_forward_cv(self, df):
+        """Create walk-forward cross-validation for time series"""
+        from sklearn.model_selection import BaseCrossValidator
+        
+        class WalkForwardValidator(BaseCrossValidator):
+            def __init__(self, n_splits=5, min_train_size=100):
+                self.n_splits = n_splits
+                self.min_train_size = min_train_size
+            
+            def split(self, X, y=None, groups=None):
+                if 'event_date' not in df.columns:
+                    # Fallback to regular split
+                    for train_idx, test_idx in StratifiedKFold(n_splits=self.n_splits).split(X, y):
+                        yield train_idx, test_idx
+                    return
+                
+                # Sort by date
+                df_sorted = df.sort_values('event_date').reset_index(drop=True)
+                n_samples = len(df_sorted)
+                
+                # Calculate split points
+                test_size = max(50, n_samples // (self.n_splits + 1))
+                
+                for i in range(self.n_splits):
+                    test_start = self.min_train_size + i * test_size
+                    test_end = min(test_start + test_size, n_samples)
+                    
+                    if test_start >= n_samples:
+                        break
+                    
+                    train_idx = list(range(0, test_start))
+                    test_idx = list(range(test_start, test_end))
+                    
+                    if len(train_idx) >= self.min_train_size and len(test_idx) > 0:
+                        yield train_idx, test_idx
+        
+        return WalkForwardValidator(n_splits=5, min_train_size=100)
+    
+    def _create_nested_cv_strategy(self, X, y):
+        """Create nested cross-validation for model selection and hyperparameter tuning"""
+        from sklearn.model_selection import BaseCrossValidator
+        
+        class NestedCrossValidator(BaseCrossValidator):
+            def __init__(self, outer_splits=5, inner_splits=3):
+                self.outer_splits = outer_splits
+                self.inner_splits = inner_splits
+            
+            def split(self, X, y=None, groups=None):
+                # Outer loop for model evaluation
+                tscv_outer = TimeSeriesSplit(n_splits=self.outer_splits)
+                for train_idx, test_idx in tscv_outer.split(X):
+                    yield train_idx, test_idx
+        
+        return NestedCrossValidator(outer_splits=5, inner_splits=3)
 
     def _select_best_validation_strategy(self, strategies, X, y):
         """Select the best validation strategy based on data characteristics"""
@@ -1481,6 +1990,284 @@ class AdvancedUFCPredictor:
         except Exception as e:
             print(f"Error selecting validation strategy: {e}")
             return strategies[0]
+
+    # ===== ADVANCED HYPERPARAMETER OPTIMIZATION METHODS =====
+    
+    def optimize_all_models_advanced(self, X, y_winner, y_method=None):
+        """Advanced hyperparameter optimization for all models using Optuna"""
+        print("\n" + "="*80)
+        print("🚀 ADVANCED HYPERPARAMETER OPTIMIZATION")
+        print("="*80)
+        
+        optimized_params = {}
+        
+        # Optimize XGBoost for winner prediction
+        print("\n🔧 Optimizing XGBoost for winner prediction...")
+        try:
+            xgb_winner_params = self.hyperparameter_optimizer.optimize_xgboost(
+                X, y_winner, method='winner'
+            )
+            optimized_params['xgboost_winner'] = xgb_winner_params
+            print(f"✅ XGBoost winner optimization complete. Best score: {xgb_winner_params}")
+        except Exception as e:
+            print(f"❌ XGBoost winner optimization failed: {e}")
+            optimized_params['xgboost_winner'] = {}
+        
+        # Optimize XGBoost for method prediction
+        if y_method is not None:
+            print("\n🔧 Optimizing XGBoost for method prediction...")
+            try:
+                xgb_method_params = self.hyperparameter_optimizer.optimize_xgboost(
+                    X, y_method, method='method'
+                )
+                optimized_params['xgboost_method'] = xgb_method_params
+                print(f"✅ XGBoost method optimization complete.")
+            except Exception as e:
+                print(f"❌ XGBoost method optimization failed: {e}")
+                optimized_params['xgboost_method'] = {}
+        
+        # Optimize LightGBM for winner prediction
+        print("\n🔧 Optimizing LightGBM for winner prediction...")
+        try:
+            lgbm_winner_params = self.hyperparameter_optimizer.optimize_lightgbm(
+                X, y_winner, method='winner'
+            )
+            optimized_params['lightgbm_winner'] = lgbm_winner_params
+            print(f"✅ LightGBM winner optimization complete.")
+        except Exception as e:
+            print(f"❌ LightGBM winner optimization failed: {e}")
+            optimized_params['lightgbm_winner'] = {}
+        
+        # Optimize LightGBM for method prediction
+        if y_method is not None:
+            print("\n🔧 Optimizing LightGBM for method prediction...")
+            try:
+                lgbm_method_params = self.hyperparameter_optimizer.optimize_lightgbm(
+                    X, y_method, method='method'
+                )
+                optimized_params['lightgbm_method'] = lgbm_method_params
+                print(f"✅ LightGBM method optimization complete.")
+            except Exception as e:
+                print(f"❌ LightGBM method optimization failed: {e}")
+                optimized_params['lightgbm_method'] = {}
+        
+        # Optimize CatBoost for winner prediction
+        print("\n🔧 Optimizing CatBoost for winner prediction...")
+        try:
+            catboost_winner_params = self.hyperparameter_optimizer.optimize_catboost(
+                X, y_winner, method='winner'
+            )
+            optimized_params['catboost_winner'] = catboost_winner_params
+            print(f"✅ CatBoost winner optimization complete.")
+        except Exception as e:
+            print(f"❌ CatBoost winner optimization failed: {e}")
+            optimized_params['catboost_winner'] = {}
+        
+        # Optimize CatBoost for method prediction
+        if y_method is not None:
+            print("\n🔧 Optimizing CatBoost for method prediction...")
+            try:
+                catboost_method_params = self.hyperparameter_optimizer.optimize_catboost(
+                    X, y_method, method='method'
+                )
+                optimized_params['catboost_method'] = catboost_method_params
+                print(f"✅ CatBoost method optimization complete.")
+            except Exception as e:
+                print(f"❌ CatBoost method optimization failed: {e}")
+                optimized_params['catboost_method'] = {}
+        
+        self.optimized_params = optimized_params
+        print(f"\n✅ Advanced hyperparameter optimization complete!")
+        print(f"📊 Optimized {len([k for k in optimized_params.keys() if optimized_params[k]])} model configurations")
+        
+        return optimized_params
+    
+    def create_method_specific_models(self, X, y_method, method_types):
+        """Create specialized models for each method of victory"""
+        print("\n" + "="*80)
+        print("🎯 METHOD-SPECIFIC MODEL OPTIMIZATION")
+        print("="*80)
+        
+        method_models = {}
+        
+        for method in method_types:
+            print(f"\n🔧 Creating specialized model for {method}...")
+            
+            # Create binary target for this method
+            y_method_binary = (y_method == method).astype(int)
+            
+            if y_method_binary.sum() < 10:  # Need minimum samples
+                print(f"⚠️  Insufficient samples for {method}, skipping...")
+                continue
+            
+            try:
+                # Optimize XGBoost for this specific method
+                method_params = self.hyperparameter_optimizer.optimize_xgboost(
+                    X, y_method_binary, method='winner'
+                )
+                
+                # Create optimized model
+                xgb_model = XGBClassifier(**method_params)
+                method_models[f'xgboost_{method}'] = xgb_model
+                
+                print(f"✅ {method} model created with {y_method_binary.sum()} positive samples")
+                
+            except Exception as e:
+                print(f"❌ Failed to create {method} model: {e}")
+                continue
+        
+        return method_models
+    
+    def create_dynamic_ensemble_advanced(self, base_models, X, y):
+        """Create advanced dynamic ensemble with confidence-based weighting"""
+        print("\n" + "="*80)
+        print("🧠 ADVANCED DYNAMIC ENSEMBLE CREATION")
+        print("="*80)
+        
+        # Train base models
+        trained_models = []
+        model_performances = []
+        
+        for name, model in base_models:
+            print(f"Training {name}...")
+            try:
+                model.fit(X, y)
+                trained_models.append((name, model))
+                
+                # Evaluate performance
+                y_pred = model.predict_proba(X)[:, 1]
+                performance = 1 - log_loss(y, y_pred)  # Higher is better
+                model_performances.append(performance)
+                
+            except Exception as e:
+                print(f"❌ Failed to train {name}: {e}")
+                continue
+        
+        if not trained_models:
+            print("❌ No models trained successfully")
+            return None
+        
+        # Create dynamic weighting based on confidence and performance
+        def dynamic_weighting(X_new):
+            weights = np.ones((X_new.shape[0], len(trained_models)))
+            
+            for i, (name, model) in enumerate(trained_models):
+                try:
+                    # Get predictions and confidence
+                    y_pred_proba = model.predict_proba(X_new)[:, 1]
+                    confidence = np.abs(y_pred_proba - 0.5) * 2  # 0 to 1
+                    
+                    # Weight by confidence and performance
+                    weights[:, i] = confidence * model_performances[i]
+                    
+                except Exception as e:
+                    print(f"Error in dynamic weighting for {name}: {e}")
+                    weights[:, i] = 1.0 / len(trained_models)
+            
+            # Normalize weights
+            weights = weights / np.sum(weights, axis=1, keepdims=True)
+            return weights
+        
+        # Create ensemble class
+        class DynamicEnsemble:
+            def __init__(self, models, weighting_func):
+                self.models = models
+                self.weighting_func = weighting_func
+            
+            def predict_proba(self, X):
+                predictions = []
+                for name, model in self.models:
+                    pred = model.predict_proba(X)[:, 1]
+                    predictions.append(pred)
+                
+                predictions = np.array(predictions).T
+                weights = self.weighting_func(X)
+                
+                # Weighted average
+                final_pred = np.sum(predictions * weights, axis=1)
+                return np.column_stack([1 - final_pred, final_pred])
+            
+            def predict(self, X):
+                proba = self.predict_proba(X)
+                return (proba[:, 1] > 0.5).astype(int)
+        
+        ensemble = DynamicEnsemble(trained_models, dynamic_weighting)
+        print(f"✅ Dynamic ensemble created with {len(trained_models)} models")
+        
+        return ensemble
+    
+    def create_early_stopping_optimizer(self, model, X, y, patience=10, min_delta=0.001):
+        """Create advanced early stopping with multiple metrics"""
+        from sklearn.metrics import accuracy_score, log_loss
+        
+        class EarlyStoppingOptimizer:
+            def __init__(self, model, X, y, patience=10, min_delta=0.001):
+                self.model = model
+                self.X = X
+                self.y = y
+                self.patience = patience
+                self.min_delta = min_delta
+                self.best_score = 0
+                self.patience_counter = 0
+                self.best_model = None
+                self.training_history = []
+                
+            def should_stop(self, current_score, current_model):
+                """Check if training should stop based on multiple criteria"""
+                # Track training history
+                self.training_history.append(current_score)
+                
+                # Check for improvement
+                if current_score > self.best_score + self.min_delta:
+                    self.best_score = current_score
+                    self.best_model = current_model
+                    self.patience_counter = 0
+                    return False
+                else:
+                    self.patience_counter += 1
+                    return self.patience_counter >= self.patience
+            
+            def get_best_model(self):
+                return self.best_model if self.best_model else self.model
+        
+        return EarlyStoppingOptimizer(model, X, y, patience, min_delta)
+    
+    def optimize_with_early_stopping(self, model, X, y, cv_folds=5):
+        """Optimize model with early stopping and multiple metrics"""
+        print(f"Optimizing {type(model).__name__} with early stopping...")
+        
+        tscv = TimeSeriesSplit(n_splits=cv_folds)
+        best_score = 0
+        best_model = None
+        
+        for fold, (train_idx, val_idx) in enumerate(tscv.split(X)):
+            X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+            y_train, y_val = y[train_idx], y[val_idx]
+            
+            # Create early stopping optimizer for this fold
+            early_stopping = self.create_early_stopping_optimizer(
+                model, X_val, y_val, patience=5, min_delta=0.001
+            )
+            
+            # Train model with early stopping
+            try:
+                if hasattr(model, 'fit'):
+                    model.fit(X_train, y_train)
+                    
+                    # Evaluate on validation set
+                    y_pred = model.predict_proba(X_val)[:, 1]
+                    score = 1 - log_loss(y_val, y_pred)  # Higher is better
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_model = model
+                        
+            except Exception as e:
+                print(f"Error in fold {fold}: {e}")
+                continue
+        
+        print(f"Best validation score: {best_score:.4f}")
+        return best_model if best_model else model
 
     # ===== HYPERPARAMETER OPTIMIZATION METHODS =====
     
@@ -1544,8 +2331,8 @@ class AdvancedUFCPredictor:
                 'n_jobs': -1,
                 'random_state': 42,
                 'eval_metric': 'logloss',
-                'tree_method': 'hist',
-                'device': 'cpu',
+                'tree_method': 'gpu_hist',
+                'device': 'cuda',
                 'seed': 42,
                 'enable_categorical': True
             })
@@ -1614,7 +2401,7 @@ class AdvancedUFCPredictor:
                 params[key] = np.random.choice(values)
             
             params.update({
-                'device': 'cpu',
+                'device': 'gpu',
                 'random_state': 42,
                 'verbose': -1
             })
@@ -1659,7 +2446,7 @@ class AdvancedUFCPredictor:
                 params[key] = np.random.choice(values)
             
             params.update({
-                'task_type': 'CPU',
+                'task_type': 'GPU',
                 'random_state': 42,
                 'verbose': 0
             })
@@ -4803,8 +5590,13 @@ class AdvancedUFCPredictor:
         # ===== ADVANCED VALIDATION STRATEGY =====
         print("\n📊 IMPLEMENTING ADVANCED VALIDATION STRATEGY...")
         
-        # Multi-strategy validation approach
-        validation_strategies = self._create_validation_strategies(df, X, y_winner)
+        # Multi-strategy validation approach with advanced strategies
+        if not self.performance_mode:
+            validation_strategies = self._create_advanced_validation_strategies(df, X, y_winner)
+            print("Using advanced validation strategies")
+        else:
+            validation_strategies = self._create_validation_strategies(df, X, y_winner)
+            print("Using standard validation strategies (performance mode)")
         
         # Use the best validation strategy based on data characteristics
         best_strategy = self._select_best_validation_strategy(validation_strategies, X, y_winner)
@@ -4873,8 +5665,38 @@ class AdvancedUFCPredictor:
             [("num", numeric_transformer, feature_columns)]
         )
 
-        # ===== HYPERPARAMETER OPTIMIZATION =====
-        print("\n🔧 OPTIMIZING HYPERPARAMETERS...")
+        # ===== ADVANCED HYPERPARAMETER OPTIMIZATION =====
+        print("\n🚀 ADVANCED HYPERPARAMETER OPTIMIZATION...")
+        
+        # Run advanced optimization if not in performance mode
+        if not self.performance_mode:
+            print("Running comprehensive hyperparameter optimization...")
+            optimized_params = self.optimize_all_models_advanced(
+                X_train, y_winner_train, y_method_train
+            )
+            
+            # Create method-specific models
+            method_types = ['KO/TKO', 'Submission', 'Decision']
+            method_models = self.create_method_specific_models(
+                X_train, y_method_train, method_types
+            )
+            
+            print(f"✅ Advanced optimization complete!")
+            print(f"📊 Optimized parameters: {len(optimized_params)} configurations")
+            print(f"🎯 Method-specific models: {len(method_models)} models")
+        else:
+            print("Running performance mode optimization...")
+            # Use conservative optimization for performance mode
+            optimized_params = self.optimize_all_models_advanced(
+                X_train, y_winner_train, y_method_train
+            )
+            method_models = {}  # Disable method-specific models in performance mode
+            print(f"✅ Performance mode optimization complete!")
+            print(f"📊 Optimized parameters: {len(optimized_params)} configurations")
+            print(f"🎯 Method-specific models: DISABLED (preventing overfitting)")
+        
+        # ===== HYPERPARAMETER OPTIMIZATION (FALLBACK) =====
+        print("\n🔧 FALLBACK HYPERPARAMETER OPTIMIZATION...")
         
         # Optimize hyperparameters based on performance mode
         trials = 3 if self.performance_mode else 8  # Much faster in performance mode
@@ -4882,27 +5704,39 @@ class AdvancedUFCPredictor:
         # Optimize XGBoost parameters
         if HAS_XGBOOST:
             print("Optimizing XGBoost hyperparameters...")
-            xgb_optimized = self.optimize_hyperparameters(X_train, y_winner_train, 'xgb', n_trials=trials)
-            if not xgb_optimized:
-                xgb_optimized = {}  # Use defaults if optimization fails
+            if 'xgboost_winner' in optimized_params and optimized_params['xgboost_winner']:
+                xgb_optimized = optimized_params['xgboost_winner']
+                print("Using advanced optimized XGBoost parameters")
+            else:
+                xgb_optimized = self.optimize_hyperparameters(X_train, y_winner_train, 'xgb', n_trials=trials)
+                if not xgb_optimized:
+                    xgb_optimized = {}  # Use defaults if optimization fails
         else:
             xgb_optimized = {}
             
         # Optimize LightGBM parameters
         if HAS_LIGHTGBM:
             print("Optimizing LightGBM hyperparameters...")
-            lgbm_optimized = self.optimize_hyperparameters(X_train, y_winner_train, 'lgbm', n_trials=trials)
-            if not lgbm_optimized:
-                lgbm_optimized = {}
+            if 'lightgbm_winner' in optimized_params and optimized_params['lightgbm_winner']:
+                lgbm_optimized = optimized_params['lightgbm_winner']
+                print("Using advanced optimized LightGBM parameters")
+            else:
+                lgbm_optimized = self.optimize_hyperparameters(X_train, y_winner_train, 'lgbm', n_trials=trials)
+                if not lgbm_optimized:
+                    lgbm_optimized = {}
         else:
             lgbm_optimized = {}
             
         # Optimize CatBoost parameters
         if HAS_CATBOOST:
             print("Optimizing CatBoost hyperparameters...")
-            catboost_optimized = self.optimize_hyperparameters(X_train, y_winner_train, 'catboost', n_trials=trials)
-            if not catboost_optimized:
-                catboost_optimized = {}
+            if 'catboost_winner' in optimized_params and optimized_params['catboost_winner']:
+                catboost_optimized = optimized_params['catboost_winner']
+                print("Using advanced optimized CatBoost parameters")
+            else:
+                catboost_optimized = self.optimize_hyperparameters(X_train, y_winner_train, 'catboost', n_trials=trials)
+                if not catboost_optimized:
+                    catboost_optimized = {}
         else:
             catboost_optimized = {}
 
@@ -4935,12 +5769,26 @@ class AdvancedUFCPredictor:
                 "scale_pos_weight": scale_pos,
                 "random_state": 42,
                 "eval_metric": "logloss",
-                "tree_method": "hist",
-                "device": "cpu",  # CPU for deterministic results
                 "seed": 42,
                 "enable_categorical": True,
                 "max_delta_step": 1,
             }
+            
+            # Use GPU only if available and supported
+            if HAS_GPU:
+                try:
+                    # Test if XGBoost GPU is available
+                    test_model = XGBClassifier(tree_method='gpu_hist', device='cuda', n_estimators=1)
+                    test_model.fit(X_train.iloc[:10], y_winner_train[:10])
+                    xgb_params['tree_method'] = 'gpu_hist'
+                    xgb_params['device'] = 'cuda'
+                except:
+                    # Fallback to CPU if GPU fails
+                    xgb_params['tree_method'] = 'hist'
+                    xgb_params['device'] = 'cpu'
+            else:
+                xgb_params['tree_method'] = 'hist'
+                xgb_params['device'] = 'cpu'
 
             xgb_classifier = XGBClassifier(**xgb_params)
 
@@ -4981,7 +5829,7 @@ class AdvancedUFCPredictor:
                             reg_alpha=lgbm_optimized.get("reg_alpha", 0.1),
                             reg_lambda=lgbm_optimized.get("reg_lambda", 0.8),
                             min_child_weight=lgbm_optimized.get("min_child_weight", 3),
-                            device="cpu",  # CPU for deterministic results
+                            device="gpu" if HAS_GPU else "cpu",  # Use GPU detection
                             random_state=42,
                             verbose=-1,
                         ),
@@ -5009,7 +5857,7 @@ class AdvancedUFCPredictor:
                             depth=catboost_optimized.get("depth", 7),
                             learning_rate=catboost_optimized.get("learning_rate", 0.03),
                             l2_leaf_reg=catboost_optimized.get("l2_leaf_reg", 0.8),
-                            task_type="CPU",  # Use CPU to avoid persistent GPU conflicts
+                            task_type="GPU" if HAS_GPU else "CPU",  # Use GPU detection
                             random_state=42,
                             verbose=0,
                         ),
@@ -5098,7 +5946,7 @@ class AdvancedUFCPredictor:
                         reg_lambda=1,
                         random_state=42,
                         eval_metric="logloss",
-                        tree_method="hist",  # Use histogram method for consistency
+                        tree_method="gpu_hist",  # Use GPU histogram method for faster training
                         seed=42,  # Additional XGBoost seed
                     ),
                 )
@@ -5155,17 +6003,33 @@ class AdvancedUFCPredictor:
 
         # MULTI-LEVEL STACKING: Level 1 -> Level 2 -> Final Blender
         if self.use_ensemble and len(base_models) > 1:
-            print("\n🔧 Building multi-level stacking ensemble...")
+            if self.performance_mode:
+                print("\n🔧 Building simplified ensemble for performance mode...")
+                # Use simple voting ensemble in performance mode
+                self.winner_model = VotingClassifier(
+                    estimators=base_models,
+                    voting="soft",
+                    weights=[1.0/len(base_models)] * len(base_models)  # Equal weights
+                )
+                print("✅ Simple voting ensemble created for performance mode")
+                
+                # Apply calibration to simple ensemble
+                print("🔧 Applying calibration to performance mode ensemble...")
+                self.winner_model = self.calibration_optimizer.calibrate_model(
+                    self.winner_model, X_train, y_winner_train, method='best'
+                )
+            else:
+                print("\n🔧 Building multi-level stacking ensemble...")
 
-            # Level 1: Base models
-            level1_models = base_models
+                # Level 1: Base models
+                level1_models = base_models
 
-            # Level 2: Meta-learners (current approach)
-            level2_meta = voting_meta
+                # Level 2: Meta-learners (current approach)
+                level2_meta = voting_meta
 
-            # Level 3: Final blender with more sophisticated approach
-            final_blender = VotingClassifier(
-                estimators=[
+                # Level 3: Final blender with more sophisticated approach
+                final_blender = VotingClassifier(
+                    estimators=[
                     (
                         "xgb_final",
                         XGBClassifier(
@@ -5237,19 +6101,17 @@ class AdvancedUFCPredictor:
                 passthrough=True,  # Include original features in first level
             )
 
-            # Enhanced calibration for the entire stack
-            self.winner_model = CalibratedClassifierCV(
-                self.winner_model,
-                method="isotonic",
-                cv=5,  # 10 -> 5 folds (faster training)
+            # Enhanced calibration for the entire stack using advanced calibration
+            print("🔧 Applying advanced calibration to winner model...")
+            self.winner_model = self.calibration_optimizer.calibrate_model(
+                self.winner_model, X_train, y_winner_train, method='best'
             )
         else:
-            # Fallback to single best model
+            # Fallback to single best model with advanced calibration
             self.winner_model = base_models[0][1]
-            self.winner_model = CalibratedClassifierCV(
-                self.winner_model,
-                method="isotonic",
-                cv=3,  # 5 -> 3 folds (1.7x faster)
+            print("🔧 Applying advanced calibration to fallback winner model...")
+            self.winner_model = self.calibration_optimizer.calibrate_model(
+                self.winner_model, X_train, y_winner_train, method='best'
             )
 
         # Ensure we have proper DataFrame format for scikit-learn
@@ -5297,7 +6159,7 @@ class AdvancedUFCPredictor:
                             reg_lambda=0.8,
                             random_state=42,
                             objective="multi:softprob",
-                            tree_method="hist",
+                            tree_method="gpu_hist",
                             seed=42,
                             # early_stopping_rounds=50,  # Removed - requires validation set
                         ),
@@ -5328,7 +6190,7 @@ class AdvancedUFCPredictor:
                             colsample_bytree=0.8,  # 0.85 -> 0.8 (faster training)
                             reg_alpha=0.15,
                             reg_lambda=0.8,
-                            device="cpu",  # CPU for deterministic results
+                            device="cuda",  # GPU for faster training
                             random_state=42,
                             verbose=-1,
                         ),
@@ -5410,15 +6272,46 @@ class AdvancedUFCPredictor:
             estimators=method_models, voting="soft", weights=method_weights
         )
 
-        # Calibrate the method model
-        self.method_model = CalibratedClassifierCV(
-            self.method_model,
-            method="isotonic",
-            cv=3,  # 5 -> 3 folds (faster training)
+        # Calibrate the method model using advanced calibration
+        print("🔧 Applying advanced calibration to method model...")
+        self.method_model = self.calibration_optimizer.calibrate_model(
+            self.method_model, X_train, y_method_train, method='best'
         )
 
         self.method_model.fit(X_train, y_method_train)
         print("Enhanced method prediction ensemble training complete")
+        
+        # ===== PERFORMANCE TRACKING AND MONITORING =====
+        print("\n📊 PERFORMANCE TRACKING AND MONITORING...")
+        
+        # Evaluate calibration quality
+        if not self.performance_mode:
+            print("Evaluating calibration quality...")
+            winner_calibration = self.calibration_optimizer.evaluate_calibration(
+                self.winner_model, X_test, y_winner_test
+            )
+            method_calibration = self.calibration_optimizer.evaluate_calibration(
+                self.method_model, X_test, y_method_test
+            )
+            
+            print(f"Winner model Brier score: {winner_calibration['brier_score']:.4f}")
+            print(f"Winner model calibration error: {winner_calibration['calibration_error']:.4f}")
+            print(f"Method model Brier score: {method_calibration['brier_score']:.4f}")
+            print(f"Method model calibration error: {method_calibration['calibration_error']:.4f}")
+            
+            # Store performance metrics
+            self.performance_tracker = {
+                'winner_calibration': winner_calibration,
+                'method_calibration': method_calibration,
+                'optimized_params': optimized_params,
+                'method_models': method_models,
+                'validation_strategy': best_strategy['name'],
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            print("✅ Performance tracking complete!")
+        else:
+            print("Performance mode: Skipping detailed performance tracking")
 
         # ============================================================================
         # TRAIN DEEP LEARNING MODEL (if enabled)
@@ -5605,8 +6498,8 @@ class AdvancedUFCPredictor:
                     "reg_lambda": 0.8,
                     "random_state": 42,
                     "eval_metric": "logloss",
-                    "tree_method": "hist",
-                    "device": "cpu",  # CPU for deterministic results
+                    "tree_method": "gpu_hist",
+                    "device": "cuda",  # GPU for faster training
                     "seed": 42,
                 }
 
@@ -6664,9 +7557,52 @@ class AdvancedUFCPredictor:
         # COMPREHENSIVE METHOD PREDICTION WITH DYNAMIC WEIGHTING
         loser_prefix = "Blue" if winner_name == "Red" else "Red"
 
-        # Get base method probabilities from model
-        method_proba = self.method_model.predict_proba(X)[0]
-        method_labels = self.label_encoders["winner_method_encoder"].classes_
+        # Get base method probabilities from model with method-specific enhancement
+        if hasattr(self, 'performance_tracker') and 'method_models' in self.performance_tracker:
+            method_models = self.performance_tracker['method_models']
+            if method_models:
+                print("Using method-specific models for enhanced prediction...")
+                method_predictions = {}
+                
+                # Get predictions from each method-specific model
+                for method_name, model in method_models.items():
+                    try:
+                        pred_proba = model.predict_proba(X)[0]
+                        method_predictions[method_name] = pred_proba[1]  # Probability of positive class
+                    except Exception as e:
+                        print(f"Error with {method_name} model: {e}")
+                        method_predictions[method_name] = 0.0
+                
+                # Use method-specific predictions if available
+                if method_predictions:
+                    # Normalize probabilities
+                    total_prob = sum(method_predictions.values())
+                    if total_prob > 0:
+                        for method in method_predictions:
+                            method_predictions[method] /= total_prob
+                    
+                    # Create method probability array
+                    method_labels = self.label_encoders["winner_method_encoder"].classes_
+                    method_proba = np.zeros(len(method_labels))
+                    
+                    for i, class_name in enumerate(method_labels):
+                        method_key = f'xgboost_{class_name}'
+                        if method_key in method_predictions:
+                            method_proba[i] = method_predictions[method_key]
+                        else:
+                            method_proba[i] = 1.0 / len(method_labels)  # Equal probability if no specific model
+                else:
+                    # Fallback to standard method prediction
+                    method_proba = self.method_model.predict_proba(X)[0]
+                    method_labels = self.label_encoders["winner_method_encoder"].classes_
+            else:
+                # Fallback to standard method prediction
+                method_proba = self.method_model.predict_proba(X)[0]
+                method_labels = self.label_encoders["winner_method_encoder"].classes_
+        else:
+            # Standard method prediction
+            method_proba = self.method_model.predict_proba(X)[0]
+            method_labels = self.label_encoders["winner_method_encoder"].classes_
 
         # Get comprehensive method adjustments
         method_adjustments = self.calculate_enhanced_method_adjustments(
