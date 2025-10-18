@@ -4950,7 +4950,7 @@ class AdvancedUFCPredictor:
                     (
                         "feature_selector",
                         SelectPercentile(
-                            f_classif, percentile=75
+                            f_classif, percentile=65
                         ),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     ("classifier", xgb_classifier),
@@ -4966,7 +4966,7 @@ class AdvancedUFCPredictor:
                     (
                         "feature_selector",
                         SelectPercentile(
-                            f_classif, percentile=75
+                            f_classif, percentile=65
                         ),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     (
@@ -4999,7 +4999,7 @@ class AdvancedUFCPredictor:
                     (
                         "feature_selector",
                         SelectPercentile(
-                            f_classif, percentile=75
+                            f_classif, percentile=65
                         ),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     (
@@ -5025,7 +5025,7 @@ class AdvancedUFCPredictor:
                 ("preprocessor", preprocessor),
                 (
                     "feature_selector",
-                    SelectPercentile(f_classif, percentile=75),
+                    SelectPercentile(f_classif, percentile=65),
                 ),  # Match Class Weighting
                 (
                     "classifier",
@@ -5052,7 +5052,7 @@ class AdvancedUFCPredictor:
                     (
                         "feature_selector",
                         SelectPercentile(
-                            f_classif, percentile=75
+                            f_classif, percentile=65
                         ),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     (
@@ -5281,7 +5281,7 @@ class AdvancedUFCPredictor:
                     (
                         "feature_selector",
                         SelectPercentile(
-                            f_classif, percentile=75
+                            f_classif, percentile=65
                         ),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     (
@@ -5314,7 +5314,7 @@ class AdvancedUFCPredictor:
                     (
                         "feature_selector",
                         SelectPercentile(
-                            f_classif, percentile=75
+                            f_classif, percentile=65
                         ),  # 60% -> 75% (better accuracy)
                     ),  # Match Class Weighting
                     (
@@ -5343,7 +5343,7 @@ class AdvancedUFCPredictor:
                 ("preprocessor", preprocessor),
                 (
                     "feature_selector",
-                    SelectPercentile(f_classif, percentile=75),
+                    SelectPercentile(f_classif, percentile=65),
                 ),  # Match Class Weighting
                 (
                     "classifier",
@@ -5367,7 +5367,7 @@ class AdvancedUFCPredictor:
                 ("preprocessor", preprocessor),
                 (
                     "feature_selector",
-                    SelectPercentile(f_classif, percentile=75),
+                    SelectPercentile(f_classif, percentile=65),
                 ),  # Match Class Weighting
                 (
                     "classifier",
@@ -5618,7 +5618,7 @@ class AdvancedUFCPredictor:
                         (
                             "feature_selector",
                             SelectPercentile(
-                                f_classif, percentile=75
+                                f_classif, percentile=65
                             ),  # 60% -> 75% (better accuracy)
                         ),  # Match Class Weighting
                         ("classifier", fold_classifier),
@@ -5631,7 +5631,7 @@ class AdvancedUFCPredictor:
                         (
                             "feature_selector",
                             SelectPercentile(
-                                f_classif, percentile=75
+                                f_classif, percentile=65
                             ),  # 60% -> 75% (better accuracy)
                         ),  # Match Class Weighting
                         (
@@ -7154,4 +7154,3 @@ if __name__ == "__main__":
         print(f"Error in UFC Predictor execution: {e}")
         # Don't exit, just print the error for debugging
         
-# 66.7% (2/3) accuracy on 240 fights
