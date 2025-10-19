@@ -4974,7 +4974,7 @@ class AdvancedUFCPredictor:
                         "feature_selector",
                         SelectPercentile(
                             f_classif, percentile=65
-                        ),  # 60% -> 75% (better accuracy)
+                        ),  # 70% -> 65% (best performance)
                     ),  # Match Class Weighting
                     ("classifier", xgb_classifier),
                 ]
@@ -4990,7 +4990,7 @@ class AdvancedUFCPredictor:
                         "feature_selector",
                         SelectPercentile(
                             f_classif, percentile=65
-                        ),  # 60% -> 75% (better accuracy)
+                        ),  # 70% -> 65% (best performance)
                     ),  # Match Class Weighting
                     (
                         "classifier",
@@ -5023,7 +5023,7 @@ class AdvancedUFCPredictor:
                         "feature_selector",
                         SelectPercentile(
                             f_classif, percentile=65
-                        ),  # 60% -> 75% (better accuracy)
+                        ),  # 70% -> 65% (best performance)
                     ),  # Match Class Weighting
                     (
                         "classifier",
@@ -5079,7 +5079,7 @@ class AdvancedUFCPredictor:
                         "feature_selector",
                         SelectPercentile(
                             f_classif, percentile=65
-                        ),  # 60% -> 75% (better accuracy)
+                        ),  # 70% -> 65% (best performance)
                     ),  # Match Class Weighting
                     (
                         "classifier",
@@ -5308,7 +5308,7 @@ class AdvancedUFCPredictor:
                         "feature_selector",
                         SelectPercentile(
                             f_classif, percentile=65
-                        ),  # 60% -> 75% (better accuracy)
+                        ),  # 70% -> 65% (best performance)
                     ),  # Match Class Weighting
                     (
                         "classifier",
@@ -5341,7 +5341,7 @@ class AdvancedUFCPredictor:
                         "feature_selector",
                         SelectPercentile(
                             f_classif, percentile=65
-                        ),  # 60% -> 75% (better accuracy)
+                        ),  # 70% -> 65% (best performance)
                     ),  # Match Class Weighting
                     (
                         "classifier",
@@ -5645,7 +5645,7 @@ class AdvancedUFCPredictor:
                             "feature_selector",
                             SelectPercentile(
                                 f_classif, percentile=65
-                            ),  # 60% -> 75% (better accuracy)
+                            ),  # 70% -> 65% (best performance)
                         ),  # Match Class Weighting
                         ("classifier", fold_classifier),
                     ]
@@ -5658,7 +5658,7 @@ class AdvancedUFCPredictor:
                             "feature_selector",
                             SelectPercentile(
                                 f_classif, percentile=65
-                            ),  # 60% -> 75% (better accuracy)
+                            ),  # 70% -> 65% (best performance)
                         ),  # Match Class Weighting
                         (
                             "classifier",
