@@ -1591,16 +1591,16 @@ class AdvancedUFCPredictor:
             }
         else:
             param_grid = {
-                'n_estimators': [500, 700, 1000, 1200],
-                'max_depth': [8, 10, 12, 15],
-                'learning_rate': [0.03, 0.05, 0.1, 0.15],
-                'num_leaves': [31, 63, 127, 255],
-                'subsample': [0.7, 0.8, 0.9, 0.95],
-                'colsample_bytree': [0.7, 0.8, 0.9, 0.95],
+                'n_estimators': [600, 800, 1000, 1200] if not self.performance_mode else [500, 700, 1000, 1200],
+                'max_depth': [7, 8, 9, 10],  # Mirror Two Runs: include 9 for better accuracy
+                'learning_rate': [0.02, 0.03, 0.05, 0.1],  # Mirror Two Runs: include 0.02 for better convergence
+                'num_leaves': [31, 60, 127, 255],  # Mirror Two Runs: include 60 for better accuracy
+                'subsample': [0.8, 0.85, 0.9, 0.95],  # Mirror Two Runs: include 0.85 for better accuracy
+                'colsample_bytree': [0.8, 0.85, 0.9, 0.95],  # Mirror Two Runs: include 0.85 for better accuracy
                 'reg_alpha': [0, 0.1, 0.2, 0.3],
                 'reg_lambda': [0, 0.1, 0.2, 0.3],
                 'min_child_samples': [10, 20, 30, 50],
-                'min_child_weight': [0.001, 0.01, 0.1],
+                'min_child_weight': [1, 3, 5],  # Mirror Two Runs: include 3 for min_child_weight
                 'feature_fraction': [0.7, 0.8, 0.9, 1.0],
                 'bagging_fraction': [0.7, 0.8, 0.9, 1.0],
                 'bagging_freq': [1, 3, 5, 7]
@@ -1645,9 +1645,9 @@ class AdvancedUFCPredictor:
         best_score = 0
         
         param_grid = {
-            'iterations': [300, 400, 500],
-            'depth': [6, 7, 8],
-            'learning_rate': [0.025, 0.03, 0.035],
+            'iterations': [400, 500, 600] if not self.performance_mode else [300, 400, 500],
+            'depth': [7, 8, 9],  # Mirror Two Runs: include 9 for better accuracy
+            'learning_rate': [0.02, 0.025, 0.03],  # Mirror Two Runs: include 0.02 for better convergence
             'l2_leaf_reg': [0.7, 0.8, 0.9]
         }
         
@@ -4933,12 +4933,9 @@ class AdvancedUFCPredictor:
             catboost_optimized = {}
 
         # Build base models for stacking with optimized parameters
-        # GPU Usage Strategy:
-        # Sequential execution: XGBoost + LightGBM (GPU) + CatBoost + RandomForest + MLP (CPU)
         base_models = []
 
         if HAS_XGBOOST:
-            print("\n✓ XGBoost available (GPU - parallel with LightGBM)")
             # Use balanced weights since data augmentation eliminates bias
             scale_pos = 1.0  # Balanced since we have equal red/blue representation after augmentation
 
@@ -4974,7 +4971,7 @@ class AdvancedUFCPredictor:
                         "feature_selector",
                         SelectPercentile(
                             f_classif, percentile=65
-                        ),  # 70% -> 65% (best performance)
+                        ),  # Data Augmentation: 65% (optimized for advanced features)
                     ),  # Match Class Weighting
                     ("classifier", xgb_classifier),
                 ]
@@ -4982,7 +4979,6 @@ class AdvancedUFCPredictor:
             base_models.append(("xgb", xgb_model))
 
         if HAS_LIGHTGBM:
-            print("✓ LightGBM available (GPU - parallel with XGBoost)")
             lgbm_model = Pipeline(
                 [
                     ("preprocessor", preprocessor),
@@ -4990,7 +4986,7 @@ class AdvancedUFCPredictor:
                         "feature_selector",
                         SelectPercentile(
                             f_classif, percentile=65
-                        ),  # 70% -> 65% (best performance)
+                        ),  # Data Augmentation: 65% (optimized for advanced features)
                     ),  # Match Class Weighting
                     (
                         "classifier",
@@ -5013,9 +5009,7 @@ class AdvancedUFCPredictor:
             )
             base_models.append(("lgbm", lgbm_model))
 
-        # CPU Models: CatBoost, RandomForest, MLP (parallel with each other and GPU models)
         if HAS_CATBOOST:
-            print("✓ CatBoost available (CPU - parallel with other models)")
             catboost_model = Pipeline(
                 [
                     ("preprocessor", preprocessor),
@@ -5023,14 +5017,14 @@ class AdvancedUFCPredictor:
                         "feature_selector",
                         SelectPercentile(
                             f_classif, percentile=65
-                        ),  # 70% -> 65% (best performance)
+                        ),  # Data Augmentation: 65% (optimized for advanced features)
                     ),  # Match Class Weighting
                     (
                         "classifier",
                         CatBoostClassifier(
-                            iterations=catboost_optimized.get("iterations", 400),
-                            depth=catboost_optimized.get("depth", 7),
-                            learning_rate=catboost_optimized.get("learning_rate", 0.03),
+                            iterations=catboost_optimized.get("iterations", 600 if not self.performance_mode else 400),
+                            depth=catboost_optimized.get("depth", 9),  # Mirror Two Runs: 7 -> 9 (better accuracy)
+                            learning_rate=catboost_optimized.get("learning_rate", 0.02),  # Mirror Two Runs: 0.03 -> 0.02 (better convergence)
                             l2_leaf_reg=catboost_optimized.get("l2_leaf_reg", 0.8),
                             bootstrap_type=catboost_optimized.get("bootstrap_type", "Bayesian"),
                             bagging_temperature=catboost_optimized.get("bagging_temperature", 0.2),
@@ -5045,13 +5039,12 @@ class AdvancedUFCPredictor:
             base_models.append(("catboost", catboost_model))
 
         # Random Forest (always available)
-        print("✓ Random Forest available")
         rf_model = Pipeline(
             [
                 ("preprocessor", preprocessor),
                 (
                     "feature_selector",
-                    SelectPercentile(f_classif, percentile=65),
+                    SelectPercentile(f_classif, percentile=65),  # Data Augmentation: 65% (optimized for advanced features)
                 ),  # Match Class Weighting
                 (
                     "classifier",
@@ -5071,7 +5064,6 @@ class AdvancedUFCPredictor:
 
         # Neural Network
         if self.use_neural_net:
-            print("✓ Neural Network enabled")
             nn_model = Pipeline(
                 [
                     ("preprocessor", preprocessor),
@@ -5079,7 +5071,7 @@ class AdvancedUFCPredictor:
                         "feature_selector",
                         SelectPercentile(
                             f_classif, percentile=65
-                        ),  # 70% -> 65% (best performance)
+                        ),  # Data Augmentation: 65% (optimized for advanced features)
                     ),  # Match Class Weighting
                     (
                         "classifier",
@@ -5102,8 +5094,6 @@ class AdvancedUFCPredictor:
                 ]
             )
             base_models.append(("nn", nn_model))
-
-        print(f"\nBuilding stacked ensemble with {len(base_models)} base models...")
 
         # Enhanced meta-learner with multiple algorithms
         meta_learners = []
@@ -5308,7 +5298,7 @@ class AdvancedUFCPredictor:
                         "feature_selector",
                         SelectPercentile(
                             f_classif, percentile=65
-                        ),  # 70% -> 65% (best performance)
+                        ),  # Data Augmentation: 65% (optimized for advanced features)
                     ),  # Match Class Weighting
                     (
                         "classifier",
@@ -5341,19 +5331,20 @@ class AdvancedUFCPredictor:
                         "feature_selector",
                         SelectPercentile(
                             f_classif, percentile=65
-                        ),  # 70% -> 65% (best performance)
+                        ),  # Data Augmentation: 65% (optimized for advanced features)
                     ),  # Match Class Weighting
                     (
                         "classifier",
                         LGBMClassifier(
-                            n_estimators=400,  # 600 -> 400 (faster training)
-                            max_depth=7,  # 9 -> 7 (faster training)
-                            learning_rate=0.03,  # 0.02 -> 0.03 (faster convergence)
-                            num_leaves=40,  # 60 -> 40 (faster training)
-                            subsample=0.8,  # 0.85 -> 0.8 (faster training)
-                            colsample_bytree=0.8,  # 0.85 -> 0.8 (faster training)
+                            n_estimators=600 if not self.performance_mode else 400,  # 600 for accuracy, 400 for speed
+                            max_depth=9,  # Mirror Two Runs: 7 -> 9 (better accuracy)
+                            learning_rate=0.02,  # Mirror Two Runs: 0.03 -> 0.02 (better convergence)
+                            num_leaves=60,  # Mirror Two Runs: 40 -> 60 (better accuracy)
+                            subsample=0.85,  # Mirror Two Runs: 0.8 -> 0.85 (better accuracy)
+                            colsample_bytree=0.85,  # Mirror Two Runs: 0.8 -> 0.85 (better accuracy)
                             reg_alpha=0.15,
                             reg_lambda=0.8,
+                            min_child_weight=3,  # Mirror Two Runs: add min_child_weight=3
                             device="cpu",  # CPU for deterministic results
                             random_state=42,
                             verbose=-1,
@@ -5369,7 +5360,7 @@ class AdvancedUFCPredictor:
                 ("preprocessor", preprocessor),
                 (
                     "feature_selector",
-                    SelectPercentile(f_classif, percentile=65),
+                    SelectPercentile(f_classif, percentile=65),  # Data Augmentation: 65% (optimized for advanced features)
                 ),  # Match Class Weighting
                 (
                     "classifier",
@@ -5393,7 +5384,7 @@ class AdvancedUFCPredictor:
                 ("preprocessor", preprocessor),
                 (
                     "feature_selector",
-                    SelectPercentile(f_classif, percentile=65),
+                    SelectPercentile(f_classif, percentile=65),  # Data Augmentation: 65% (optimized for advanced features)
                 ),  # Match Class Weighting
                 (
                     "classifier",
