@@ -67,9 +67,19 @@ np.random.seed(42)
 os.environ["PYTHONHASHSEED"] = "42"
 os.environ["TF_DETERMINISTIC_OPS"] = "1"
 os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"  # Disable oneDNN custom operations warning
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"  # Suppress TensorFlow INFO and WARNING messages
+os.environ["TF_ENABLE_MKL_NATIVE_FORMAT"] = "0"  # Disable MKL optimizations warnings
 
 
 warnings.filterwarnings("ignore")
+
+# Suppress specific warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="sklearn.feature_selection._univariate_selection")
+warnings.filterwarnings("ignore", category=UserWarning, module="sklearn.feature_selection._univariate_selection")
+warnings.filterwarnings("ignore", message="Features.*are constant")
+warnings.filterwarnings("ignore", message="invalid value encountered in divide")
+warnings.filterwarnings("ignore", message="You are saving your model as an HDF5 file")
 
 
 def cleanup_temp_files():
@@ -80,10 +90,13 @@ def cleanup_temp_files():
             shutil.rmtree("catboost_info")
             print("Cleaned up catboost_info folder")
 
-        # Remove best_dl_model.h5 file if it exists
+        # Remove best_dl_model files if they exist
         if os.path.exists("best_dl_model.h5"):
             os.remove("best_dl_model.h5")
             print("Cleaned up best_dl_model.h5 file")
+        if os.path.exists("best_dl_model.keras"):
+            os.remove("best_dl_model.keras")
+            print("Cleaned up best_dl_model.keras file")
 
     except Exception as e:
         print(f"Warning: Could not clean up temporary files: {e}")
@@ -195,6 +208,11 @@ class AdvancedUFCPredictor:
                 tf.random.set_seed(42)
                 # Enable deterministic operations for consistency
                 tf.config.experimental.enable_op_determinism()
+                # Suppress TensorFlow logging
+                tf.get_logger().setLevel('ERROR')
+                # Suppress TensorFlow warnings about CPU instructions
+                import logging
+                logging.getLogger('tensorflow').setLevel(logging.ERROR)
             except:
                 pass
 
@@ -226,27 +244,51 @@ class AdvancedUFCPredictor:
             return 0
 
     def classify_fighter_style(self, stats):
-        """Classify fighter as striker, grappler, or balanced"""
+        """Enhanced fighter style classification with advanced grappling metrics"""
+        # Enhanced striker scoring with more comprehensive metrics
         striker_score = (
-            stats.get("pro_SLpM_corrected", 0) * 0.4
-            + stats.get("distance_pct_corrected", 0) * 0.3
-            + stats.get("head_pct_corrected", 0) * 0.3
-            - stats.get("ground_pct_corrected", 0) * 0.4
+            stats.get("pro_SLpM_corrected", 0) * 0.25
+            + stats.get("distance_pct_corrected", 0) * 0.2
+            + stats.get("head_pct_corrected", 0) * 0.2
+            + stats.get("pro_kd_pM_corrected", 0) * 0.15
+            + stats.get("ko_rate_corrected", 0) * 0.1
+            + stats.get("pro_str_acc_corrected", 0) * 0.1
+            - stats.get("ground_pct_corrected", 0) * 0.3
+            - stats.get("clinch_pct_corrected", 0) * 0.2
         )
 
+        # Enhanced grappler scoring with control time and submission metrics
         grappler_score = (
-            stats.get("pro_td_avg_corrected", 0) * 0.4
-            + stats.get("pro_sub_avg_corrected", 0) * 0.3
-            + stats.get("ground_pct_corrected", 0) * 0.3
-            - stats.get("distance_pct_corrected", 0) * 0.2
+            stats.get("pro_td_avg_corrected", 0) * 0.2
+            + stats.get("pro_sub_avg_corrected", 0) * 0.2
+            + stats.get("ground_pct_corrected", 0) * 0.15
+            + stats.get("pro_ctrl_sec_corrected", 0) * 0.15
+            + stats.get("sub_rate_corrected", 0) * 0.1
+            + stats.get("pro_td_acc_corrected", 0) * 0.1
+            + stats.get("clinch_pct_corrected", 0) * 0.1
+            - stats.get("distance_pct_corrected", 0) * 0.15
+            - stats.get("pro_SLpM_corrected", 0) * 0.05
         )
-
-        if striker_score > 0.3 and striker_score > grappler_score:
-            return "striker"
-        elif grappler_score > 0.3 and grappler_score > striker_score:
-            return "grappler"
-        else:
+        
+        # Calculate style dominance ratio
+        total_score = striker_score + grappler_score
+        if total_score == 0:
             return "balanced"
+            
+        striker_ratio = striker_score / total_score
+        grappler_ratio = grappler_score / total_score
+        
+        # More nuanced classification with dominance thresholds
+        if striker_ratio > 0.6 and striker_score > 0.2:
+            return "striker"
+        elif grappler_ratio > 0.6 and grappler_score > 0.2:
+            return "grappler"
+        elif abs(striker_ratio - grappler_ratio) < 0.2:
+            return "balanced"
+        elif striker_score > grappler_score:
+            return "striker_balanced"
+        else:
+            return "grappler_balanced"
 
     def calculate_age_curve_factor(self, age):
         """Calculate performance multiplier based on age"""
@@ -327,7 +369,7 @@ class AdvancedUFCPredictor:
         return np.array(trajectories)
 
     def calculate_opponent_quality(self, df, fighter_col):
-        """Calculate average opponent quality for each fighter"""
+        """Enhanced opponent quality calculation with progression weighting"""
         qualities = []
         for idx, row in df.iterrows():
             fighter = row[fighter_col]
@@ -345,13 +387,15 @@ class AdvancedUFCPredictor:
                     qualities.append(0.0)
                     continue
                     
-                # Get last 5 fights (excluding current)
+                # Get last 5 fights (excluding current) with recency weighting
                 recent_fights = fighter_fights.iloc[:-1].tail(5)
             except (KeyError, IndexError):
                 qualities.append(0.0)
                 continue
             
             opponent_qualities = []
+            recency_weights = []
+            
             for i, fight in recent_fights.iterrows():
                 if 'r_fighter' in fight and 'b_fighter' in fight:
                     if fight['r_fighter'] == fighter:
@@ -359,22 +403,53 @@ class AdvancedUFCPredictor:
                     else:
                         opponent = fight['r_fighter']
                     
-                    # Calculate opponent's win rate
+                    # Calculate opponent's comprehensive quality score
                     opponent_fights = df[(df['r_fighter'] == opponent) | (df['b_fighter'] == opponent)]
                     if len(opponent_fights) > 0:
                         wins = 0
+                        total_fights = len(opponent_fights)
+                        
+                        # Calculate win rate
                         for _, opp_fight in opponent_fights.iterrows():
                             if 'winner' in opp_fight:
                                 if (opp_fight['r_fighter'] == opponent and opp_fight['winner'] == 'Red') or \
                                    (opp_fight['b_fighter'] == opponent and opp_fight['winner'] == 'Blue'):
                                     wins += 1
-                        win_rate = wins / len(opponent_fights) if len(opponent_fights) > 0 else 0.5
-                        opponent_qualities.append(win_rate)
+                        
+                        win_rate = wins / total_fights if total_fights > 0 else 0.5
+                        
+                        # Enhanced quality calculation with opponent strength progression
+                        opponent_quality = win_rate
+                        
+                        # Add experience factor (more fights = higher quality)
+                        experience_factor = min(total_fights / 20, 1.0)
+                        opponent_quality *= (0.7 + 0.3 * experience_factor)
+                        
+                        # Add recent form factor if available
+                        if len(opponent_fights) >= 3:
+                            recent_opponent_fights = opponent_fights.tail(3)
+                            recent_wins = 0
+                            for _, recent_fight in recent_opponent_fights.iterrows():
+                                if 'winner' in recent_fight:
+                                    if (recent_fight['r_fighter'] == opponent and recent_fight['winner'] == 'Red') or \
+                                       (recent_fight['b_fighter'] == opponent and recent_fight['winner'] == 'Blue'):
+                                        recent_wins += 1
+                            recent_form = recent_wins / 3
+                            opponent_quality = 0.6 * opponent_quality + 0.4 * recent_form
+                        
+                        opponent_qualities.append(opponent_quality)
+                        
+                        # Recency weighting (more recent = higher weight)
+                        recency_weight = 1.0 + (i / len(recent_fights)) * 0.5
+                        recency_weights.append(recency_weight)
                     else:
                         opponent_qualities.append(0.5)
+                        recency_weights.append(1.0)
             
             if opponent_qualities:
-                qualities.append(np.mean(opponent_qualities))
+                # Weighted average with recency
+                weighted_quality = np.average(opponent_qualities, weights=recency_weights)
+                qualities.append(weighted_quality)
             else:
                 qualities.append(0.5)
                 
@@ -1503,14 +1578,14 @@ class AdvancedUFCPredictor:
         best_params = {}
         best_score = 0
         
-        # Enhanced parameter grid for better accuracy
+        # Enhanced parameter grid for maximum accuracy
         if self.performance_mode:
             param_grid = {
-                'n_estimators': [400, 600, 800],
-                'max_depth': [6, 8, 10],
-                'learning_rate': [0.05, 0.1, 0.15],
-                'subsample': [0.8, 0.9],
-                'colsample_bytree': [0.8, 0.9],
+                'n_estimators': [500, 700, 900],
+                'max_depth': [8, 10, 12],
+                'learning_rate': [0.02, 0.05, 0.08],
+                'subsample': [0.8, 0.85, 0.9],
+                'colsample_bytree': [0.8, 0.85, 0.9],
                 'reg_alpha': [0, 0.1, 0.2],
                 'reg_lambda': [1, 1.5, 2],
                 'min_child_weight': [1, 3, 5],
@@ -1518,22 +1593,24 @@ class AdvancedUFCPredictor:
             }
         else:
             param_grid = {
-                'n_estimators': [600, 800, 1000, 1200],
-                'max_depth': [8, 10, 12, 14],
-                'learning_rate': [0.03, 0.05, 0.1, 0.15],
-                'subsample': [0.7, 0.8, 0.9, 0.95],
-                'colsample_bytree': [0.7, 0.8, 0.9, 0.95],
-                'reg_alpha': [0, 0.1, 0.2, 0.3],
-                'reg_lambda': [1, 1.5, 2, 3],
-                'min_child_weight': [1, 3, 5, 7],
-                'gamma': [0, 0.1, 0.2, 0.3],
-                'scale_pos_weight': [1, 1.2, 1.5]  # Handle class imbalance
+                'n_estimators': [800, 1000, 1200, 1500],  # Increased for better accuracy
+                'max_depth': [10, 12, 14, 16],  # Deeper trees for complex patterns
+                'learning_rate': [0.01, 0.02, 0.03, 0.05],  # Lower learning rates
+                'subsample': [0.75, 0.8, 0.85, 0.9],  # More subsampling options
+                'colsample_bytree': [0.75, 0.8, 0.85, 0.9],  # More feature sampling
+                'reg_alpha': [0, 0.05, 0.1, 0.2],  # L1 regularization
+                'reg_lambda': [1, 1.5, 2, 2.5],  # L2 regularization
+                'min_child_weight': [1, 2, 3, 5],  # Child weight options
+                'gamma': [0, 0.05, 0.1, 0.15],  # Minimum loss reduction
+                'scale_pos_weight': [1, 1.1, 1.2, 1.3],  # Class imbalance handling
+                'max_delta_step': [0, 1, 2],  # Delta step for imbalanced data
+                'grow_policy': ['depthwise', 'lossguide']  # Growth policy
             }
         
         # Use TimeSeriesSplit for validation (reduced folds for speed)
         tscv = TimeSeriesSplit(n_splits=2)
         
-        for i in range(min(n_trials, 8)):  # Reduced from 27 to 8 for speed
+        for i in range(min(n_trials, 20)):  # Increased trials for better optimization
             # Sample parameters
             params = {}
             for key, values in param_grid.items():
@@ -1576,39 +1653,45 @@ class AdvancedUFCPredictor:
         best_params = {}
         best_score = 0
         
-        # Enhanced parameter grid for better accuracy
+        # Enhanced parameter grid for maximum accuracy
         if self.performance_mode:
             param_grid = {
-                'n_estimators': [300, 500, 700],
-                'max_depth': [6, 8, 10],
-                'learning_rate': [0.05, 0.1, 0.15],
-                'num_leaves': [31, 63, 127],
-                'subsample': [0.8, 0.9],
-                'colsample_bytree': [0.8, 0.9],
+                'n_estimators': [400, 600, 800],
+                'max_depth': [8, 10, 12],
+                'learning_rate': [0.02, 0.05, 0.08],
+                'num_leaves': [50, 100, 200],
+                'subsample': [0.8, 0.85, 0.9],
+                'colsample_bytree': [0.8, 0.85, 0.9],
                 'reg_alpha': [0, 0.1, 0.2],
                 'reg_lambda': [0, 0.1, 0.2],
-                'min_child_samples': [20, 30, 40]
+                'min_child_samples': [15, 25, 35]
             }
         else:
             param_grid = {
-                'n_estimators': [600, 800, 1000, 1200] if not self.performance_mode else [500, 700, 1000, 1200],
-                'max_depth': [7, 8, 9, 10],  # Mirror Two Runs: include 9 for better accuracy
-                'learning_rate': [0.02, 0.03, 0.05, 0.1],  # Mirror Two Runs: include 0.02 for better convergence
-                'num_leaves': [31, 60, 127, 255],  # Mirror Two Runs: include 60 for better accuracy
-                'subsample': [0.8, 0.85, 0.9, 0.95],  # Mirror Two Runs: include 0.85 for better accuracy
-                'colsample_bytree': [0.8, 0.85, 0.9, 0.95],  # Mirror Two Runs: include 0.85 for better accuracy
-                'reg_alpha': [0, 0.1, 0.2, 0.3],
-                'reg_lambda': [0, 0.1, 0.2, 0.3],
-                'min_child_samples': [10, 20, 30, 50],
-                'min_child_weight': [1, 3, 5],  # Mirror Two Runs: include 3 for min_child_weight
-                'feature_fraction': [0.7, 0.8, 0.9, 1.0],
-                'bagging_fraction': [0.7, 0.8, 0.9, 1.0],
-                'bagging_freq': [1, 3, 5, 7]
+                'n_estimators': [800, 1000, 1200, 1500],  # Increased for better accuracy
+                'max_depth': [10, 12, 14, 16],  # Deeper trees
+                'learning_rate': [0.01, 0.02, 0.03, 0.05],  # Lower learning rates
+                'num_leaves': [50, 100, 200, 300],  # More leaf options
+                'subsample': [0.75, 0.8, 0.85, 0.9],  # More subsampling
+                'colsample_bytree': [0.75, 0.8, 0.85, 0.9],  # More feature sampling
+                'reg_alpha': [0, 0.05, 0.1, 0.2],  # L1 regularization
+                'reg_lambda': [0, 0.05, 0.1, 0.2],  # L2 regularization
+                'min_child_samples': [10, 15, 20, 30],  # Child sample options
+                'min_child_weight': [1, 2, 3, 5],  # Child weight options
+                'feature_fraction': [0.7, 0.8, 0.9, 1.0],  # Feature fraction
+                'bagging_fraction': [0.7, 0.8, 0.9, 1.0],  # Bagging fraction
+                'bagging_freq': [1, 3, 5, 7],  # Bagging frequency
+                'max_bin': [200, 255, 300],  # Maximum bin size
+                'min_data_in_leaf': [10, 20, 30],  # Minimum data in leaf
+                'lambda_l1': [0, 0.1, 0.2],  # L1 regularization
+                'lambda_l2': [0, 0.1, 0.2],  # L2 regularization
+                'cat_smooth': [10, 20, 30],  # Categorical smoothing
+                'cat_l2': [0, 10, 20]  # Categorical L2
             }
         
         tscv = TimeSeriesSplit(n_splits=3)
         
-        for i in range(min(n_trials, 27)):
+        for i in range(min(n_trials, 30)):  # Increased trials for better optimization
             params = {}
             for key, values in param_grid.items():
                 params[key] = np.random.choice(values)
@@ -1645,15 +1728,26 @@ class AdvancedUFCPredictor:
         best_score = 0
         
         param_grid = {
-            'iterations': [400, 500, 600] if not self.performance_mode else [300, 400, 500],
-            'depth': [7, 8, 9],  # Mirror Two Runs: include 9 for better accuracy
-            'learning_rate': [0.02, 0.025, 0.03],  # Mirror Two Runs: include 0.02 for better convergence
-            'l2_leaf_reg': [0.7, 0.8, 0.9]
+            'iterations': [600, 800, 1000, 1200] if not self.performance_mode else [400, 600, 800],
+            'depth': [8, 10, 12, 14],  # Deeper trees for complex patterns
+            'learning_rate': [0.01, 0.02, 0.03, 0.05],  # Lower learning rates
+            'l2_leaf_reg': [0.5, 0.7, 0.9, 1.1],  # More regularization options
+            'bootstrap_type': ['Bayesian', 'Bernoulli'],  # Bootstrap types
+            'bagging_temperature': [0.5, 1.0, 1.5],  # Bagging temperature
+            'random_strength': [0, 1, 2],  # Random strength
+            'border_count': [32, 64, 128],  # Border count
+            'feature_border_type': ['GreedyLogSum', 'GreedyLogSum'],  # Feature border type
+            'leaf_estimation_method': ['Newton', 'Gradient'],  # Leaf estimation
+            'grow_policy': ['SymmetricTree', 'Depthwise', 'Lossguide'],  # Growth policy
+            'min_data_in_leaf': [1, 3, 5],  # Minimum data in leaf
+            'max_leaves': [16, 31, 64],  # Maximum leaves
+            'score_function': ['Cosine', 'L2'],  # Score function
+            'leaf_estimation_backtracking': ['No', 'AnyImprovement', 'Armijo']  # Backtracking
         }
         
         tscv = TimeSeriesSplit(n_splits=3)
         
-        for i in range(min(n_trials, 27)):
+        for i in range(min(n_trials, 30)):  # Increased trials for better optimization
             params = {}
             for key, values in param_grid.items():
                 params[key] = np.random.choice(values)
@@ -1893,32 +1987,43 @@ class AdvancedUFCPredictor:
             return None
 
     def _combine_weighting_strategies(self, perf_weights, conf_weights, div_weights, ensemble_weights):
-        """Combine multiple weighting strategies"""
+        """Enhanced combination of weighting strategies with adaptive learning"""
         try:
-            # Combine strategies with learned weights
-            strategy_weights = np.array([0.3, 0.2, 0.2, 0.3])  # Performance, Confidence, Diversity, Ensemble
+            # Adaptive weighting based on strategy performance
+            strategy_weights = np.array([0.35, 0.25, 0.2, 0.2])  # Performance, confidence, diversity, ensemble
             
-            # Normalize weights
+            # Apply softmax to strategy weights for better distribution
+            exp_weights = np.exp(strategy_weights * 2)
+            strategy_weights = exp_weights / np.sum(exp_weights)
+            
+            # Normalize individual weights
             perf_weights = perf_weights / np.sum(perf_weights)
             conf_weights = conf_weights / np.sum(conf_weights)
             div_weights = div_weights / np.sum(div_weights)
             
-            # Combine strategies
+            # Combine strategies with adaptive weights
             if ensemble_weights is not None:
-                # Use ensemble predictions if available
-                # Note: meta_features would need to be passed as parameter
-                # For now, use equal weights for ensemble component
+                ensemble_weights = ensemble_weights / np.sum(ensemble_weights)
+                combined = (strategy_weights[0] * perf_weights + 
+                           strategy_weights[1] * conf_weights + 
+                           strategy_weights[2] * div_weights + 
+                           strategy_weights[3] * ensemble_weights)
+            else:
+                # Use equal weights for ensemble component
                 ensemble_pred = np.ones(len(perf_weights)) / len(perf_weights)
                 combined = (strategy_weights[0] * perf_weights + 
                            strategy_weights[1] * conf_weights + 
                            strategy_weights[2] * div_weights + 
                            strategy_weights[3] * ensemble_pred)
-            else:
-                combined = (strategy_weights[0] * perf_weights + 
-                           strategy_weights[1] * conf_weights + 
-                           strategy_weights[2] * div_weights)
             
-            # Normalize final weights
+            # Apply temperature scaling for better weight distribution
+            temperature = 1.5
+            combined = np.exp(combined / temperature)
+            combined = combined / np.sum(combined)
+            
+            # Ensure minimum weight for all models (prevent zero weights)
+            min_weight = 0.01
+            combined = np.maximum(combined, min_weight)
             combined = combined / np.sum(combined)
             
             return combined
@@ -3024,6 +3129,24 @@ class AdvancedUFCPredictor:
             df["striker_vs_grappler"] = 0
 
         return df
+
+    def _remove_constant_features(self, X):
+        """Remove constant features to prevent sklearn warnings"""
+        try:
+            # Find constant features (variance = 0)
+            constant_features = []
+            for i in range(X.shape[1]):
+                if X.iloc[:, i].nunique() <= 1:
+                    constant_features.append(i)
+            
+            if constant_features:
+                print(f"Removing {len(constant_features)} constant features: {constant_features}")
+                X = X.drop(X.columns[constant_features], axis=1)
+            
+            return X
+        except Exception as e:
+            print(f"Warning: Could not remove constant features: {e}")
+            return X
 
     def prepare_features(self, df):
         """Prepare enhanced features with all advanced metrics and caching"""
@@ -4654,6 +4777,106 @@ class AdvancedUFCPredictor:
             )
         
         # ============================================================================
+        # CRITICAL MISSING FEATURES FOR IMPROVED ACCURACY
+        # ============================================================================
+        
+        # 1. Enhanced Control Time Features
+        if all(col in df.columns for col in ["r_pro_ctrl_sec_corrected", "b_pro_ctrl_sec_corrected", "r_avg_fight_time", "b_avg_fight_time"]):
+            # Control time efficiency (control time per minute of fight)
+            df["r_control_efficiency"] = df["r_pro_ctrl_sec_corrected"] / (df["r_avg_fight_time"] * 60 + 1)
+            df["b_control_efficiency"] = df["b_pro_ctrl_sec_corrected"] / (df["b_avg_fight_time"] * 60 + 1)
+            df["control_efficiency_diff"] = df["r_control_efficiency"] - df["b_control_efficiency"]
+            
+            # Control time dominance ratio
+            df["control_dominance_ratio"] = (df["r_pro_ctrl_sec_corrected"] + 1) / (df["b_pro_ctrl_sec_corrected"] + 1)
+            
+        # 2. Advanced Grappling Transition Features
+        if all(col in df.columns for col in ["r_pro_td_avg_corrected", "b_pro_td_avg_corrected", "r_pro_td_acc_corrected", "b_pro_td_acc_corrected", "r_pro_td_def_corrected", "b_pro_td_def_corrected"]):
+            # Takedown success rate differential
+            df["td_success_rate_diff"] = (df["r_pro_td_avg_corrected"] * df["r_pro_td_acc_corrected"]) - (df["b_pro_td_avg_corrected"] * df["b_pro_td_acc_corrected"])
+            
+            # Takedown defense differential
+            df["td_defense_diff"] = df["r_pro_td_def_corrected"] - df["b_pro_td_def_corrected"]
+            
+            # Grappling advantage composite
+            df["grappling_advantage"] = (
+                (df["r_pro_td_avg_corrected"] * df["r_pro_td_acc_corrected"]) / (df["b_pro_td_def_corrected"] + 0.1) -
+                (df["b_pro_td_avg_corrected"] * df["b_pro_td_acc_corrected"]) / (df["r_pro_td_def_corrected"] + 0.1)
+            )
+        
+        # 3. Fight Pace and Momentum Features
+        if all(col in df.columns for col in ["r_pro_SLpM_corrected", "b_pro_SLpM_corrected", "r_pro_SApM_corrected", "b_pro_SApM_corrected", "r_avg_fight_time", "b_avg_fight_time"]):
+            # Pace differential (strikes per minute)
+            df["pace_differential"] = df["r_pro_SLpM_corrected"] - df["b_pro_SLpM_corrected"]
+            
+            # Volume vs accuracy trade-off
+            df["r_volume_accuracy_ratio"] = df["r_pro_SLpM_corrected"] / (df["r_pro_SApM_corrected"] + 0.1)
+            df["b_volume_accuracy_ratio"] = df["b_pro_SLpM_corrected"] / (df["b_pro_SApM_corrected"] + 0.1)
+            df["volume_accuracy_diff"] = df["r_volume_accuracy_ratio"] - df["b_volume_accuracy_ratio"]
+            
+            # Fight duration preference
+            df["fight_duration_preference"] = (df["r_avg_fight_time"] - df["b_avg_fight_time"]) / 5
+        
+        # 4. Enhanced Recent Form with Momentum
+        if all(col in df.columns for col in ["r_recent_form_corrected", "b_recent_form_corrected", "r_win_streak_corrected", "b_win_streak_corrected", "r_loss_streak_corrected", "b_loss_streak_corrected"]):
+            # Momentum score (positive for wins, negative for losses)
+            df["r_momentum_score"] = df["r_win_streak_corrected"] - df["r_loss_streak_corrected"]
+            df["b_momentum_score"] = df["b_win_streak_corrected"] - df["b_loss_streak_corrected"]
+            df["momentum_differential"] = df["r_momentum_score"] - df["b_momentum_score"]
+            
+            # Form consistency (less variance = more consistent)
+            df["form_consistency_diff"] = df["r_recent_form_corrected"] - df["b_recent_form_corrected"]
+        
+        # 5. Physical and Technical Advantages
+        if all(col in df.columns for col in ["r_age_at_event", "b_age_at_event", "r_reach_cm", "b_reach_cm", "r_height_cm", "b_height_cm"]):
+            # Age advantage (prime age range)
+            r_age_factor = np.where((df["r_age_at_event"] >= 25) & (df["r_age_at_event"] <= 32), 1.0, 
+                                  np.where(df["r_age_at_event"] < 25, 0.9, 0.85))
+            b_age_factor = np.where((df["b_age_at_event"] >= 25) & (df["b_age_at_event"] <= 32), 1.0, 
+                                  np.where(df["b_age_at_event"] < 25, 0.9, 0.85))
+            df["age_advantage"] = r_age_factor - b_age_factor
+            
+            # Reach advantage (normalized)
+            df["reach_advantage"] = (df["r_reach_cm"] - df["b_reach_cm"]) / 10
+            
+            # Size advantage composite
+            df["size_advantage"] = ((df["r_height_cm"] - df["b_height_cm"]) / 10) + ((df["r_reach_cm"] - df["b_reach_cm"]) / 10)
+        
+        # 6. Championship and Big Fight Experience
+        if all(col in df.columns for col in ["r_championship_experience", "b_championship_experience", "r_total_fights", "b_total_fights"]):
+            # Championship experience ratio
+            df["championship_experience_ratio"] = (df["r_championship_experience"] + 1) / (df["b_championship_experience"] + 1)
+            
+            # Big fight experience (fights with high-level opponents)
+            df["big_fight_experience_diff"] = (df["r_total_fights"] * 0.1) - (df["b_total_fights"] * 0.1)
+        
+        # 7. Style Matchup Analysis
+        if all(col in df.columns for col in ["r_ground_pct_corrected", "b_ground_pct_corrected", "r_distance_pct_corrected", "b_distance_pct_corrected", "r_clinch_pct_corrected", "b_clinch_pct_corrected"]):
+            # Grappler vs Striker matchup
+            df["grappler_striker_matchup"] = (
+                (df["r_ground_pct_corrected"] - df["b_ground_pct_corrected"]) * 0.5 +
+                (df["b_distance_pct_corrected"] - df["r_distance_pct_corrected"]) * 0.5
+            )
+            
+            # Clinch control advantage
+            df["clinch_control_advantage"] = df["r_clinch_pct_corrected"] - df["b_clinch_pct_corrected"]
+        
+        # Add new critical features to feature_columns
+        critical_features = [
+            "control_efficiency_diff", "control_dominance_ratio",
+            "td_success_rate_diff", "td_defense_diff", "grappling_advantage",
+            "pace_differential", "volume_accuracy_diff", "fight_duration_preference",
+            "momentum_differential", "form_consistency_diff",
+            "age_advantage", "reach_advantage", "size_advantage",
+            "championship_experience_ratio", "big_fight_experience_diff",
+            "grappler_striker_matchup", "clinch_control_advantage"
+        ]
+        
+        for feature in critical_features:
+            if feature not in feature_columns:
+                feature_columns.append(feature)
+        
+        # ============================================================================
         # ULTRA-SOPHISTICATED METHOD PREDICTION FEATURES (5 advanced features)
         # ============================================================================
         
@@ -4780,6 +5003,10 @@ class AdvancedUFCPredictor:
         df, feature_columns = self.prepare_features(df)
 
         X = df[feature_columns]
+        
+        # Remove constant features to prevent sklearn warnings
+        X = self._remove_constant_features(X)
+        feature_columns = [col for col in feature_columns if col in X.columns]
 
         # Use standard target encoding (class weights will handle bias)
         if "winner" in df.columns:
@@ -5542,7 +5769,7 @@ class AdvancedUFCPredictor:
                     min_delta=0.001,
                 ),
                 keras.callbacks.ModelCheckpoint(
-                    "best_dl_model.h5",
+                    "best_dl_model.keras",
                     monitor="val_loss",
                     save_best_only=True,
                     verbose=0,
@@ -5635,8 +5862,8 @@ class AdvancedUFCPredictor:
                         (
                             "feature_selector",
                             SelectPercentile(
-                                f_classif, percentile=65
-                            ),  # 70% -> 65% (best performance)
+                                f_classif, percentile=75  # Increased from 65% to 75% with better features
+                            ),  # Enhanced feature selection with improved features
                         ),  # Match Class Weighting
                         ("classifier", fold_classifier),
                     ]
@@ -5648,8 +5875,8 @@ class AdvancedUFCPredictor:
                         (
                             "feature_selector",
                             SelectPercentile(
-                                f_classif, percentile=65
-                            ),  # 70% -> 65% (best performance)
+                                f_classif, percentile=75  # Increased from 65% to 75% with better features
+                            ),  # Enhanced feature selection with improved features
                         ),  # Match Class Weighting
                         (
                             "classifier",
@@ -6796,6 +7023,68 @@ class AdvancedUFCPredictor:
             )
 
         return predictions, skipped_fights
+    
+    def _calculate_context_adjustments(self, fight_data, base_prob):
+        """Calculate context-aware probability adjustments for enhanced accuracy"""
+        try:
+            adjustments = 0.0
+            
+            # Age advantage adjustment (prime age 25-32)
+            if 'r_age_at_event' in fight_data and 'b_age_at_event' in fight_data:
+                r_age = fight_data.get('r_age_at_event', 30)
+                b_age = fight_data.get('b_age_at_event', 30)
+                
+                # Prime age advantage
+                if 25 <= r_age <= 32 and not (25 <= b_age <= 32):
+                    adjustments += 0.05
+                elif not (25 <= r_age <= 32) and 25 <= b_age <= 32:
+                    adjustments -= 0.05
+                
+                # Experience advantage (more fights)
+                r_fights = fight_data.get('r_total_fights', 0)
+                b_fights = fight_data.get('b_total_fights', 0)
+                if r_fights > b_fights + 5:
+                    adjustments += 0.03
+                elif b_fights > r_fights + 5:
+                    adjustments -= 0.03
+            
+            # Recent form adjustment
+            if 'r_recent_form_corrected' in fight_data and 'b_recent_form_corrected' in fight_data:
+                r_form = fight_data.get('r_recent_form_corrected', 0.5)
+                b_form = fight_data.get('b_recent_form_corrected', 0.5)
+                form_diff = r_form - b_form
+                adjustments += form_diff * 0.1
+            
+            # Streak momentum adjustment
+            if 'r_win_streak_corrected' in fight_data and 'b_win_streak_corrected' in fight_data:
+                r_streak = fight_data.get('r_win_streak_corrected', 0)
+                b_streak = fight_data.get('b_win_streak_corrected', 0)
+                streak_diff = r_streak - b_streak
+                adjustments += streak_diff * 0.02
+            
+            # Style matchup adjustment
+            if 'grappler_striker_matchup' in fight_data:
+                matchup = fight_data.get('grappler_striker_matchup', 0)
+                adjustments += matchup * 0.05
+            
+            # Control time advantage
+            if 'control_efficiency_diff' in fight_data:
+                control_diff = fight_data.get('control_efficiency_diff', 0)
+                adjustments += control_diff * 0.03
+            
+            # Grappling advantage
+            if 'grappling_advantage' in fight_data:
+                grappling_diff = fight_data.get('grappling_advantage', 0)
+                adjustments += grappling_diff * 0.04
+            
+            # Cap adjustments to prevent extreme probabilities
+            adjustments = np.clip(adjustments, -0.15, 0.15)
+            
+            return adjustments
+            
+        except Exception as e:
+            print(f"Error calculating context adjustments: {e}")
+            return 0.0
 
     def export_predictions_to_excel(self, predictions, filename="predictions.xlsx"):
         """Export predictions to formatted Excel file"""
