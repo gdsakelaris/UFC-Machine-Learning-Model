@@ -6885,6 +6885,31 @@ class AdvancedUFCPredictor:
                 # Fallback to traditional model if DL fails
                 pass
 
+        # Apply context adjustments to winner probability
+        try:
+            context_adjustment = self._calculate_context_adjustments(fight_data, winner_proba[1])
+            
+            # Apply adjustment to Red corner probability
+            adjusted_red_prob = winner_proba[1] + context_adjustment
+            adjusted_red_prob = np.clip(adjusted_red_prob, 0.01, 0.99)  # Keep probabilities realistic
+            
+            # Recalculate Blue corner probability to maintain sum = 1
+            adjusted_blue_prob = 1.0 - adjusted_red_prob
+            
+            # Update winner probabilities
+            winner_proba = np.array([adjusted_blue_prob, adjusted_red_prob])
+            winner_pred = 1 if adjusted_red_prob > 0.5 else 0
+            winner_name = "Red" if winner_pred == 1 else "Blue"
+            
+            # Debug information
+            if hasattr(self, "debug_mode") and self.debug_mode:
+                print(f"Context adjustment: {context_adjustment:.3f}")
+                print(f"Original Red prob: {winner_proba[1]:.3f}, Adjusted: {adjusted_red_prob:.3f}")
+                
+        except Exception as e:
+            print(f"Warning: Context adjustment failed: {e}")
+            # Continue with original probabilities if adjustment fails
+
         # COMPREHENSIVE METHOD PREDICTION WITH DYNAMIC WEIGHTING
         loser_prefix = "Blue" if winner_name == "Red" else "Red"
 
@@ -7004,6 +7029,33 @@ class AdvancedUFCPredictor:
 
         return predictions, skipped_fights
     
+    def _safe_get_scalar(self, data, key, default=0.0):
+        """Safely extract scalar values from pandas Series or other data structures"""
+        try:
+            if hasattr(data, 'get'):
+                value = data.get(key, default)
+            elif hasattr(data, 'iloc') and hasattr(data, 'columns'):
+                # DataFrame case
+                if key in data.columns:
+                    value = data[key].iloc[0] if len(data) > 0 else default
+                else:
+                    value = default
+            else:
+                value = default
+            
+            # Convert pandas Series to scalar if needed
+            if hasattr(value, 'iloc') and hasattr(value, 'index'):
+                return value.iloc[0] if len(value) > 0 else default
+            elif hasattr(value, 'item'):
+                return value.item()
+            elif hasattr(value, 'values'):
+                return value.values[0] if len(value.values) > 0 else default
+            else:
+                return float(value) if value is not None else default
+                
+        except (IndexError, KeyError, AttributeError, ValueError):
+            return default
+
     def _calculate_context_adjustments(self, fight_data, base_prob):
         """Calculate context-aware probability adjustments for enhanced accuracy"""
         try:
@@ -7011,8 +7063,9 @@ class AdvancedUFCPredictor:
             
             # Age advantage adjustment (prime age 27-34)
             if 'r_age_at_event' in fight_data and 'b_age_at_event' in fight_data:
-                r_age = fight_data.get('r_age_at_event', 30)
-                b_age = fight_data.get('b_age_at_event', 30)
+                # Safely extract scalar values from pandas Series
+                r_age = self._safe_get_scalar(fight_data, 'r_age_at_event', 30)
+                b_age = self._safe_get_scalar(fight_data, 'b_age_at_event', 30)
                 
                 # Prime age advantage
                 if 27 <= r_age <= 34 and not (27 <= b_age <= 34):
@@ -7021,8 +7074,8 @@ class AdvancedUFCPredictor:
                     adjustments -= 0.05
                 
                 # Experience advantage (more fights)
-                r_fights = fight_data.get('r_total_fights', 0)
-                b_fights = fight_data.get('b_total_fights', 0)
+                r_fights = self._safe_get_scalar(fight_data, 'r_total_fights', 0)
+                b_fights = self._safe_get_scalar(fight_data, 'b_total_fights', 0)
                 if r_fights > b_fights + 5:
                     adjustments += 0.03
                 elif b_fights > r_fights + 5:
@@ -7030,31 +7083,31 @@ class AdvancedUFCPredictor:
             
             # Recent form adjustment
             if 'r_recent_form_corrected' in fight_data and 'b_recent_form_corrected' in fight_data:
-                r_form = fight_data.get('r_recent_form_corrected', 0.5)
-                b_form = fight_data.get('b_recent_form_corrected', 0.5)
+                r_form = self._safe_get_scalar(fight_data, 'r_recent_form_corrected', 0.5)
+                b_form = self._safe_get_scalar(fight_data, 'b_recent_form_corrected', 0.5)
                 form_diff = r_form - b_form
                 adjustments += form_diff * 0.1
             
             # Streak momentum adjustment
             if 'r_win_streak_corrected' in fight_data and 'b_win_streak_corrected' in fight_data:
-                r_streak = fight_data.get('r_win_streak_corrected', 0)
-                b_streak = fight_data.get('b_win_streak_corrected', 0)
+                r_streak = self._safe_get_scalar(fight_data, 'r_win_streak_corrected', 0)
+                b_streak = self._safe_get_scalar(fight_data, 'b_win_streak_corrected', 0)
                 streak_diff = r_streak - b_streak
                 adjustments += streak_diff * 0.02
             
             # Style matchup adjustment
             if 'grappler_striker_matchup' in fight_data:
-                matchup = fight_data.get('grappler_striker_matchup', 0)
+                matchup = self._safe_get_scalar(fight_data, 'grappler_striker_matchup', 0)
                 adjustments += matchup * 0.05
             
             # Control time advantage
             if 'control_efficiency_diff' in fight_data:
-                control_diff = fight_data.get('control_efficiency_diff', 0)
+                control_diff = self._safe_get_scalar(fight_data, 'control_efficiency_diff', 0)
                 adjustments += control_diff * 0.03
             
             # Grappling advantage
             if 'grappling_advantage' in fight_data:
-                grappling_diff = fight_data.get('grappling_advantage', 0)
+                grappling_diff = self._safe_get_scalar(fight_data, 'grappling_advantage', 0)
                 adjustments += grappling_diff * 0.04
             
             # Cap adjustments to prevent extreme probabilities
@@ -7078,6 +7131,12 @@ class AdvancedUFCPredictor:
         percentage_columns = ["Win%", "Method%", "KO/TKO%", "Submission%", "Decision%"]
         for col in percentage_columns:
             if col in df.columns:
+                # Convert to numeric, coercing errors to NaN
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                
+                # Fill NaN values with 0.5 (neutral probability)
+                df[col] = df[col].fillna(0.5)
+                
                 # If values are > 1, they're likely already percentages, convert to decimal
                 if df[col].max() > 1:
                     df[col] = df[col] / 100
