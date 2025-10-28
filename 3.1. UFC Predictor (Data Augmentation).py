@@ -268,14 +268,14 @@ class AdvancedUFCPredictor:
 
     def calculate_age_curve_factor(self, age):
         """Calculate performance multiplier based on age"""
-        if age < 27:
+        if age < 25:
             return 0.92  # Still developing
-        elif 27 <= age <= 34:
+        elif 25 <= age <= 32:
             return 1.0  # Prime years
-        elif 35 <= age <= 38:
+        elif 33 <= age <= 36:
             return 0.94  # Slight decline
         else:
-            return 0.90  # Significant decline
+            return 0.85  # Significant decline
 
     def is_fighter_at_peak(self, wins, losses, age, recent_form):
         """Determine if fighter is at career peak"""
@@ -7067,19 +7067,19 @@ class AdvancedUFCPredictor:
                 r_age = self._safe_get_scalar(fight_data, 'r_age_at_event', 30)
                 b_age = self._safe_get_scalar(fight_data, 'b_age_at_event', 30)
                 
-                # Prime age advantage
-                if 27 <= r_age <= 34 and not (27 <= b_age <= 34):
-                    adjustments += 0.05
-                elif not (27 <= r_age <= 34) and 27 <= b_age <= 34:
-                    adjustments -= 0.05
+                # Prime age advantage (reduced from 0.05 to 0.03)
+                if 25 <= r_age <= 32 and not (25 <= b_age <= 32):
+                    adjustments += 0.03
+                elif not (25 <= r_age <= 32) and 25 <= b_age <= 32:
+                    adjustments -= 0.03
                 
-                # Experience advantage (more fights)
+                # Experience advantage (more fights) - reduced from 0.03 to 0.02
                 r_fights = self._safe_get_scalar(fight_data, 'r_total_fights', 0)
                 b_fights = self._safe_get_scalar(fight_data, 'b_total_fights', 0)
                 if r_fights > b_fights + 5:
-                    adjustments += 0.03
+                    adjustments += 0.02
                 elif b_fights > r_fights + 5:
-                    adjustments -= 0.03
+                    adjustments -= 0.02
             
             # Recent form adjustment
             if 'r_recent_form_corrected' in fight_data and 'b_recent_form_corrected' in fight_data:
@@ -7110,8 +7110,8 @@ class AdvancedUFCPredictor:
                 grappling_diff = self._safe_get_scalar(fight_data, 'grappling_advantage', 0)
                 adjustments += grappling_diff * 0.04
             
-            # Cap adjustments to prevent extreme probabilities
-            adjustments = np.clip(adjustments, -0.15, 0.15)
+            # Cap adjustments to prevent extreme probabilities (reduced from 0.15 to 0.08)
+            adjustments = np.clip(adjustments, -0.08, 0.08)
             
             return adjustments
             
