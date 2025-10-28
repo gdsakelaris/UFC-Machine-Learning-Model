@@ -250,12 +250,12 @@ class AdvancedUFCPredictor:
 
     def calculate_age_curve_factor(self, age):
         """Calculate performance multiplier based on age"""
-        if age < 27:
+        if age < 25:
             return 0.92  # Still developing
-        elif 27 <= age <= 34:
+        elif 25 <= age <= 32:
             return 1.0  # Prime years
-        elif 35 <= age <= 37:
-            return 0.92  # Slight decline
+        elif 33 <= age <= 36:
+            return 0.94  # Slight decline
         else:
             return 0.85  # Significant decline
 
@@ -445,7 +445,7 @@ class AdvancedUFCPredictor:
                 stage = 0  # Rookie
             elif total_fights <= 8:
                 stage = 1  # Developing
-            elif total_fights <= 20 and age <= 34:
+            elif total_fights <= 20 and age <= 32:
                 stage = 2  # Prime
             elif total_fights <= 30 and age <= 35:
                 stage = 3  # Declining

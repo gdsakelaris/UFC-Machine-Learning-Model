@@ -244,51 +244,27 @@ class AdvancedUFCPredictor:
             return 0
 
     def classify_fighter_style(self, stats):
-        """Enhanced fighter style classification with advanced grappling metrics"""
-        # Enhanced striker scoring with more comprehensive metrics
+        """Classify fighter as striker, grappler, or balanced"""
         striker_score = (
-            stats.get("pro_SLpM_corrected", 0) * 0.25
-            + stats.get("distance_pct_corrected", 0) * 0.2
-            + stats.get("head_pct_corrected", 0) * 0.2
-            + stats.get("pro_kd_pM_corrected", 0) * 0.15
-            + stats.get("ko_rate_corrected", 0) * 0.1
-            + stats.get("pro_str_acc_corrected", 0) * 0.1
-            - stats.get("ground_pct_corrected", 0) * 0.3
-            - stats.get("clinch_pct_corrected", 0) * 0.2
+            stats.get("pro_SLpM_corrected", 0) * 0.4
+            + stats.get("distance_pct_corrected", 0) * 0.3
+            + stats.get("head_pct_corrected", 0) * 0.3
+            - stats.get("ground_pct_corrected", 0) * 0.4
         )
 
-        # Enhanced grappler scoring with control time and submission metrics
         grappler_score = (
-            stats.get("pro_td_avg_corrected", 0) * 0.2
-            + stats.get("pro_sub_avg_corrected", 0) * 0.2
-            + stats.get("ground_pct_corrected", 0) * 0.15
-            + stats.get("pro_ctrl_sec_corrected", 0) * 0.15
-            + stats.get("sub_rate_corrected", 0) * 0.1
-            + stats.get("pro_td_acc_corrected", 0) * 0.1
-            + stats.get("clinch_pct_corrected", 0) * 0.1
-            - stats.get("distance_pct_corrected", 0) * 0.15
-            - stats.get("pro_SLpM_corrected", 0) * 0.05
+            stats.get("pro_td_avg_corrected", 0) * 0.4
+            + stats.get("pro_sub_avg_corrected", 0) * 0.3
+            + stats.get("ground_pct_corrected", 0) * 0.3
+            - stats.get("distance_pct_corrected", 0) * 0.2
         )
-        
-        # Calculate style dominance ratio
-        total_score = striker_score + grappler_score
-        if total_score == 0:
-            return "balanced"
-            
-        striker_ratio = striker_score / total_score
-        grappler_ratio = grappler_score / total_score
-        
-        # More nuanced classification with dominance thresholds
-        if striker_ratio > 0.6 and striker_score > 0.2:
+
+        if striker_score > 0.3 and striker_score > grappler_score:
             return "striker"
-        elif grappler_ratio > 0.6 and grappler_score > 0.2:
+        elif grappler_score > 0.3 and grappler_score > striker_score:
             return "grappler"
-        elif abs(striker_ratio - grappler_ratio) < 0.2:
-            return "balanced"
-        elif striker_score > grappler_score:
-            return "striker_balanced"
         else:
-            return "grappler_balanced"
+            return "balanced"
 
     def calculate_age_curve_factor(self, age):
         """Calculate performance multiplier based on age"""
@@ -296,10 +272,10 @@ class AdvancedUFCPredictor:
             return 0.92  # Still developing
         elif 27 <= age <= 34:
             return 1.0  # Prime years
-        elif 35 <= age <= 37:
-            return 0.92  # Slight decline
+        elif 35 <= age <= 38:
+            return 0.94  # Slight decline
         else:
-            return 0.85  # Significant decline
+            return 0.90  # Significant decline
 
     def is_fighter_at_peak(self, wins, losses, age, recent_form):
         """Determine if fighter is at career peak"""
@@ -3155,23 +3131,6 @@ class AdvancedUFCPredictor:
 
         return df
 
-    def _remove_constant_features(self, X):
-        """Remove constant features to prevent sklearn warnings"""
-        try:
-            # Find constant features (variance = 0)
-            constant_features = []
-            for i in range(X.shape[1]):
-                if X.iloc[:, i].nunique() <= 1:
-                    constant_features.append(i)
-            
-            if constant_features:
-                print(f"Removing {len(constant_features)} constant features: {constant_features}")
-                X = X.drop(X.columns[constant_features], axis=1)
-            
-            return X
-        except Exception as e:
-            print(f"Warning: Could not remove constant features: {e}")
-            return X
 
     def prepare_features(self, df):
         """Prepare enhanced features with all advanced metrics and caching"""
@@ -5028,10 +4987,6 @@ class AdvancedUFCPredictor:
         df, feature_columns = self.prepare_features(df)
 
         X = df[feature_columns]
-        
-        # Remove constant features to prevent sklearn warnings
-        X = self._remove_constant_features(X)
-        feature_columns = [col for col in feature_columns if col in X.columns]
 
         # Use standard target encoding (class weights will handle bias)
         if "winner" in df.columns:
