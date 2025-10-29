@@ -153,6 +153,7 @@ class AdvancedUFCPredictor:
         self.feature_cache = {}
         self.preprocessor_cache = None
         self.feature_columns_cache = None
+        
 
         # EARLY STOPPING: Performance tracking
         self.early_stopping_patience = 10
@@ -2609,6 +2610,7 @@ class AdvancedUFCPredictor:
 
         return df
 
+
     def augment_data_with_corner_swapping(self, df):
         """Augment data by swapping red and blue corners to eliminate bias - OPTIMIZED FOR SPEED"""
         print(
@@ -2789,10 +2791,10 @@ class AdvancedUFCPredictor:
             "finish_threat",
             "momentum_advantage",
             "pace_differential",
-            "avg_fight_time_diff",
+            # Note: avg_fight_time_diff removed - already handled by diff_columns loop
             "quality_experience_gap",
-            "championship_exp_diff",
-            "adversity_exp_diff",
+            # Note: championship_exp_diff removed - already handled by diff_columns loop
+            # Note: adversity_exp_diff removed - already handled by diff_columns loop
             "experience_skill_interaction",
             "veteran_edge",
             "novice_vulnerability",
@@ -2845,26 +2847,46 @@ class AdvancedUFCPredictor:
             "submission_threat_advantage",
             "decision_tendency_advantage",
             "early_finish_advantage",
+            # Additional differential features (don't end with _diff):
+            "ko_rate_differential",
+            "sub_rate_differential",
+            "dec_rate_differential",
+            # Stance-related advantages:
+            "stance_matchup_advantage",
+            "stance_versatility_advantage",
+            # Head-to-head and location advantages:
+            "h2h_advantage",
+            "h2h_history_advantage",
+            "location_advantage",  # If location_advantage ever has non-zero values, needs negation
+            # Features with _diff suffix (need manual handling):
+            # trajectory_diff_3 and trajectory_diff_5 have numbers after _diff, so they
+            # don't match endswith("_diff") and need to be here
             "trajectory_diff_3",
             "trajectory_diff_5",
-            "opponent_quality_diff",
-            "fight_frequency_diff",
-            "career_stage_diff",
-            "momentum_quality_diff",
-            "pressure_performance_diff",
-            "recent_trajectory_diff",
-            "form_consistency_diff",
-            "finish_rate_diff",
-            "stamina_factor_diff",
-            "clutch_factor_diff",
-            "recent_trend_diff",
-            "momentum_shift_diff",
-            "upset_history_diff",
+            # Note: The following features ending with exactly "_diff" are removed:
+            # They are already handled by the diff_columns loop above (line 2978)
+            # which negates all columns ending with "_diff_corrected" or "_diff"
+            # Removed: avg_fight_time_diff, championship_exp_diff, adversity_exp_diff,
+            #          opponent_quality_diff, fight_frequency_diff, career_stage_diff,
+            #          momentum_quality_diff, pressure_performance_diff, recent_trajectory_diff,
+            #          form_consistency_diff, finish_rate_diff, stamina_factor_diff,
+            #          clutch_factor_diff, recent_trend_diff, momentum_shift_diff,
+            #          upset_history_diff
         ]
 
         for feature in derived_features_to_negate:
             if feature in df_swapped.columns:
                 df_swapped[feature] = -df_swapped[feature]
+
+        # Handle probability-based features (represent probability Red wins, so use 1 - value when swapping)
+        probability_features = [
+            "exp_gap_historical_win_rate",  # Probability Red wins given experience gap bucket
+        ]
+        for feature in probability_features:
+            if feature in df_swapped.columns:
+                # When corners swap, probability Red wins becomes probability (new) Red wins
+                # which is probability (old) Blue wins = 1 - (probability old Red wins)
+                df_swapped[feature] = 1 - df_swapped[feature]
 
         # Handle ratio columns (r_stat / b_stat becomes b_stat / r_stat)
         ratio_columns = [col for col in df.columns if "ratio" in col.lower()]
@@ -2897,8 +2919,10 @@ class AdvancedUFCPredictor:
                 "orthodox_southpaw_matchup"
             ]
 
-        if "stance_diff" in df_swapped.columns:
-            df_swapped["stance_diff"] = -df_swapped["stance_diff"]
+        # Note: stance_diff is already handled by diff_columns loop above (ends with _diff)
+        # Removing this to prevent double negation
+        # if "stance_diff" in df_swapped.columns:
+        #     df_swapped["stance_diff"] = -df_swapped["stance_diff"]
 
         # Handle inactivity penalty (logic needs to be reversed)
         if "inactivity_penalty" in df_swapped.columns:
@@ -3594,19 +3618,23 @@ class AdvancedUFCPredictor:
         )
 
         # Stance matchup
+        # Note: Stance advantage hierarchy: Switch (2) > Southpaw (1) > Orthodox (0)
+        # This reflects real-world advantages where Southpaw beats Orthodox, Switch beats both
         if "r_stance" in df.columns and "b_stance" in df.columns:
-            if "stance_encoder" not in self.label_encoders:
-                self.label_encoders["stance_encoder"] = LabelEncoder()
-                all_stances = pd.concat([df["r_stance"], df["b_stance"]]).unique()
-                self.label_encoders["stance_encoder"].fit(all_stances)
-
-            df["r_stance_encoded"] = self.label_encoders["stance_encoder"].transform(
-                df["r_stance"].fillna("Orthodox")
-            )
-            df["b_stance_encoded"] = self.label_encoders["stance_encoder"].transform(
-                df["b_stance"].fillna("Orthodox")
-            )
+            def encode_stance(stance):
+                """Encode stance to numeric value reflecting advantage hierarchy"""
+                stance = str(stance).upper() if pd.notna(stance) else "ORTHODOX"
+                if "SWITCH" in stance:
+                    return 2  # Highest advantage
+                elif "SOUTHPAW" in stance:
+                    return 1  # Middle advantage (beats Orthodox)
+                else:  # Orthodox or unknown
+                    return 0  # Lowest in hierarchy
+            
+            df["r_stance_encoded"] = df["r_stance"].apply(encode_stance)
+            df["b_stance_encoded"] = df["b_stance"].apply(encode_stance)
             df["stance_diff"] = df["r_stance_encoded"] - df["b_stance_encoded"]
+            # stance_diff > 0 means Red has stance advantage, < 0 means Blue has advantage
 
             # Orthodox vs Southpaw advantage
             df["orthodox_southpaw_matchup"] = np.where(
@@ -5698,14 +5726,29 @@ class AdvancedUFCPredictor:
         winner_cv_std = np.std(winner_cv_scores)
 
         print(f"\nWinner Model Cross-Validation Results:")
-        print(f"  Mean Score: {winner_cv_mean:.4f} (+/- {winner_cv_std:.4f})")
-        print(f"  Individual Scores: {[f'{score:.4f}' for score in winner_cv_scores]}")
+        print(f"  Mean Validation Accuracy: {winner_cv_mean:.4f} (+/- {winner_cv_std:.4f})")
+        print(f"  Individual Validation Scores: {[f'{score:.4f}' for score in winner_cv_scores]}")
+
+        # Calculate train accuracy on final model
+        train_accuracy = self.winner_model.score(X_train, y_winner_train)
+        test_accuracy = self.winner_model.score(X_test, y_winner_test)
 
         print(f"\n{'=' * 80}")
-        print(f"Time-Based CV Accuracy: {winner_cv_mean:.4f} ± {winner_cv_std:.4f}")
-        print(
-            f"Test Set Accuracy: {self.winner_model.score(X_test, y_winner_test):.4f}"
-        )
+        print("FINAL MODEL PERFORMANCE METRICS:")
+        print(f"{'=' * 80}")
+        print(f"Train Accuracy:        {train_accuracy:.4f}")
+        print(f"Validation Accuracy:  {winner_cv_mean:.4f} ± {winner_cv_std:.4f} (Cross-Validation)")
+        print(f"Test Accuracy:        {test_accuracy:.4f}")
+        print(f"{'=' * 80}")
+        print(f"\nCross-Validation Details:")
+        print(f"  Individual Fold Validation Scores: {[f'{score:.4f}' for score in winner_cv_scores]}")
+        
+        # Calculate overfitting indicator
+        overfitting_gap = train_accuracy - winner_cv_mean
+        if overfitting_gap > 0.05:
+            print(f"\n⚠️  Warning: Large train-validation gap ({overfitting_gap:.4f}) suggests possible overfitting")
+        elif overfitting_gap < -0.02:
+            print(f"\n✓ Train-validation gap ({overfitting_gap:.4f}) suggests model is generalizing well")
         print(f"{'=' * 80}\n")
 
         return feature_columns
@@ -6117,12 +6160,19 @@ class AdvancedUFCPredictor:
             and r_stats["stance"]
             and b_stats["stance"]
         ):
-            r_enc = self.label_encoders["stance_encoder"].transform(
-                [r_stats["stance"]]
-            )[0]
-            b_enc = self.label_encoders["stance_encoder"].transform(
-                [b_stats["stance"]]
-            )[0]
+            # Use same stance encoding as in prepare_features (hierarchy-based)
+            def encode_stance(stance):
+                """Encode stance to numeric value reflecting advantage hierarchy"""
+                stance = str(stance).upper() if stance else "ORTHODOX"
+                if "SWITCH" in stance:
+                    return 2  # Highest advantage
+                elif "SOUTHPAW" in stance:
+                    return 1  # Middle advantage (beats Orthodox)
+                else:  # Orthodox or unknown
+                    return 0  # Lowest in hierarchy
+            
+            r_enc = encode_stance(r_stats["stance"])
+            b_enc = encode_stance(b_stats["stance"])
             fight_features["stance_diff"] = r_enc - b_enc
 
             fight_features["orthodox_southpaw_matchup"] = (
@@ -7074,11 +7124,10 @@ Tatiana Suarez,Amanda Lemos,Strawweight,Women,3"""
                 performance_mode=self.performance_mode_var.get(),  # Use performance mode
             )
 
-            f = io.StringIO()
-            with redirect_stdout(f):
-                df = self.predictor.fix_data_leakage(df)
-                self.predictor.df_train = df
-                feature_columns = self.predictor.train_models(df)
+            # Train models without suppressing stdout - allow print statements to terminal
+            df = self.predictor.fix_data_leakage(df)
+            self.predictor.df_train = df
+            feature_columns = self.predictor.train_models(df)
 
             self.status_var.set("Generating predictions...")
             self.root.update()
