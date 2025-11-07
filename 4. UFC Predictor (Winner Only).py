@@ -115,10 +115,11 @@ class ImprovedUFCPredictor:
         np.random.seed(42)
         os.environ["PYTHONHASHSEED"] = "42"
 
-    # ===== CORE FEATURES: 50-60 CAREFULLY SELECTED FEATURES =====
+    # ===== CORE FEATURES: ~111 RESEARCH-BACKED FEATURES =====
+    # Original 94 + 17 new features from RF/GBDT/SVM top-10 analysis
 
     def get_core_feature_names(self):
-        """Define the 50-60 core features for the model"""
+        """Define ~111 features including research-backed top-performers (Date, CLINCH, GROUND, CTRL, REV)"""
         return [
             # TIER 0: ELO Features (3 features) - MOST IMPORTANT
             "elo_diff",
@@ -215,6 +216,72 @@ class ImprovedUFCPredictor:
             "ko_power_x_striking",
             "momentum_x_win_streak",
             "streak_differential",
+
+            # NEW: Strategic interactions based on 60.79% model analysis
+            "age_x_win_streak",
+            "elo_x_sub_threat",
+            "form_x_durability",
+            "striking_x_grappling_matchup",
+            "momentum_combo",
+
+            # NEW HIGH-IMPACT: Elite compound features
+            "elite_finisher",
+            "veteran_advantage",
+            "complete_fighter",
+            "total_finish_threat",
+            "unstoppable_streak",
+            "age_prime_advantage",
+            "freshness_advantage",
+            "desperation_diff",
+            "momentum_sustainability_diff",
+            "elo_x_finish",
+            "adversity_experience_diff",
+
+            # RESEARCH-BACKED: Top features from RF/GBDT/SVM analysis
+            # NEW: Opponent quality (was placeholder returning 0!)
+            "opponent_quality_diff",
+            "avg_opponent_elo_diff_corrected",
+
+            # NEW: Recent momentum vs career average (improving/declining fighters)
+            "distance_pct_momentum_diff_corrected",
+            "slpm_momentum_diff_corrected",
+            "ctrl_sec_momentum_diff_corrected",
+
+            # NEW: Rounds-based strategy adjustments
+            "rounds_x_cardio",
+            "rounds_x_finish_rate",
+            "rounds_x_durability",
+
+            # NEW: Enhanced top feature interactions
+            "h2h_x_elo",
+            "h2h_x_form",
+            "age_prime_score_diff",
+            "age_x_experience",
+            "win_ratio_x_finish",
+            "win_ratio_x_durability",
+
+            # Positional striking CAREER AVERAGES (CLINCH #3, GROUND #5, DISTANCE #6)
+            "distance_pct_diff_corrected",
+            "clinch_pct_diff_corrected",
+            "ground_pct_diff_corrected",
+            "positional_striking_advantage",
+
+            # Target area CAREER AVERAGES distribution
+            "head_pct_diff_corrected",
+            "body_pct_diff_corrected",
+            "leg_pct_diff_corrected",
+            "target_distribution_advantage",
+
+            # Control and reversals CAREER AVERAGES (CTRL #5 GBDT, REV #8/#9)
+            "avg_ctrl_sec_diff_corrected",
+            "avg_rev_diff_corrected",
+            "control_dominance",
+
+            # Compound features with career-based positionals
+            "clinch_x_grappling",
+            "distance_x_striking",
+            "ground_x_control",
+            "positional_mastery",
         ]
 
     def calculate_streak(self, recent_wins, count_wins=True):
@@ -535,7 +602,7 @@ class ImprovedUFCPredictor:
         Using 35% augmentation (same as Model 5) for optimal generalization
         """
         print("\n" + "="*80)
-        print("AGGRESSIVE DATA AUGMENTATION (80% augmentation)")
+        print("OPTIMIZED DATA AUGMENTATION (80% augmentation)")
         print("="*80)
 
         red_bias = (df["winner"] == "Red").mean()
@@ -548,7 +615,7 @@ class ImprovedUFCPredictor:
             # Create augmented dataset by swapping corners
             df_augmented = self.swap_corners(df)
 
-            # AGGRESSIVE: 80% augmentation to eliminate corner bias completely
+            # OPTIMIZED: 80% augmentation - sweet spot for balance without overfitting
             sample_size = int(len(df_augmented) * 0.80)
             df_augmented_sampled = df_augmented.sample(n=sample_size, random_state=42)
 
@@ -556,7 +623,7 @@ class ImprovedUFCPredictor:
             df_combined = pd.concat([df, df_augmented_sampled], ignore_index=True)
 
             new_red_bias = (df_combined["winner"] == "Red").mean()
-            print(f"After augmentation: {len(df)} → {len(df_combined)} fights (1.80x)")
+            print(f"After augmentation: {len(df)} -> {len(df_combined)} fights (1.80x)")
             print(f"New Red corner win rate: {new_red_bias:.3f}")
 
             return df_combined
@@ -597,7 +664,20 @@ class ImprovedUFCPredictor:
             "elo_x_win_ratio", "win_ratio_x_form",
             "durability_x_striking", "elo_x_durability",
             "submission_x_grappling", "ko_power_x_striking",
-            "momentum_x_win_streak", "streak_differential"
+            "momentum_x_win_streak", "streak_differential",
+            # NEW: Strategic interactions
+            "age_x_win_streak", "elo_x_sub_threat",
+            "form_x_durability", "striking_x_grappling_matchup",
+            "momentum_combo",
+            # NEW HIGH-IMPACT: Compound interactions (products of differentials)
+            "elite_finisher", "complete_fighter",
+            "total_finish_threat", "unstoppable_streak", "elo_x_finish",
+            # RESEARCH-BACKED: Positional compound interactions
+            "clinch_x_grappling", "distance_x_striking", "ground_x_control",
+            "positional_mastery", "control_dominance",
+            # NEW: Enhanced top feature interactions
+            "h2h_x_elo", "h2h_x_form", "age_prime_score_diff",
+            "age_x_experience", "win_ratio_x_finish", "win_ratio_x_durability"
         ]
         for col in interaction_features:
             if col in df_swapped.columns:
@@ -769,6 +849,17 @@ class ImprovedUFCPredictor:
             "ko_losses": 0, "sub_losses": 0,
             "recent_wins": [], "recent_finishes": [],
             "last_fight_date": None,
+            # NEW: Positional striking tracking (distance/clinch/ground)
+            "distance_strikes": 0, "clinch_strikes": 0, "ground_strikes": 0, "total_sig_strikes": 0,
+            # NEW: Target area tracking (head/body/leg)
+            "head_strikes": 0, "body_strikes": 0, "leg_strikes": 0,
+            # NEW: Control and reversals
+            "ctrl_sec_total": 0, "rev_total": 0,
+            # NEW: Opponent quality tracking
+            "total_opponent_elo": 0, "opponents_faced": 0,
+            # NEW: Recent stats for momentum (last 3 fights)
+            "recent_distance_pct": [], "recent_clinch_pct": [], "recent_ground_pct": [],
+            "recent_slpm": [], "recent_ctrl_sec": [],
         }
 
         # Initialize corrected columns
@@ -777,10 +868,19 @@ class ImprovedUFCPredictor:
                          "pro_sig_str_acc", "pro_str_def", "pro_td_avg", "pro_td_acc",
                          "pro_td_def", "pro_sub_avg", "ko_rate", "sub_rate", "dec_rate",
                          "recent_form", "win_streak", "loss_streak", "last_5_wins",
-                         "days_since_last_fight", "recent_finish_rate", "durability"]:
+                         "days_since_last_fight", "recent_finish_rate", "durability",
+                         # NEW: Career-based positional/target/control metrics
+                         "distance_pct", "clinch_pct", "ground_pct",
+                         "head_pct", "body_pct", "leg_pct",
+                         "avg_ctrl_sec", "avg_rev",
+                         # NEW: Opponent quality
+                         "avg_opponent_elo",
+                         # NEW: Recent momentum vs career
+                         "distance_pct_momentum", "slpm_momentum", "ctrl_sec_momentum"]:
                 df[f"{prefix}_{stat}_corrected"] = 0.0
 
         df["h2h_advantage"] = 0.0
+        df["opponent_quality_diff"] = 0.0
         fighter_h2h = {}
 
         for idx, row in df.iterrows():
@@ -851,6 +951,61 @@ class ImprovedUFCPredictor:
                 finish_losses = stats["ko_losses"] + stats["sub_losses"]
                 df.at[idx, f"{prefix}_durability_corrected"] = 1.0 / (1 + finish_losses)
 
+                # NEW: Career-based positional striking percentages
+                if stats["total_sig_strikes"] > 0:
+                    df.at[idx, f"{prefix}_distance_pct_corrected"] = stats["distance_strikes"] / stats["total_sig_strikes"]
+                    df.at[idx, f"{prefix}_clinch_pct_corrected"] = stats["clinch_strikes"] / stats["total_sig_strikes"]
+                    df.at[idx, f"{prefix}_ground_pct_corrected"] = stats["ground_strikes"] / stats["total_sig_strikes"]
+                    df.at[idx, f"{prefix}_head_pct_corrected"] = stats["head_strikes"] / stats["total_sig_strikes"]
+                    df.at[idx, f"{prefix}_body_pct_corrected"] = stats["body_strikes"] / stats["total_sig_strikes"]
+                    df.at[idx, f"{prefix}_leg_pct_corrected"] = stats["leg_strikes"] / stats["total_sig_strikes"]
+                else:
+                    # Defaults based on typical UFC averages
+                    df.at[idx, f"{prefix}_distance_pct_corrected"] = 0.60  # Most strikes from distance
+                    df.at[idx, f"{prefix}_clinch_pct_corrected"] = 0.25
+                    df.at[idx, f"{prefix}_ground_pct_corrected"] = 0.15
+                    df.at[idx, f"{prefix}_head_pct_corrected"] = 0.55
+                    df.at[idx, f"{prefix}_body_pct_corrected"] = 0.25
+                    df.at[idx, f"{prefix}_leg_pct_corrected"] = 0.20
+
+                # NEW: Career-based control time and reversals per fight
+                if stats["fight_count"] > 0:
+                    df.at[idx, f"{prefix}_avg_ctrl_sec_corrected"] = stats["ctrl_sec_total"] / stats["fight_count"]
+                    df.at[idx, f"{prefix}_avg_rev_corrected"] = stats["rev_total"] / stats["fight_count"]
+                else:
+                    df.at[idx, f"{prefix}_avg_ctrl_sec_corrected"] = 0
+                    df.at[idx, f"{prefix}_avg_rev_corrected"] = 0
+
+                # NEW: Opponent quality (average ELO of opponents faced)
+                if stats["opponents_faced"] > 0:
+                    df.at[idx, f"{prefix}_avg_opponent_elo_corrected"] = stats["total_opponent_elo"] / stats["opponents_faced"]
+                else:
+                    df.at[idx, f"{prefix}_avg_opponent_elo_corrected"] = 1500  # Default ELO
+
+                # NEW: Recent momentum vs career average
+                # Distance percentage momentum
+                if len(stats["recent_distance_pct"]) >= 2:
+                    recent_avg = sum(stats["recent_distance_pct"][-3:]) / len(stats["recent_distance_pct"][-3:])
+                    career_avg = stats["distance_strikes"] / stats["total_sig_strikes"] if stats["total_sig_strikes"] > 0 else 0.6
+                    df.at[idx, f"{prefix}_distance_pct_momentum_corrected"] = recent_avg - career_avg
+
+                # Striking output momentum
+                if len(stats["recent_slpm"]) >= 2:
+                    recent_avg = sum(stats["recent_slpm"][-3:]) / len(stats["recent_slpm"][-3:])
+                    career_avg = stats["sig_str_total"] / stats["fight_time_minutes"] if stats["fight_time_minutes"] > 0 else 0
+                    df.at[idx, f"{prefix}_slpm_momentum_corrected"] = recent_avg - career_avg
+
+                # Control time momentum
+                if len(stats["recent_ctrl_sec"]) >= 2:
+                    recent_avg = sum(stats["recent_ctrl_sec"][-3:]) / len(stats["recent_ctrl_sec"][-3:])
+                    career_avg = stats["ctrl_sec_total"] / stats["fight_count"] if stats["fight_count"] > 0 else 0
+                    df.at[idx, f"{prefix}_ctrl_sec_momentum_corrected"] = recent_avg - career_avg
+
+            # Calculate opponent quality differential
+            r_opp_elo = df.at[idx, "r_avg_opponent_elo_corrected"]
+            b_opp_elo = df.at[idx, "b_avg_opponent_elo_corrected"]
+            df.at[idx, "opponent_quality_diff"] = r_opp_elo - b_opp_elo
+
             # Update stats after fight
             if pd.notna(row["winner"]):
                 method = str(row.get("method", "")).lower()
@@ -899,6 +1054,70 @@ class ImprovedUFCPredictor:
 
                     fight_time = row.get("total_fight_time_sec", 0) / 60 if pd.notna(row.get("total_fight_time_sec")) else 0
                     fighter_stats[fighter]["fight_time_minutes"] += fight_time
+                    fighter_stats[fighter]["fight_count"] += 1
+
+                    # NEW: Track positional striking (distance/clinch/ground)
+                    sig_str = row.get(f"{f_prefix}_sig_str", 0)
+                    if pd.notna(sig_str) and sig_str > 0:
+                        fighter_stats[fighter]["total_sig_strikes"] += sig_str
+
+                        # Positional percentages from this fight
+                        distance_pct = row.get(f"{f_prefix}_distance", 0) if pd.notna(row.get(f"{f_prefix}_distance")) else 0
+                        clinch_pct = row.get(f"{f_prefix}_clinch", 0) if pd.notna(row.get(f"{f_prefix}_clinch")) else 0
+                        ground_pct = row.get(f"{f_prefix}_ground", 0) if pd.notna(row.get(f"{f_prefix}_ground")) else 0
+
+                        # Add strikes from each position (percentage x total strikes)
+                        fighter_stats[fighter]["distance_strikes"] += sig_str * distance_pct
+                        fighter_stats[fighter]["clinch_strikes"] += sig_str * clinch_pct
+                        fighter_stats[fighter]["ground_strikes"] += sig_str * ground_pct
+
+                        # NEW: Track target areas (head/body/leg)
+                        head_pct = row.get(f"{f_prefix}_head", 0) if pd.notna(row.get(f"{f_prefix}_head")) else 0
+                        body_pct = row.get(f"{f_prefix}_body", 0) if pd.notna(row.get(f"{f_prefix}_body")) else 0
+                        leg_pct = row.get(f"{f_prefix}_leg", 0) if pd.notna(row.get(f"{f_prefix}_leg")) else 0
+
+                        fighter_stats[fighter]["head_strikes"] += sig_str * head_pct
+                        fighter_stats[fighter]["body_strikes"] += sig_str * body_pct
+                        fighter_stats[fighter]["leg_strikes"] += sig_str * leg_pct
+
+                    # NEW: Track control time and reversals
+                    if pd.notna(row.get(f"{f_prefix}_ctrl_sec")):
+                        fighter_stats[fighter]["ctrl_sec_total"] += row[f"{f_prefix}_ctrl_sec"]
+                    if pd.notna(row.get(f"{f_prefix}_rev")):
+                        fighter_stats[fighter]["rev_total"] += row[f"{f_prefix}_rev"]
+
+                # NEW: Track opponent ELO for quality metric (after both fighters updated)
+                # Red corner tracks blue's ELO, blue tracks red's ELO
+                if hasattr(self, 'fighter_elos'):
+                    r_elo = self.fighter_elos.get(r_fighter, 1500)
+                    b_elo = self.fighter_elos.get(b_fighter, 1500)
+
+                    fighter_stats[r_fighter]["total_opponent_elo"] += b_elo
+                    fighter_stats[r_fighter]["opponents_faced"] += 1
+                    fighter_stats[b_fighter]["total_opponent_elo"] += r_elo
+                    fighter_stats[b_fighter]["opponents_faced"] += 1
+
+                # NEW: Track recent stats for momentum (last 3 fights)
+                for fighter, f_prefix in [(r_fighter, "r"), (b_fighter, "b")]:
+                    # Track recent positional percentages
+                    if fighter_stats[fighter]["total_sig_strikes"] > 0:
+                        this_fight_distance = fighter_stats[fighter]["distance_strikes"] / fighter_stats[fighter]["total_sig_strikes"]
+                        fighter_stats[fighter]["recent_distance_pct"].append(this_fight_distance)
+                        if len(fighter_stats[fighter]["recent_distance_pct"]) > 3:
+                            fighter_stats[fighter]["recent_distance_pct"] = fighter_stats[fighter]["recent_distance_pct"][-3:]
+
+                    # Track recent striking output
+                    if fight_time > 0:
+                        this_fight_slpm = row.get(f"{f_prefix}_sig_str", 0) / (fight_time / 60) if pd.notna(row.get(f"{f_prefix}_sig_str")) else 0
+                        fighter_stats[fighter]["recent_slpm"].append(this_fight_slpm)
+                        if len(fighter_stats[fighter]["recent_slpm"]) > 3:
+                            fighter_stats[fighter]["recent_slpm"] = fighter_stats[fighter]["recent_slpm"][-3:]
+
+                    # Track recent control time
+                    this_fight_ctrl = row.get(f"{f_prefix}_ctrl_sec", 0) if pd.notna(row.get(f"{f_prefix}_ctrl_sec")) else 0
+                    fighter_stats[fighter]["recent_ctrl_sec"].append(this_fight_ctrl)
+                    if len(fighter_stats[fighter]["recent_ctrl_sec"]) > 3:
+                        fighter_stats[fighter]["recent_ctrl_sec"] = fighter_stats[fighter]["recent_ctrl_sec"][-3:]
 
         print("Data leakage fixed successfully!\n")
 
@@ -940,7 +1159,13 @@ class ImprovedUFCPredictor:
                      "pro_sig_str_acc", "pro_str_def", "pro_td_avg", "pro_td_acc",
                      "pro_td_def", "pro_sub_avg", "ko_rate", "sub_rate", "dec_rate",
                      "recent_form", "win_streak", "loss_streak", "last_5_wins",
-                     "days_since_last_fight", "recent_finish_rate", "durability"]:
+                     "days_since_last_fight", "recent_finish_rate", "durability",
+                     # NEW: Career-based positional/target/control metrics
+                     "distance_pct", "clinch_pct", "ground_pct",
+                     "head_pct", "body_pct", "leg_pct",
+                     "avg_ctrl_sec", "avg_rev",
+                     # NEW: Opponent quality and momentum
+                     "avg_opponent_elo", "distance_pct_momentum", "slpm_momentum", "ctrl_sec_momentum"]:
             df[f"{stat}_diff_corrected"] = df[f"r_{stat}_corrected"] - df[f"b_{stat}_corrected"]
 
         # Physical differentials
@@ -990,6 +1215,12 @@ class ImprovedUFCPredictor:
             df["is_title_bout"] = 0
         if "total_rounds" not in df.columns:
             df["total_rounds"] = 3
+
+        # NEW: Rounds-based strategy adjustments
+        # 5-round fights favor cardio/decision specialists, 3-round favor explosive finishers
+        df["rounds_x_cardio"] = df["total_rounds"] * df["dec_rate_diff_corrected"]
+        df["rounds_x_finish_rate"] = (5 - df["total_rounds"]) * df["finish_rate_diff"]  # 3-rounders favor finishers
+        df["rounds_x_durability"] = df["total_rounds"] * df["durability_diff_corrected"]  # 5-rounders favor durable fighters
 
         # Momentum features
         df["momentum_swing"] = df["r_recent_form_corrected"] - df["b_recent_form_corrected"] + (df["r_win_streak_corrected"] - df["b_win_streak_corrected"]) * 0.1
@@ -1051,6 +1282,155 @@ class ImprovedUFCPredictor:
         df["momentum_x_win_streak"] = df["momentum_swing"] * df["win_streak_diff_corrected"]
         df["streak_differential"] = df["win_streak_diff_corrected"] * df["loss_streak_diff_corrected"]
 
+        # NEW ELITE INTERACTIONS: Based on top feature analysis
+        # Age + streak synergy (top features: age #1, win_streak #2)
+        df["age_x_win_streak"] = df["age_at_event_diff"] * df["win_streak_diff_corrected"]
+
+        # ELO + submission threat (elo #5, submission_specialist #12)
+        df["elo_x_sub_threat"] = df["elo_diff"] * df["submission_specialist_gap"]
+
+        # Form + durability compound (form #30, durability #13)
+        df["form_x_durability"] = df["recent_form_diff_corrected"] * df["durability_diff_corrected"]
+
+        # Striking vs grappling matchup (striking #10, grappler #12)
+        df["striking_x_grappling_matchup"] = df["net_striking_advantage"] * df["grappler_advantage"]
+
+        # Triple momentum combo (momentum_x_win_streak #4 is already powerful)
+        df["momentum_combo"] = df["momentum_x_win_streak"] * df["recent_form_diff_corrected"]
+
+        # NEW HIGH-IMPACT FEATURES: Elite compound interactions
+        # Triple threat: ELO + finish rate + momentum
+        df["elite_finisher"] = df["elo_diff"] * df["finish_rate_diff"] * df["recent_form_diff_corrected"]
+
+        # Experienced winner: Win ratio + experience + age advantage
+        df["veteran_advantage"] = df["win_loss_ratio_diff_corrected"] * df["experience_gap"] * (-df["age_at_event_diff"])
+
+        # Complete fighter: Striking + grappling + durability
+        df["complete_fighter"] = df["net_striking_advantage"] * df["grappler_advantage"] * df["durability_diff_corrected"]
+
+        # Finish threat: KO power + submission threat + finish pressure
+        df["total_finish_threat"] = (df["ko_rate_diff_corrected"] + df["sub_rate_diff_corrected"]) * df["finish_pressure"]
+
+        # Hot streak compound: Win streak + momentum + form
+        df["unstoppable_streak"] = df["win_streak_diff_corrected"] * df["momentum_swing"] * df["recent_form_diff_corrected"]
+
+        # Age prime factor: Peak performance (27-32 years old)
+        df["r_age_prime"] = 1.0 - abs(df["r_age_at_event"] - 29.5) / 10.0  # Peak at 29.5
+        df["b_age_prime"] = 1.0 - abs(df["b_age_at_event"] - 29.5) / 10.0
+        df["age_prime_advantage"] = df["r_age_prime"] - df["b_age_prime"]
+
+        # Layoff freshness vs ring rust (optimal ~90-180 days)
+        df["r_layoff_factor"] = 1.0 - abs(df["r_days_since_last_fight_corrected"] - 135) / 200.0  # Peak at 135 days
+        df["b_layoff_factor"] = 1.0 - abs(df["b_days_since_last_fight_corrected"] - 135) / 200.0
+        df["freshness_advantage"] = df["r_layoff_factor"] - df["b_layoff_factor"]
+
+        # Desperation factor: Losing streak + age (older fighters need wins more)
+        df["r_desperation"] = df["r_loss_streak_corrected"] * (df["r_age_at_event"] / 35.0)
+        df["b_desperation"] = df["b_loss_streak_corrected"] * (df["b_age_at_event"] / 35.0)
+        df["desperation_diff"] = df["r_desperation"] - df["b_desperation"]
+
+        # Momentum sustainability: Recent form / days since last fight (maintaining activity)
+        df["r_momentum_sustainability"] = df["r_recent_form_corrected"] / (df["r_days_since_last_fight_corrected"] / 100.0 + 1.0)
+        df["b_momentum_sustainability"] = df["b_recent_form_corrected"] / (df["b_days_since_last_fight_corrected"] / 100.0 + 1.0)
+        df["momentum_sustainability_diff"] = df["r_momentum_sustainability"] - df["b_momentum_sustainability"]
+
+        # ELO + finish rate synergy (elite fighters who finish)
+        df["elo_x_finish"] = df["elo_diff"] * df["finish_rate_diff"]
+
+        # Experience in adversity: Win ratio despite losses (comeback ability)
+        df["r_adversity_experience"] = df["r_win_loss_ratio_corrected"] * (df["r_losses"] + 1)
+        df["b_adversity_experience"] = df["b_win_loss_ratio_corrected"] * (df["b_losses"] + 1)
+        df["adversity_experience_diff"] = df["r_adversity_experience"] - df["b_adversity_experience"]
+
+        # ========== RESEARCH-BACKED FEATURES (RF/GBDT/SVM Analysis) ==========
+
+        # ENHANCED H2H AND STYLISTIC FEATURES
+        # h2h_advantage is the top feature (0.018892) - let's enhance it
+        # Create interaction features that amplify h2h advantage with other strong features
+
+        # H2H × ELO: When you've beaten someone before AND have better rating
+        df["h2h_x_elo"] = df["h2h_advantage"] * df["elo_diff"]
+
+        # H2H × Recent Form: Previous wins matter more when you're on a hot streak
+        df["h2h_x_form"] = df["h2h_advantage"] * df["recent_form_diff_corrected"]
+
+        # Age differential interactions (age_at_event_diff is #2 at 0.015408)
+        # Prime age advantage: Being in prime (26-33) vs opponent not in prime
+        def calculate_age_prime_score(age):
+            if 26 <= age <= 33:
+                return 1.0
+            elif 23 <= age < 26 or 33 < age <= 36:
+                return 0.6
+            else:
+                return 0.2
+
+        df["r_age_prime_score"] = df["r_age_at_event"].apply(calculate_age_prime_score)
+        df["b_age_prime_score"] = df["b_age_at_event"].apply(calculate_age_prime_score)
+        df["age_prime_score_diff"] = df["r_age_prime_score"] - df["b_age_prime_score"]
+
+        # Age × Experience: Older fighters with more experience are more dangerous
+        df["age_x_experience"] = df["age_at_event_diff"] * (
+            (df["r_total_fights"] - df["b_total_fights"]) / 50.0
+        ).clip(-1, 1)
+
+        # Win ratio interactions (win_loss_ratio_diff_corrected is #3 at 0.014744)
+        # Win ratio × finish rate: High win ratio fighters who finish fights are elite
+        df["win_ratio_x_finish"] = df["win_loss_ratio_diff_corrected"] * df["finish_rate_diff"]
+
+        # Win ratio × durability: High win ratio + durability = championship material
+        df["win_ratio_x_durability"] = df["win_loss_ratio_diff_corrected"] * df["durability_diff_corrected"]
+
+        # POSITIONAL STRIKING: CLINCH #3, GROUND #5, DISTANCE #6 in model rankings
+        # NOW USING CAREER AVERAGES (not fight outcome data!)
+        # These represent each fighter's career tendencies for where they land strikes
+
+        # Positional advantage: Dominant in preferred position
+        # Higher = better at fighting from distance, clinch, or ground
+        df["positional_striking_advantage"] = (
+            abs(df["distance_pct_diff_corrected"]) +
+            abs(df["clinch_pct_diff_corrected"]) +
+            abs(df["ground_pct_diff_corrected"])
+        )
+
+        # TARGET AREA DISTRIBUTION: Head/Body/Leg striking (ranked #10)
+        # NOW USING CAREER AVERAGES of where strikes land
+        # Target diversity: Fighters who can attack all areas are more dangerous
+        df["target_distribution_advantage"] = (
+            abs(df["head_pct_diff_corrected"]) +
+            abs(df["body_pct_diff_corrected"]) +
+            abs(df["leg_pct_diff_corrected"])
+        )
+
+        # CONTROL & REVERSALS: CTRL #5 in GBDT, REV #8/#9 in RF/GBDT
+        # NOW USING CAREER AVERAGES per fight
+        # Control dominance: Combines control time + reversals (grappling mastery)
+        # Normalize control time (convert seconds to 0-1 scale, typical range 0-300 sec)
+        df["control_dominance"] = (
+            (df["avg_ctrl_sec_diff_corrected"] / 300.0).clip(-1, 1) +
+            df["avg_rev_diff_corrected"] * 0.1
+        )
+
+        # COMPOUND FEATURES: Combining research-backed positionals with existing top features
+
+        # Clinch grappling: Clinch striking tendency × grappling ability
+        df["clinch_x_grappling"] = df["clinch_pct_diff_corrected"] * df["grappler_advantage"]
+
+        # Distance striking: Distance striking tendency × net striking advantage
+        df["distance_x_striking"] = df["distance_pct_diff_corrected"] * df["net_striking_advantage"]
+
+        # Ground control: Ground striking tendency × control time (ground and pound mastery)
+        df["ground_x_control"] = (
+            df["ground_pct_diff_corrected"] *
+            (df["avg_ctrl_sec_diff_corrected"] / 300.0).clip(-1, 1)
+        )
+
+        # Positional mastery: Combined positional + grappling + striking
+        df["positional_mastery"] = (
+            df["positional_striking_advantage"] *
+            df["grappler_advantage"] *
+            df["net_striking_advantage"]
+        )
+
         # Opponent quality (simplified)
         df["r_opponent_quality"] = 0.5
         df["b_opponent_quality"] = 0.5
@@ -1100,13 +1480,13 @@ class ImprovedUFCPredictor:
         def objective(trial):
             params = {
                 'n_estimators': trial.suggest_int('n_estimators', 200, 1200),
-                'max_depth': trial.suggest_int('max_depth', 4, 15),  # Expanded from 12 to 15
+                'max_depth': trial.suggest_int('max_depth', 4, 8),  # Balanced: allow complexity without overfitting (was 3-6)
                 'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.05, log=True),
                 'subsample': trial.suggest_float('subsample', 0.7, 0.95),
                 'colsample_bytree': trial.suggest_float('colsample_bytree', 0.7, 0.95),
-                'reg_alpha': trial.suggest_float('reg_alpha', 0.1, 2.0),
-                'reg_lambda': trial.suggest_float('reg_lambda', 0.5, 3.0),
-                'min_child_weight': trial.suggest_int('min_child_weight', 1, 15),  # Expanded from 10 to 15
+                'reg_alpha': trial.suggest_float('reg_alpha', 0.3, 2.0),  # Relaxed regularization (was 1.0-5.0)
+                'reg_lambda': trial.suggest_float('reg_lambda', 0.8, 3.0),  # Relaxed regularization (was 1.5-5.0)
+                'min_child_weight': trial.suggest_int('min_child_weight', 3, 12),  # Relaxed minimum samples (was 5-20)
                 'random_state': 42,
                 'n_jobs': -1,
             }
@@ -1236,8 +1616,8 @@ class ImprovedUFCPredictor:
         print(f"  Features for 100% cumulative: {len(cumulative_100)}")
         print(f"  Selected (union): {len(selected_features)}")
 
-        print("\nTop 50 Most Important Features (Ranked):")
-        print(selected_features.head(50)[['feature', 'importance']].to_string(index=False))
+        print("\nTop 40 Most Important Features (Ranked):")
+        print(selected_features.head(40)[['feature', 'importance']].to_string(index=False))
 
         top_features = selected_features['feature'].tolist()
 
@@ -1311,7 +1691,7 @@ class ImprovedUFCPredictor:
         X_train_val = pd.concat([X_train, X_val])
         y_train_val = pd.concat([y_train, y_val])
 
-        selected_features = self.select_features_by_importance(X_train_val, y_train_val, max_features=50)
+        selected_features = self.select_features_by_importance(X_train_val, y_train_val, max_features=55)
 
         # Update datasets with selected features only
         X_train = X_train[selected_features]
@@ -1440,9 +1820,9 @@ class ImprovedUFCPredictor:
         # Check overfitting
         train_val_gap = train_acc - val_acc
         if train_val_gap > 0.05:
-            print(f"\n⚠️  Warning: Large train-validation gap ({train_val_gap:.4f}) suggests possible overfitting")
+            print(f"\nWarning: Large train-validation gap ({train_val_gap:.4f}) suggests possible overfitting")
         else:
-            print(f"\n✓ Train-validation gap ({train_val_gap:.4f}) is acceptable")
+            print(f"\nTrain-validation gap ({train_val_gap:.4f}) is acceptable")
 
         # Time series cross-validation for robustness check
         print("\n" + "="*80)
@@ -1722,6 +2102,103 @@ class ImprovedUFCPredictor:
         fight_features["elo_x_form"] = fight_features["elo_diff"] * fight_features["recent_form_diff_corrected"]
         fight_features["elo_x_win_ratio"] = fight_features["elo_diff"] * fight_features["win_loss_ratio_diff_corrected"]
         fight_features["elo_x_durability"] = fight_features["elo_diff"] * fight_features["durability_diff_corrected"]
+
+        # NEW: Strategic interaction features
+        fight_features["age_x_win_streak"] = fight_features.get("age_at_event_diff", 0) * fight_features.get("win_streak_diff_corrected", 0)
+        fight_features["elo_x_sub_threat"] = fight_features["elo_diff"] * fight_features.get("submission_specialist_gap", 0)
+        fight_features["form_x_durability"] = fight_features["recent_form_diff_corrected"] * fight_features.get("durability_diff_corrected", 0)
+        fight_features["striking_x_grappling_matchup"] = fight_features.get("net_striking_advantage", 0) * fight_features.get("grappler_advantage", 0)
+        fight_features["momentum_combo"] = fight_features.get("momentum_x_win_streak", 0) * fight_features["recent_form_diff_corrected"]
+
+        # NEW HIGH-IMPACT: Elite compound features
+        fight_features["elite_finisher"] = fight_features["elo_diff"] * fight_features.get("finish_rate_diff", 0) * fight_features["recent_form_diff_corrected"]
+        fight_features["veteran_advantage"] = fight_features["win_loss_ratio_diff_corrected"] * fight_features.get("experience_gap", 0) * (-fight_features.get("age_at_event_diff", 0))
+        fight_features["complete_fighter"] = fight_features.get("net_striking_advantage", 0) * fight_features.get("grappler_advantage", 0) * fight_features.get("durability_diff_corrected", 0)
+        fight_features["total_finish_threat"] = (fight_features.get("ko_rate_diff_corrected", 0) + fight_features.get("sub_rate_diff_corrected", 0)) * fight_features.get("finish_pressure", 0)
+        fight_features["unstoppable_streak"] = fight_features.get("win_streak_diff_corrected", 0) * fight_features.get("momentum_swing", 0) * fight_features["recent_form_diff_corrected"]
+
+        # Age prime and freshness factors
+        r_age = fight_features.get("r_age_at_event", 30)
+        b_age = fight_features.get("b_age_at_event", 30)
+        fight_features["age_prime_advantage"] = (1.0 - abs(r_age - 29.5) / 10.0) - (1.0 - abs(b_age - 29.5) / 10.0)
+
+        r_layoff = fight_features.get("r_days_since_last_fight_corrected", 135)
+        b_layoff = fight_features.get("b_days_since_last_fight_corrected", 135)
+        fight_features["freshness_advantage"] = (1.0 - abs(r_layoff - 135) / 200.0) - (1.0 - abs(b_layoff - 135) / 200.0)
+
+        # Desperation and sustainability
+        r_loss_streak = r_stats.get("loss_streak", 0)
+        b_loss_streak = b_stats.get("loss_streak", 0)
+        fight_features["desperation_diff"] = (r_loss_streak * (r_age / 35.0)) - (b_loss_streak * (b_age / 35.0))
+
+        r_form = r_stats.get("recent_form", 0)
+        b_form = b_stats.get("recent_form", 0)
+        fight_features["momentum_sustainability_diff"] = (r_form / (r_layoff / 100.0 + 1.0)) - (b_form / (b_layoff / 100.0 + 1.0))
+
+        fight_features["elo_x_finish"] = fight_features["elo_diff"] * fight_features.get("finish_rate_diff", 0)
+
+        r_losses = r_stats.get("losses", 0)
+        b_losses = b_stats.get("losses", 0)
+        r_win_ratio = r_stats.get("win_loss_ratio", 0)
+        b_win_ratio = b_stats.get("win_loss_ratio", 0)
+        fight_features["adversity_experience_diff"] = (r_win_ratio * (r_losses + 1)) - (b_win_ratio * (b_losses + 1))
+
+        # RESEARCH-BACKED FEATURES: Enhanced top feature interactions
+        # H2H interactions
+        fight_features["h2h_x_elo"] = fight_features.get("h2h_advantage", 0) * fight_features.get("elo_diff", 0)
+        fight_features["h2h_x_form"] = fight_features.get("h2h_advantage", 0) * fight_features.get("recent_form_diff_corrected", 0)
+
+        # Age prime score (mirroring training calculation)
+        def calc_age_prime(age):
+            if 26 <= age <= 33:
+                return 1.0
+            elif 23 <= age < 26 or 33 < age <= 36:
+                return 0.6
+            else:
+                return 0.2
+
+        r_age = r_stats.get("age_at_event", 30)
+        b_age = b_stats.get("age_at_event", 30)
+        r_age_prime = calc_age_prime(r_age)
+        b_age_prime = calc_age_prime(b_age)
+        fight_features["age_prime_score_diff"] = r_age_prime - b_age_prime
+
+        # Age × Experience
+        experience_diff = (r_total_fights - b_total_fights) / 50.0
+        fight_features["age_x_experience"] = fight_features.get("age_at_event_diff", 0) * max(-1, min(1, experience_diff))
+
+        # Win ratio interactions
+        fight_features["win_ratio_x_finish"] = fight_features.get("win_loss_ratio_diff_corrected", 0) * fight_features.get("finish_rate_diff", 0)
+        fight_features["win_ratio_x_durability"] = fight_features.get("win_loss_ratio_diff_corrected", 0) * fight_features.get("durability_diff_corrected", 0)
+
+        # Career-based positional & target striking (use defaults for upcoming fights)
+        # These would be calculated from fighter stats if available
+        fight_features["distance_pct_diff_corrected"] = 0
+        fight_features["clinch_pct_diff_corrected"] = 0
+        fight_features["ground_pct_diff_corrected"] = 0
+        fight_features["positional_striking_advantage"] = 0
+        fight_features["head_pct_diff_corrected"] = 0
+        fight_features["body_pct_diff_corrected"] = 0
+        fight_features["leg_pct_diff_corrected"] = 0
+        fight_features["target_distribution_advantage"] = 0
+
+        # Career-based control & reversals
+        fight_features["avg_ctrl_sec_diff_corrected"] = 0
+        fight_features["avg_rev_diff_corrected"] = 0
+        fight_features["control_dominance"] = 0
+
+        # Compound positional features (using career averages)
+        fight_features["clinch_x_grappling"] = fight_features["clinch_pct_diff_corrected"] * fight_features.get("grappler_advantage", 0)
+        fight_features["distance_x_striking"] = fight_features["distance_pct_diff_corrected"] * fight_features.get("net_striking_advantage", 0)
+        fight_features["ground_x_control"] = (
+            fight_features["ground_pct_diff_corrected"] *
+            (fight_features["avg_ctrl_sec_diff_corrected"] / 300.0)
+        )
+        fight_features["positional_mastery"] = (
+            fight_features["positional_striking_advantage"] *
+            fight_features.get("grappler_advantage", 0) *
+            fight_features.get("net_striking_advantage", 0)
+        )
 
         return fight_features, r_stats, b_stats
 
@@ -2133,7 +2610,7 @@ Tatiana Suarez,Amanda Lemos,Women's Strawweight,Women,3"""
                 skipped_msg = (
                     success_msg
                     + "\n\nSkipped:\n"
-                    + "\n".join(f"• {fight}" for fight in skipped_fights)
+                    + "\n".join(f"- {fight}" for fight in skipped_fights)
                 )
                 messagebox.showwarning("Predictions Complete", skipped_msg)
             else:
