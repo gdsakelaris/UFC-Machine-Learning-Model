@@ -1616,8 +1616,8 @@ class ImprovedUFCPredictor:
         print(f"  Features for 100% cumulative: {len(cumulative_100)}")
         print(f"  Selected (union): {len(selected_features)}")
 
-        print("\nTop 40 Most Important Features (Ranked):")
-        print(selected_features.head(40)[['feature', 'importance']].to_string(index=False))
+        print(f"\nTop {len(selected_features)} Most Important Features (Ranked):")
+        print(selected_features[['feature', 'importance']].to_string(index=False))
 
         top_features = selected_features['feature'].tolist()
 
