@@ -557,10 +557,8 @@ class ImprovedUFCPredictor:
             if "_diff" in col or "_advantage" in col or "_gap" in col:
                 df_swapped[col] = -df[col]
 
-        # Swap ELO probabilities if they exist
-        if 'r_prob_pre_fight' in df.columns and 'b_prob_pre_fight' in df.columns:
-            df_swapped['r_prob_pre_fight'], df_swapped['b_prob_pre_fight'] = \
-                df['b_prob_pre_fight'].copy(), df['r_prob_pre_fight'].copy()
+        # Note: r_prob_pre_fight and b_prob_pre_fight are already swapped by the r_/b_ swap loop above
+        # No need to swap them again (that would double-swap them back to original)
 
         print(f"Corner swapping complete. Created {len(df_swapped)} augmented fights.")
         return df_swapped
