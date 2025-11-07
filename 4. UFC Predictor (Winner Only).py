@@ -1509,7 +1509,9 @@ class ImprovedUFCPredictor:
 
             return np.mean(cv_scores)
 
-        study = optuna.create_study(direction='maximize')
+        # Create study with seeded sampler for deterministic results
+        sampler = optuna.samplers.TPESampler(seed=42)
+        study = optuna.create_study(direction='maximize', sampler=sampler)
         study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
 
         print(f"\nBest CV Score: {study.best_value:.4f}")
