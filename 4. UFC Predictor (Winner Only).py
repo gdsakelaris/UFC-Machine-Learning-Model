@@ -1691,7 +1691,7 @@ class ImprovedUFCPredictor:
         X_train_val = pd.concat([X_train, X_val])
         y_train_val = pd.concat([y_train, y_val])
 
-        selected_features = self.select_features_by_importance(X_train_val, y_train_val, max_features=55)
+        selected_features = self.select_features_by_importance(X_train_val, y_train_val, max_features=60) ### Best
 
         # Update datasets with selected features only
         X_train = X_train[selected_features]
