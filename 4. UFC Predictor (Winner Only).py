@@ -103,6 +103,8 @@ class ImprovedUFCPredictor:
         self.best_params = None
         self.calibrated_model = None
         self.feature_columns = None  # Store feature columns for predictions
+        self.fighter_elos = {}  # Store fighter ELO ratings
+        self.elo_history = {}  # Store ELO history for predictions
 
         # Set random seeds
         self.set_random_seeds()
@@ -118,6 +120,11 @@ class ImprovedUFCPredictor:
     def get_core_feature_names(self):
         """Define the 50-60 core features for the model"""
         return [
+            # TIER 0: ELO Features (3 features) - MOST IMPORTANT
+            "elo_diff",
+            "r_elo_pre_fight",
+            "b_elo_pre_fight",
+
             # TIER 1: Core Performance (15 features)
             "recent_form_diff_corrected",
             "win_streak_diff_corrected",
@@ -217,6 +224,281 @@ class ImprovedUFCPredictor:
         else:
             return 0.85
 
+    # ===== ELO RATING SYSTEM (COPIED FROM UFC ELO SYSTEM) =====
+
+    def elo_expected_score(self, fighter_elo, opponent_elo):
+        """
+        Calculate expected score using ELO formula
+        Returns probability of winning (0-1)
+        """
+        return 1 / (1 + 10 ** ((opponent_elo - fighter_elo) / 400))
+
+    def elo_calculate_k_factor(self, row, winner_fighter, fighter_result, fighter_elos, elo_history):
+        """
+        Calculate dynamic K-factor based on fight circumstances
+
+        K-factor determines how much ELO changes after a fight.
+        Higher K-factor means more volatile ratings.
+        """
+        k_base = 32  # Standard K-factor for a win
+        k = k_base
+
+        # 1. CHAMPIONSHIP BOUT WEIGHT (title fights matter more)
+        is_title = row.get('is_title_bout', 0) == 1
+        if is_title:
+            k *= 2.0
+            if fighter_result == 'Win':
+                k *= 1.5  # Winning title fights is even more valuable
+
+        # 2. RECENCY WEIGHT (more recent fights are weighted higher)
+        # Calculate days since fight
+        if 'event_date' in row.index and pd.notna(row['event_date']):
+            from datetime import datetime
+            event_date = pd.to_datetime(row['event_date'])
+            days_ago = (datetime.now() - event_date).days
+            # Apply exponential decay: fights in last year = 100%, 2 years ago = 75%, etc.
+            recency_multiplier = np.exp(-days_ago / 365 / 2)  # Half-life of 2 years
+            if recency_multiplier < 0.5:  # Cap at 50% for very old fights
+                recency_multiplier = 0.5
+            k *= recency_multiplier
+
+        # 3. DOMINANCE BONUS (finishing early matters more)
+        if 'finish_round' in row.index and pd.notna(row['finish_round']):
+            round_finished = row['finish_round']
+            if round_finished <= 1:
+                k *= 1.5  # First round finish
+            elif round_finished == 2:
+                k *= 1.3  # Second round finish
+            elif round_finished == 3:
+                k *= 1.2  # Third round finish
+
+        # 4. OPPONENT STRENGTH ADJUSTMENT
+        opponent = row['b_fighter'] if row['r_fighter'] == winner_fighter else row['r_fighter']
+        fighter_elo = fighter_elos.get(winner_fighter, 1500)
+
+        if opponent in fighter_elos:
+            opponent_elo = fighter_elos[opponent]
+
+            # Bonus for beating above-average opponents
+            if opponent_elo > 1500:
+                if opponent_elo > 1600:
+                    k *= 1.2
+                if opponent_elo > 1700:
+                    k *= 1.2
+
+            # Upset bonuses/penalties
+            elo_diff = fighter_elo - opponent_elo
+            if fighter_result == 'Win' and elo_diff < -100:
+                # Upset bonus: beating much higher rated opponent
+                upset_factor = abs(elo_diff) / 100 * 0.1
+                k *= (1 + upset_factor)
+            elif fighter_result == 'Loss' and elo_diff > 100:
+                # Upset penalty: losing to much lower rated opponent
+                upset_penalty = elo_diff / 100 * 0.15
+                k *= (1 + upset_penalty)
+
+        # 5. WIN/LOSS STREAK MULTIPLIER
+        fighter_streak = self.elo_get_recent_streak(winner_fighter, elo_history)
+        if fighter_streak >= 3:  # Win streak
+            k *= 1.15
+        elif fighter_streak <= -3:  # Loss streak
+            k *= 1.25
+
+        # 6. METHOD OF VICTORY BONUS
+        if fighter_result == 'Win' and 'method' in row.index and pd.notna(row['method']):
+            method = str(row['method']).upper()
+            if 'KO' in method or 'TKO' in method:
+                k *= 1.1  # Finishing via KO is more impressive
+            elif 'SUBMISSION' in method:
+                k *= 1.05  # Submissions are also dominant
+
+        return k
+
+    def elo_get_recent_streak(self, fighter, elo_history):
+        """Get fighter's recent win/loss streak from ELO history"""
+        if fighter not in elo_history or len(elo_history[fighter]) == 0:
+            return 0
+
+        # Look at last 5 results
+        history = elo_history[fighter][-5:]
+
+        if len(history) == 0:
+            return 0
+
+        streak = 0
+        for entry in reversed(history):
+            result = entry.get('result', None)
+            if result == 'Win':
+                streak = (streak if streak > 0 else 0) + 1
+            elif result == 'Loss':
+                streak = (streak if streak < 0 else 0) - 1
+            else:
+                streak = 0
+
+        return streak
+
+    def elo_update_ratings(self, r_fighter, b_fighter, winner, k_factor, fighter_elos, elo_history, fight_date):
+        """
+        Update ELO ratings for both fighters after a fight
+
+        Args:
+            r_fighter: Red corner fighter name
+            b_fighter: Blue corner fighter name
+            winner: 'Red', 'Blue', or 'Draw'
+            k_factor: K-factor for this fight
+            fighter_elos: Dict of current ELO ratings
+            elo_history: Dict of fighter history
+            fight_date: Date of the fight
+        """
+        # Get current ELOs
+        r_elo = fighter_elos.get(r_fighter, 1500)
+        b_elo = fighter_elos.get(b_fighter, 1500)
+
+        # Calculate expected scores
+        r_expected = self.elo_expected_score(r_elo, b_elo)
+        b_expected = self.elo_expected_score(b_elo, r_elo)
+
+        # Determine actual scores based on winner
+        if winner == 'Red':
+            r_actual = 1.0
+            b_actual = 0.0
+            r_result = 'Win'
+            b_result = 'Loss'
+        elif winner == 'Blue':
+            r_actual = 0.0
+            b_actual = 1.0
+            r_result = 'Loss'
+            b_result = 'Win'
+        elif winner == 'Draw':
+            r_actual = 0.5
+            b_actual = 0.5
+            r_result = 'Draw'
+            b_result = 'Draw'
+            k_factor *= 0.5  # Draws have less impact
+        else:
+            # No Contest or invalid
+            return
+
+        # Calculate ELO changes
+        r_change = k_factor * (r_actual - r_expected)
+        b_change = k_factor * (b_actual - b_expected)
+
+        # Update ELO ratings
+        fighter_elos[r_fighter] = r_elo + r_change
+        fighter_elos[b_fighter] = b_elo + b_change
+
+        # Record in history
+        if r_fighter not in elo_history:
+            elo_history[r_fighter] = []
+        if b_fighter not in elo_history:
+            elo_history[b_fighter] = []
+
+        elo_history[r_fighter].append({
+            'date': fight_date,
+            'elo': fighter_elos[r_fighter],
+            'result': r_result
+        })
+        elo_history[b_fighter].append({
+            'date': fight_date,
+            'elo': fighter_elos[b_fighter],
+            'result': b_result
+        })
+
+    def calculate_elo_ratings(self, df):
+        """
+        Calculate ELO ratings for all fighters chronologically
+        This ensures no data leakage - each fight uses pre-fight ELO ratings
+
+        Returns:
+            df: DataFrame with ELO columns added (r_elo_pre_fight, b_elo_pre_fight, elo_diff)
+        """
+        print("\n" + "="*80)
+        print("CALCULATING ELO RATINGS (CHRONOLOGICAL - NO DATA LEAKAGE)")
+        print("="*80 + "\n")
+
+        # Initialize ELO system
+        initial_elo = 1500
+        fighter_elos = {}
+        elo_history = {}
+
+        # Sort by date to process chronologically
+        df = df.sort_values('event_date').reset_index(drop=True)
+
+        # Initialize ELO columns
+        df['r_elo_pre_fight'] = 0.0
+        df['b_elo_pre_fight'] = 0.0
+        df['elo_diff'] = 0.0
+        df['r_prob_pre_fight'] = 0.0
+        df['b_prob_pre_fight'] = 0.0
+
+        for idx, row in df.iterrows():
+            if idx % 500 == 0:
+                print(f"   Processing fight {idx}/{len(df)} for ELO...")
+
+            r_fighter = row['r_fighter']
+            b_fighter = row['b_fighter']
+
+            # Initialize fighters if not seen before
+            if r_fighter not in fighter_elos:
+                fighter_elos[r_fighter] = initial_elo
+                elo_history[r_fighter] = []
+            if b_fighter not in fighter_elos:
+                fighter_elos[b_fighter] = initial_elo
+                elo_history[b_fighter] = []
+
+            # CRITICAL: Capture PRE-FIGHT ELO ratings (before this fight is processed)
+            r_elo_pre = fighter_elos[r_fighter]
+            b_elo_pre = fighter_elos[b_fighter]
+
+            # Calculate pre-fight probabilities
+            r_prob = self.elo_expected_score(r_elo_pre, b_elo_pre)
+            b_prob = self.elo_expected_score(b_elo_pre, r_elo_pre)
+
+            # Store pre-fight ELO ratings and probabilities
+            df.at[idx, 'r_elo_pre_fight'] = r_elo_pre
+            df.at[idx, 'b_elo_pre_fight'] = b_elo_pre
+            df.at[idx, 'elo_diff'] = r_elo_pre - b_elo_pre
+            df.at[idx, 'r_prob_pre_fight'] = r_prob
+            df.at[idx, 'b_prob_pre_fight'] = b_prob
+
+            # Now update ELO ratings based on fight result
+            winner = row.get('winner')
+
+            if pd.notna(winner) and winner in ['Red', 'Blue', 'Draw']:
+                # Determine who won for K-factor calculation
+                if winner == 'Red':
+                    winner_fighter = r_fighter
+                    fighter_result = 'Win'
+                elif winner == 'Blue':
+                    winner_fighter = b_fighter
+                    fighter_result = 'Win'
+                else:
+                    winner_fighter = r_fighter
+                    fighter_result = 'Draw'
+
+                # Calculate K-factor
+                k_factor = self.elo_calculate_k_factor(
+                    row, winner_fighter, fighter_result, fighter_elos, elo_history
+                )
+
+                # Update ELO ratings (this modifies fighter_elos for future fights)
+                self.elo_update_ratings(
+                    r_fighter, b_fighter, winner, k_factor,
+                    fighter_elos, elo_history, row['event_date']
+                )
+
+        print("\nELO calculation complete!")
+        print(f"   Processed {len(df)} fights")
+        print(f"   Tracked {len(fighter_elos)} unique fighters")
+        print(f"   Average ELO: {np.mean(list(fighter_elos.values())):.1f}")
+        print(f"   ELO Range: {min(fighter_elos.values()):.1f} - {max(fighter_elos.values()):.1f}")
+
+        # Store fighter ELOs for prediction use
+        self.fighter_elos = fighter_elos
+        self.elo_history = elo_history
+
+        return df
+
     # ===== DATA AUGMENTATION: REDUCED FROM 90% TO 35% =====
 
     def augment_data_conservatively(self, df):
@@ -274,6 +556,11 @@ class ImprovedUFCPredictor:
         for col in df.columns:
             if "_diff" in col or "_advantage" in col or "_gap" in col:
                 df_swapped[col] = -df[col]
+
+        # Swap ELO probabilities if they exist
+        if 'r_prob_pre_fight' in df.columns and 'b_prob_pre_fight' in df.columns:
+            df_swapped['r_prob_pre_fight'], df_swapped['b_prob_pre_fight'] = \
+                df['b_prob_pre_fight'].copy(), df['r_prob_pre_fight'].copy()
 
         print(f"Corner swapping complete. Created {len(df_swapped)} augmented fights.")
         return df_swapped
@@ -570,6 +857,10 @@ class ImprovedUFCPredictor:
                     fighter_stats[fighter]["fight_time_minutes"] += fight_time
 
         print("Data leakage fixed successfully!\n")
+
+        # Calculate ELO ratings chronologically (no data leakage)
+        df = self.calculate_elo_ratings(df)
+
         return df
 
     def prepare_core_features(self, df):
@@ -1157,6 +1448,20 @@ class ImprovedUFCPredictor:
         fight_features["form_consistency_diff"] = 0
         fight_features["h2h_advantage"] = 0
         fight_features["last_5_wins_diff_corrected"] = 0
+
+        # Add ELO features
+        if hasattr(self, 'fighter_elos'):
+            r_elo = self.fighter_elos.get(fight["red_fighter"], 1500)
+            b_elo = self.fighter_elos.get(fight["blue_fighter"], 1500)
+
+            fight_features["r_elo_pre_fight"] = r_elo
+            fight_features["b_elo_pre_fight"] = b_elo
+            fight_features["elo_diff"] = r_elo - b_elo
+        else:
+            # Default ELO if not available
+            fight_features["r_elo_pre_fight"] = 1500
+            fight_features["b_elo_pre_fight"] = 1500
+            fight_features["elo_diff"] = 0
 
         return fight_features, r_stats, b_stats
 
