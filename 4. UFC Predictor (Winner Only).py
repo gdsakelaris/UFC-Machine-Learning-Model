@@ -1654,12 +1654,12 @@ class UFCPredictorGUI:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("UFC Fight Predictor - Improved Model")
+        self.root.title("UFC Fight Predictor - Winner Only")
         self.root.geometry("1000x800")
         self.root.minsize(700, 550)
 
         self.data_file_path = tk.StringVar(value=fight_data_path)
-        self.output_file_path = tk.StringVar(value="UFC_predictions_improved.xlsx")
+        self.output_file_path = tk.StringVar(value="UFC_predictions_winners.xlsx")
         self.predictor = None
         self.create_widgets()
 
@@ -1669,7 +1669,7 @@ class UFCPredictorGUI:
         title_frame.pack(fill=tk.X)
         tk.Label(
             title_frame,
-            text="UFC FIGHT PREDICTOR - IMPROVED MODEL",
+            text="UFC FIGHT PREDICTOR - WINNER ONLY",
             font=("Arial", 16, "bold"),
             fg="white",
             bg="#D20A0A",
@@ -1736,7 +1736,7 @@ Tatiana Suarez,Amanda Lemos,Women's Strawweight,Women,3"""
         ).pack(side=tk.RIGHT, padx=3)
 
         # Status bar
-        self.status_var = tk.StringVar(value="Ready - Improved Model with 73-77% Accuracy")
+        self.status_var = tk.StringVar(value="Ready")
         status_bar = ttk.Label(
             self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W
         )
@@ -1805,9 +1805,9 @@ Tatiana Suarez,Amanda Lemos,Women's Strawweight,Women,3"""
         return fights
 
     def run_predictions(self):
-        """Run predictions with improved model"""
+        """Run predictions with model"""
         try:
-            self.status_var.set("Loading data and training improved model...")
+            self.status_var.set("Loading data and training model...")
             self.root.update()
 
             fights_text = self.fights_text.get("1.0", tk.END)
@@ -1819,7 +1819,7 @@ Tatiana Suarez,Amanda Lemos,Women's Strawweight,Women,3"""
 
             df = pd.read_csv(data_file)
             self.status_var.set(
-                f"Loaded {len(df)} fights. Training improved model..."
+                f"Loaded {len(df)} fights. Training..."
             )
             self.root.update()
 
@@ -1828,14 +1828,14 @@ Tatiana Suarez,Amanda Lemos,Women's Strawweight,Women,3"""
 
             # Train models (output goes to console, not GUI)
             print("\n" + "="*80)
-            print("TRAINING IMPROVED UFC PREDICTOR")
+            print("TRAINING UFC PREDICTOR")
             print("="*80 + "\n")
 
             df = self.predictor.fix_data_leakage(df)
             self.predictor.df_train = df
             feature_columns = self.predictor.train(df)
 
-            self.status_var.set("Generating predictions with improved model...")
+            self.status_var.set("Generating predictions...")
             self.root.update()
 
             # Generate predictions
@@ -1861,11 +1861,7 @@ Tatiana Suarez,Amanda Lemos,Women's Strawweight,Women,3"""
             cleanup_temp_files()
 
             # Success message
-            success_msg = f"Predictions generated with Improved Model!\n\nSaved to: {output_file}\n\n{len(predictions)} fight(s) predicted"
-            success_msg += "\n\n✓ 73-77% Expected Accuracy"
-            success_msg += "\n✓ Calibrated Probabilities"
-            success_msg += "\n✓ Confidence Levels Included"
-            success_msg += "\n✓ Betting Recommendations"
+            success_msg = f"Predictions generated!\n\nSaved to: {output_file}\n\n{len(predictions)} fight(s) predicted"
 
             if skipped_fights:
                 success_msg += f"\n\n{len(skipped_fights)} fight(s) skipped"
