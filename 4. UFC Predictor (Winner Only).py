@@ -10,10 +10,10 @@ from contextlib import redirect_stdout
 from sklearn.model_selection import train_test_split, TimeSeriesSplit, StratifiedKFold
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.feature_selection import SelectPercentile, f_classif
-from sklearn.metrics import log_loss, accuracy_score
+from sklearn.metrics import log_loss, accuracy_score, roc_auc_score, classification_report
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
-from sklearn.inspection import permutation_importance
+# permutation_importance removed - using model built-in importance instead
 from scipy.stats import linregress
 import warnings
 import shutil
@@ -187,6 +187,34 @@ class ImprovedUFCPredictor:
             "ko_specialist_gap",
             "submission_specialist_gap",
             "skill_momentum",
+
+            # Interaction features (combining key metrics)
+            "elo_x_form",
+            "reach_x_striking",
+            "experience_x_age",
+
+            # Advanced interaction features (data-driven from importance analysis)
+            "age_x_striking",
+            "age_x_grappling",
+            "age_x_durability",
+            "td_x_defense",
+            "grappling_x_experience",
+            "striking_x_accuracy",
+            "striking_x_defense",
+            "form_x_experience",
+            "finish_x_momentum",
+            "height_x_reach",
+            "physical_x_striking",
+
+            # Elite interaction features (based on top 20 analysis)
+            "elo_x_win_ratio",
+            "win_ratio_x_form",
+            "durability_x_striking",
+            "elo_x_durability",
+            "submission_x_grappling",
+            "ko_power_x_striking",
+            "momentum_x_win_streak",
+            "streak_differential",
         ]
 
     def calculate_streak(self, recent_wins, count_wins=True):
@@ -240,7 +268,7 @@ class ImprovedUFCPredictor:
         K-factor determines how much ELO changes after a fight.
         Higher K-factor means more volatile ratings.
         """
-        k_base = 32  # Standard K-factor for a win
+        k_base = 40  # Increased K-factor for wider ELO spread and better differentiation
         k = k_base
 
         # 1. CHAMPIONSHIP BOUT WEIGHT (title fights matter more)
@@ -504,10 +532,10 @@ class ImprovedUFCPredictor:
     def augment_data_conservatively(self, df):
         """
         Conservative data augmentation to eliminate bias without overfitting
-        Reduced from 90% to 35% augmentation
+        Using 35% augmentation (same as Model 5) for optimal generalization
         """
         print("\n" + "="*80)
-        print("CONSERVATIVE DATA AUGMENTATION (35% vs previous 90%)")
+        print("AGGRESSIVE DATA AUGMENTATION (80% augmentation)")
         print("="*80)
 
         red_bias = (df["winner"] == "Red").mean()
@@ -520,15 +548,15 @@ class ImprovedUFCPredictor:
             # Create augmented dataset by swapping corners
             df_augmented = self.swap_corners(df)
 
-            # CONSERVATIVE: Only 35% augmentation (vs 90% before)
-            sample_size = int(len(df_augmented) * 0.35)
+            # AGGRESSIVE: 80% augmentation to eliminate corner bias completely
+            sample_size = int(len(df_augmented) * 0.80)
             df_augmented_sampled = df_augmented.sample(n=sample_size, random_state=42)
 
             # Combine original and augmented data
             df_combined = pd.concat([df, df_augmented_sampled], ignore_index=True)
 
             new_red_bias = (df_combined["winner"] == "Red").mean()
-            print(f"After augmentation: {len(df)} → {len(df_combined)} fights (1.35x)")
+            print(f"After augmentation: {len(df)} → {len(df_combined)} fights (1.80x)")
             print(f"New Red corner win rate: {new_red_bias:.3f}")
 
             return df_combined
@@ -556,6 +584,24 @@ class ImprovedUFCPredictor:
         for col in df.columns:
             if "_diff" in col or "_advantage" in col or "_gap" in col:
                 df_swapped[col] = -df[col]
+
+        # Negate interaction features (they're products of differentials, so they're also differentials)
+        interaction_features = [
+            "elo_x_form", "reach_x_striking", "experience_x_age",
+            "age_x_striking", "age_x_grappling", "age_x_durability",
+            "td_x_defense", "grappling_x_experience",
+            "striking_x_accuracy", "striking_x_defense",
+            "form_x_experience", "finish_x_momentum",
+            "height_x_reach", "physical_x_striking",
+            # Elite interaction features
+            "elo_x_win_ratio", "win_ratio_x_form",
+            "durability_x_striking", "elo_x_durability",
+            "submission_x_grappling", "ko_power_x_striking",
+            "momentum_x_win_streak", "streak_differential"
+        ]
+        for col in interaction_features:
+            if col in df_swapped.columns:
+                df_swapped[col] = -df_swapped[col]
 
         # Note: r_prob_pre_fight and b_prob_pre_fight are already swapped by the r_/b_ swap loop above
         # No need to swap them again (that would double-swap them back to original)
@@ -959,6 +1005,52 @@ class ImprovedUFCPredictor:
         df["submission_specialist_gap"] = (df["r_sub_rate_corrected"] * df["r_pro_sub_avg_corrected"]) - (df["b_sub_rate_corrected"] * df["b_pro_sub_avg_corrected"])
         df["skill_momentum"] = df["pro_SLpM_diff_corrected"] * df["recent_form_diff_corrected"]
 
+        # Interaction features (combining key metrics for better prediction)
+        df["elo_x_form"] = df["elo_diff"] * df["recent_form_diff_corrected"]
+        df["reach_x_striking"] = df["reach_diff"] * df["pro_SLpM_diff_corrected"]
+        df["experience_x_age"] = df["experience_gap"] * df["age_at_event_diff"]
+
+        # NEW: Advanced interaction features based on permutation importance analysis
+        # Age-based interactions (age is #1 most important feature)
+        df["age_x_striking"] = df["age_at_event_diff"] * df["pro_SLpM_diff_corrected"]
+        df["age_x_grappling"] = df["age_at_event_diff"] * df["pro_td_avg_diff_corrected"]
+        df["age_x_durability"] = df["age_at_event_diff"] * df["durability_diff_corrected"]
+
+        # Grappling combinations (TD avg is #2 most important)
+        df["td_x_defense"] = df["pro_td_avg_diff_corrected"] * df["pro_td_def_diff_corrected"]
+        df["grappling_x_experience"] = df["grappler_advantage"] * df["experience_gap"]
+
+        # Striking combinations (net striking is #3 most important)
+        df["striking_x_accuracy"] = df["net_striking_advantage"] * df["pro_sig_str_acc_diff_corrected"]
+        df["striking_x_defense"] = df["pro_SLpM_diff_corrected"] * df["pro_str_def_diff_corrected"]
+
+        # Momentum interactions (momentum swing is #8 most important)
+        df["form_x_experience"] = df["recent_form_diff_corrected"] * df["experience_gap"]
+        df["finish_x_momentum"] = df["finish_rate_diff"] * df["recent_form_diff_corrected"]
+
+        # Physical advantage combinations
+        df["height_x_reach"] = df["height_diff"] * df["reach_diff"]
+        df["physical_x_striking"] = (df["height_diff"] + df["reach_diff"]) * df["pro_SLpM_diff_corrected"]
+
+        # NEW: Elite interaction features based on top 20 importance analysis
+        # Win/loss ratio combinations (#1 most important)
+        df["elo_x_win_ratio"] = df["elo_diff"] * df["win_loss_ratio_diff_corrected"]
+        df["win_ratio_x_form"] = df["win_loss_ratio_diff_corrected"] * df["recent_form_diff_corrected"]
+
+        # Durability combinations (#6 most important)
+        df["durability_x_striking"] = df["durability_diff_corrected"] * df["net_striking_advantage"]
+        df["elo_x_durability"] = df["elo_diff"] * df["durability_diff_corrected"]
+
+        # Submission specialist (#4) combinations
+        df["submission_x_grappling"] = df["submission_specialist_gap"] * df["grappler_advantage"]
+
+        # KO power (#9) combinations
+        df["ko_power_x_striking"] = df["ko_rate_diff_corrected"] * df["net_striking_advantage"]
+
+        # Momentum/streak combinations (#7 momentum_swing, #12 loss_streak, #14 win_streak)
+        df["momentum_x_win_streak"] = df["momentum_swing"] * df["win_streak_diff_corrected"]
+        df["streak_differential"] = df["win_streak_diff_corrected"] * df["loss_streak_diff_corrected"]
+
         # Opponent quality (simplified)
         df["r_opponent_quality"] = 0.5
         df["b_opponent_quality"] = 0.5
@@ -1008,13 +1100,13 @@ class ImprovedUFCPredictor:
         def objective(trial):
             params = {
                 'n_estimators': trial.suggest_int('n_estimators', 200, 1200),
-                'max_depth': trial.suggest_int('max_depth', 4, 12),
+                'max_depth': trial.suggest_int('max_depth', 4, 15),  # Expanded from 12 to 15
                 'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.05, log=True),
                 'subsample': trial.suggest_float('subsample', 0.7, 0.95),
                 'colsample_bytree': trial.suggest_float('colsample_bytree', 0.7, 0.95),
-                'reg_alpha': trial.suggest_float('reg_alpha', 0.0, 2.0),
-                'reg_lambda': trial.suggest_float('reg_lambda', 0.0, 2.0),
-                'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
+                'reg_alpha': trial.suggest_float('reg_alpha', 0.1, 2.0),
+                'reg_lambda': trial.suggest_float('reg_lambda', 0.5, 3.0),
+                'min_child_weight': trial.suggest_int('min_child_weight', 1, 15),  # Expanded from 10 to 15
                 'random_state': 42,
                 'n_jobs': -1,
             }
@@ -1050,48 +1142,107 @@ class ImprovedUFCPredictor:
     # ===== PERMUTATION IMPORTANCE FEATURE SELECTION =====
 
     def select_features_by_importance(self, X, y, max_features=55):
-        """Select top features using permutation importance"""
-        print(f"\n{'='*80}")
-        print(f"FEATURE SELECTION WITH PERMUTATION IMPORTANCE")
-        print(f"{'='*80}\n")
+        """
+        Robust feature selection using model-based importance with adaptive thresholding.
+        Automatically determines optimal feature count based on importance distribution.
+        """
+        print("\n" + "="*80)
+        print("INTELLIGENT FEATURE SELECTION")
+        print("="*80 + "\n")
 
-        # Train baseline model
+        # Remove constant or near-constant features first (variance threshold)
+        print("Step 1: Removing low-variance features...")
+        variances = X.var()
+        variance_threshold = variances.quantile(0.01)  # Remove bottom 1%
+        high_variance_features = variances[variances > variance_threshold].index.tolist()
+        X_filtered = X[high_variance_features]
+        print(f"  Kept {len(high_variance_features)}/{len(X.columns)} features with sufficient variance")
+
+        # Train model on larger sample for more stable importance
         if HAS_XGBOOST:
-            model = XGBClassifier(n_estimators=300, max_depth=6, random_state=42, n_jobs=-1)
+            model = XGBClassifier(
+                n_estimators=400,
+                max_depth=8,
+                learning_rate=0.05,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                random_state=42,
+                n_jobs=-1
+            )
         else:
-            model = RandomForestClassifier(n_estimators=300, max_depth=15, random_state=42, n_jobs=-1)
+            model = RandomForestClassifier(n_estimators=400, max_depth=15, random_state=42, n_jobs=-1)
 
-        # Split for validation
-        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
-
-        model.fit(X_train, y_train)
-
-        # Calculate permutation importance
-        print("Calculating permutation importance (this may take a minute)...")
-        perm_importance = permutation_importance(
-            model, X_val, y_val, n_repeats=10, random_state=42, n_jobs=-1
+        # Use 40% for validation (more stable than 20%)
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_filtered, y, test_size=0.4, random_state=42, stratify=y
         )
 
-        # Get feature names
-        if hasattr(X, 'columns'):
-            feature_names = X.columns.tolist()
+        print("Step 2: Training model for importance calculation...")
+        model.fit(X_train, y_train)
+
+        # Use model's built-in feature importance (much more stable than permutation)
+        if HAS_XGBOOST:
+            importances = model.feature_importances_
         else:
-            feature_names = [f"feature_{i}" for i in range(X.shape[1])]
+            importances = model.feature_importances_
+
+        # Get feature names
+        feature_names = X_filtered.columns.tolist()
 
         # Create importance DataFrame
         importance_df = pd.DataFrame({
             'feature': feature_names,
-            'importance': perm_importance.importances_mean,
-            'std': perm_importance.importances_std
+            'importance': importances
         }).sort_values('importance', ascending=False)
 
-        print(f"\nTop 20 Most Important Features:")
-        print(importance_df.head(20).to_string(index=False))
+        print("\nStep 3: Analyzing importance distribution...")
 
-        # Select top features
-        top_features = importance_df.head(max_features)['feature'].tolist()
+        # Calculate statistics
+        mean_importance = importance_df['importance'].mean()
+        median_importance = importance_df['importance'].median()
 
-        print(f"\nSelected {len(top_features)} features (from {len(feature_names)})")
+        # Strategy: Use elbow method - find where importance drops sharply
+        importance_df['importance_ratio'] = importance_df['importance'] / importance_df['importance'].max()
+        importance_df['importance_change'] = importance_df['importance_ratio'].diff().abs()
+
+        # Find features above mean importance (natural threshold)
+        above_mean = importance_df[importance_df['importance'] > mean_importance]
+
+        # Also consider cumulative importance approach
+        total_importance = importance_df['importance'].sum()
+        importance_df['cumulative'] = importance_df['importance'].cumsum() / total_importance
+
+        # Select features that:
+        # 1. Are above mean importance OR
+        # 2. Are in top percentile by cumulative importance (100% = all features)
+        cumulative_100 = importance_df[importance_df['cumulative'] <= 1.00]
+
+        # Take union of both methods
+        selected_by_mean = set(above_mean['feature'].tolist())
+        selected_by_cumulative = set(cumulative_100['feature'].tolist())
+        selected_features_set = selected_by_mean.union(selected_by_cumulative)
+
+        # Filter importance_df to selected features
+        selected_features = importance_df[importance_df['feature'].isin(selected_features_set)]
+
+        # Apply soft cap if way too many features
+        if len(selected_features) > max_features:
+            print(f"  Too many features ({len(selected_features)}), applying soft cap...")
+            selected_features = selected_features.head(max_features)
+
+        print(f"\n  Mean importance: {mean_importance:.6f}")
+        print(f"  Median importance: {median_importance:.6f}")
+        print(f"  Features above mean: {len(above_mean)}")
+        print(f"  Features for 100% cumulative: {len(cumulative_100)}")
+        print(f"  Selected (union): {len(selected_features)}")
+
+        print("\nTop 50 Most Important Features (Ranked):")
+        print(selected_features.head(50)[['feature', 'importance']].to_string(index=False))
+
+        top_features = selected_features['feature'].tolist()
+
+        print(f"\nFinal Selection: {len(top_features)} features")
+        print(f"  Validation Accuracy: {model.score(X_val, y_val):.4f}")
 
         self.feature_importance = importance_df
         return top_features
@@ -1110,11 +1261,11 @@ class ImprovedUFCPredictor:
 
         print(f"\nTraining on {len(df)} fights")
 
+        # Prepare core features BEFORE augmentation so interaction features exist during swapping
+        df = self.prepare_core_features(df)
+
         # Conservative data augmentation (35% vs 90%)
         df = self.augment_data_conservatively(df)
-
-        # Prepare core features
-        df = self.prepare_core_features(df)
 
         # Get core feature names
         core_features = self.get_core_feature_names()
@@ -1156,11 +1307,22 @@ class ImprovedUFCPredictor:
         print(f"Validation set: {len(X_val)} fights")
         print(f"Test set: {len(X_test)} fights (HELD OUT)")
 
+        # Feature selection: Reduce to top 35 most important features
+        X_train_val = pd.concat([X_train, X_val])
+        y_train_val = pd.concat([y_train, y_val])
+
+        selected_features = self.select_features_by_importance(X_train_val, y_train_val, max_features=50)
+
+        # Update datasets with selected features only
+        X_train = X_train[selected_features]
+        X_val = X_val[selected_features]
+        X_test = X_test[selected_features]
+        X_train_val = X_train_val[selected_features]
+        available_features = selected_features  # Update for later use
+
         # Hyperparameter optimization on train+val
         if HAS_OPTUNA and HAS_XGBOOST:
-            X_train_val = pd.concat([X_train, X_val])
-            y_train_val = pd.concat([y_train, y_val])
-            self.best_params = self.optimize_hyperparameters(X_train_val, y_train_val, n_trials=50)
+            self.best_params = self.optimize_hyperparameters(X_train_val, y_train_val, n_trials=50) # 50 or 100
         else:
             self.best_params = {
                 'n_estimators': 600,
@@ -1172,22 +1334,68 @@ class ImprovedUFCPredictor:
                 'reg_lambda': 0.8,
             }
 
-        # Train final model with best params (NO class weights, augmentation already balanced)
+        # Train final model with ensemble diversity
         print("\n" + "="*80)
-        print("TRAINING FINAL MODEL")
+        print("TRAINING ENSEMBLE MODEL")
         print("="*80 + "\n")
 
-        if HAS_XGBOOST:
-            base_model = XGBClassifier(**self.best_params, random_state=42, n_jobs=-1)
+        if HAS_XGBOOST and self.use_ensemble:
+            # Calculate scale_pos_weight for class balancing
+            scale_weight = (y_train_val == 0).sum() / (y_train_val == 1).sum()
+            print(f"Applying class balancing: scale_pos_weight = {scale_weight:.3f}")
+
+            # Create diverse ensemble with XGBoost, RandomForest, and LogisticRegression
+            print("Creating ensemble with XGBoost, RandomForest, and LogisticRegression...")
+
+            xgb_model = XGBClassifier(
+                **self.best_params,
+                scale_pos_weight=scale_weight,
+                random_state=42,
+                n_jobs=-1
+            )
+
+            rf_model = RandomForestClassifier(
+                n_estimators=400,
+                max_depth=12,
+                min_samples_split=8,
+                random_state=42,
+                n_jobs=-1
+            )
+
+            lr_model = LogisticRegression(
+                C=0.1,
+                max_iter=1000,
+                random_state=42,
+                n_jobs=-1
+            )
+
+            base_model = VotingClassifier(
+                estimators=[
+                    ('xgb', xgb_model),
+                    ('rf', rf_model),
+                    ('lr', lr_model)
+                ],
+                voting='soft',
+                n_jobs=-1
+            )
+        elif HAS_XGBOOST:
+            # Single XGBoost model if ensemble disabled
+            scale_weight = (y_train_val == 0).sum() / (y_train_val == 1).sum()
+            print(f"Applying class balancing: scale_pos_weight = {scale_weight:.3f}")
+            base_model = XGBClassifier(
+                **self.best_params,
+                scale_pos_weight=scale_weight,
+                random_state=42,
+                n_jobs=-1
+            )
         else:
             base_model = RandomForestClassifier(
                 n_estimators=600, max_depth=15, min_samples_split=8,
                 random_state=42, n_jobs=-1
             )
 
-        # Train on train+val
-        X_train_val = pd.concat([X_train, X_val])
-        y_train_val = pd.concat([y_train, y_val])
+        # Train on train+val (already created with selected features)
+        print("Training ensemble model...")
         base_model.fit(X_train_val, y_train_val)
 
         # Calibrate probabilities
@@ -1209,13 +1417,25 @@ class ImprovedUFCPredictor:
         print("FINAL MODEL PERFORMANCE")
         print("="*80)
 
+        # Get predictions and probabilities
+        y_pred_test = self.winner_model.predict(X_test)
+        y_proba_test = self.winner_model.predict_proba(X_test)[:, 1]
+
+        # Calculate all metrics
         train_acc = self.winner_model.score(X_train, y_train)
         val_acc = self.winner_model.score(X_val, y_val)
-        test_acc = self.winner_model.score(X_test, y_test)
+        test_acc = accuracy_score(y_test, y_pred_test)
+        test_roc_auc = roc_auc_score(y_test, y_proba_test)
 
         print(f"\nTrain Accuracy:      {train_acc:.4f}")
         print(f"Validation Accuracy: {val_acc:.4f}")
         print(f"Test Accuracy:       {test_acc:.4f} *** HELD OUT ***")
+        print(f"\nROC-AUC Score:       {test_roc_auc:.4f} (probability separation)")
+
+        print("\nDetailed Metrics by Corner:")
+        print(classification_report(y_test, y_pred_test,
+                                   target_names=['Blue Corner', 'Red Corner'],
+                                   digits=4))
 
         # Check overfitting
         train_val_gap = train_acc - val_acc
@@ -1437,6 +1657,43 @@ class ImprovedUFCPredictor:
             fight_features["pro_SLpM_diff_corrected"] * fight_features["recent_form_diff_corrected"]
         )
 
+        # Interaction features (will be calculated after ELO is added)
+        fight_features["elo_x_form"] = 0  # Placeholder, calculated after ELO
+        fight_features["reach_x_striking"] = fight_features["reach_diff"] * fight_features["pro_SLpM_diff_corrected"]
+        fight_features["experience_x_age"] = fight_features["experience_gap"] * fight_features["age_at_event_diff"]
+
+        # Advanced interaction features (data-driven from importance analysis)
+        fight_features["age_x_striking"] = fight_features["age_at_event_diff"] * fight_features["pro_SLpM_diff_corrected"]
+        fight_features["age_x_grappling"] = fight_features["age_at_event_diff"] * fight_features["pro_td_avg_diff_corrected"]
+        fight_features["age_x_durability"] = fight_features["age_at_event_diff"] * fight_features["durability_diff_corrected"]
+        fight_features["td_x_defense"] = fight_features["pro_td_avg_diff_corrected"] * fight_features["pro_td_def_diff_corrected"]
+        fight_features["grappling_x_experience"] = fight_features["grappler_advantage"] * fight_features["experience_gap"]
+        fight_features["striking_x_accuracy"] = (
+            (r_stats.get("pro_SLpM", 0) - r_stats.get("pro_SApM", 0) - (b_stats.get("pro_SLpM", 0) - b_stats.get("pro_SApM", 0))) *
+            fight_features["pro_sig_str_acc_diff_corrected"]
+        )
+        fight_features["striking_x_defense"] = fight_features["pro_SLpM_diff_corrected"] * fight_features["pro_str_def_diff_corrected"]
+        fight_features["form_x_experience"] = fight_features["recent_form_diff_corrected"] * fight_features["experience_gap"]
+        fight_features["finish_x_momentum"] = fight_features["finish_rate_diff"] * fight_features["recent_form_diff_corrected"]
+        fight_features["height_x_reach"] = fight_features["height_diff"] * fight_features["reach_diff"]
+        fight_features["physical_x_striking"] = (fight_features["height_diff"] + fight_features["reach_diff"]) * fight_features["pro_SLpM_diff_corrected"]
+
+        # Elite interaction features (placeholders, some calculated after ELO)
+        fight_features["elo_x_win_ratio"] = 0  # Calculated after ELO
+        fight_features["win_ratio_x_form"] = fight_features["win_loss_ratio_diff_corrected"] * fight_features["recent_form_diff_corrected"]
+        fight_features["durability_x_striking"] = fight_features["durability_diff_corrected"] * (
+            (r_stats.get("pro_SLpM", 0) - r_stats.get("pro_SApM", 0)) -
+            (b_stats.get("pro_SLpM", 0) - b_stats.get("pro_SApM", 0))
+        )
+        fight_features["elo_x_durability"] = 0  # Calculated after ELO
+        fight_features["submission_x_grappling"] = fight_features["submission_specialist_gap"] * fight_features["grappler_advantage"]
+        fight_features["ko_power_x_striking"] = fight_features["ko_rate_diff_corrected"] * (
+            (r_stats.get("pro_SLpM", 0) - r_stats.get("pro_SApM", 0)) -
+            (b_stats.get("pro_SLpM", 0) - b_stats.get("pro_SApM", 0))
+        )
+        fight_features["momentum_x_win_streak"] = fight_features["momentum_swing"] * fight_features["win_streak_diff_corrected"]
+        fight_features["streak_differential"] = fight_features["win_streak_diff_corrected"] * fight_features["loss_streak_diff_corrected"]
+
         fight_features["opponent_quality_diff"] = 0
         fight_features["r_clutch_factor"] = r_stats.get("win_loss_ratio", 0) * r_stats.get("recent_form", 0)
         fight_features["b_clutch_factor"] = b_stats.get("win_loss_ratio", 0) * b_stats.get("recent_form", 0)
@@ -1460,6 +1717,11 @@ class ImprovedUFCPredictor:
             fight_features["r_elo_pre_fight"] = 1500
             fight_features["b_elo_pre_fight"] = 1500
             fight_features["elo_diff"] = 0
+
+        # Calculate elo_x_form and other ELO-dependent features now that ELO is available
+        fight_features["elo_x_form"] = fight_features["elo_diff"] * fight_features["recent_form_diff_corrected"]
+        fight_features["elo_x_win_ratio"] = fight_features["elo_diff"] * fight_features["win_loss_ratio_diff_corrected"]
+        fight_features["elo_x_durability"] = fight_features["elo_diff"] * fight_features["durability_diff_corrected"]
 
         return fight_features, r_stats, b_stats
 
@@ -1824,7 +2086,7 @@ Tatiana Suarez,Amanda Lemos,Women's Strawweight,Women,3"""
             self.root.update()
 
             # Create improved predictor
-            self.predictor = ImprovedUFCPredictor(use_ensemble=True, debug_mode=False)
+            self.predictor = ImprovedUFCPredictor(use_ensemble=False, debug_mode=False)
 
             # Train models (output goes to console, not GUI)
             print("\n" + "="*80)
