@@ -664,20 +664,34 @@ class ImprovedUFCPredictor:
             "elo_x_win_ratio", "win_ratio_x_form",
             "durability_x_striking", "elo_x_durability",
             "submission_x_grappling", "ko_power_x_striking",
-            "momentum_x_win_streak", "streak_differential",
+            "momentum_x_win_streak",
+            "streak_differential",
+            # NOTE: streak_differential is 2-factor product, but name has "_diff"
+            # Gets auto-negated (wrong!), so we manually negate to cancel it out (double-neg = correct)
             # NEW: Strategic interactions
             "age_x_win_streak", "elo_x_sub_threat",
             "form_x_durability", "striking_x_grappling_matchup",
+            # NEW HIGH-IMPACT: Compound interactions
+            # CRITICAL: ALL compound features need manual negation because they're stored values
+            # that don't auto-update when constituents are negated
+            "total_finish_threat", "elo_x_finish",
+            "elite_finisher", "complete_fighter", "unstoppable_streak",
             "momentum_combo",
-            # NEW HIGH-IMPACT: Compound interactions (products of differentials)
-            "elite_finisher", "complete_fighter",
-            "total_finish_threat", "unstoppable_streak", "elo_x_finish",
             # RESEARCH-BACKED: Positional compound interactions
             "clinch_x_grappling", "distance_x_striking", "ground_x_control",
             "positional_mastery", "control_dominance",
             # NEW: Enhanced top feature interactions
-            "h2h_x_elo", "h2h_x_form", "age_prime_score_diff",
-            "age_x_experience", "win_ratio_x_finish", "win_ratio_x_durability"
+            "h2h_x_elo", "h2h_x_form",
+            "age_x_experience", "win_ratio_x_finish", "win_ratio_x_durability",
+            # CRITICAL FIX: Core differentials without "_diff" suffix
+            "striking_efficiency", "defensive_striking", "grappling_control",
+            "momentum_swing", "power_vs_technique", "finish_pressure",
+            "offensive_output", "defensive_composite",
+            "upset_potential",
+            # CRITICAL FIX: 2-factor product interactions
+            "skill_momentum",
+            # CRITICAL FIX: Scalar × differential products (stored values don't auto-update)
+            "rounds_x_cardio", "rounds_x_finish_rate", "rounds_x_durability"
         ]
         for col in interaction_features:
             if col in df_swapped.columns:
@@ -1693,7 +1707,7 @@ class ImprovedUFCPredictor:
         X_train_val = pd.concat([X_train, X_val])
         y_train_val = pd.concat([y_train, y_val])
 
-        selected_features = self.select_features_by_importance(X_train_val, y_train_val, max_features=55)
+        selected_features = self.select_features_by_importance(X_train_val, y_train_val, max_features=55) ### <-- Number of features here
 
         # Update datasets with selected features only
         X_train = X_train[selected_features]
