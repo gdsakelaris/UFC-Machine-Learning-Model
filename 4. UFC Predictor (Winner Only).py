@@ -13,6 +13,8 @@ from sklearn.feature_selection import SelectPercentile, f_classif, RFECV
 from sklearn.metrics import log_loss, accuracy_score, roc_auc_score, classification_report
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 # permutation_importance removed - using model built-in importance instead
 from scipy.stats import linregress
 import warnings
@@ -2929,6 +2931,24 @@ class ImprovedUFCPredictor:
             )
             estimators.append(('rf', rf_model))
 
+            # Add Logistic Regression (linear model for algorithmic diversity)
+            # Wrap with StandardScaler since LogReg requires scaled features
+            logreg_model = LogisticRegression(
+                C=0.1,  # Regularization strength (inverse) - lower = stronger regularization
+                penalty='l2',  # Ridge regularization to prevent overfitting
+                solver='lbfgs',  # Efficient solver for L2 penalty
+                max_iter=1000,
+                class_weight={0: 1.0, 1: scale_weight},
+                random_state=42,
+                n_jobs=-1
+            )
+
+            logreg_pipeline = Pipeline([
+                ('scaler', StandardScaler()),  # Scale features for Logistic Regression
+                ('logreg', logreg_model)
+            ])
+            estimators.append(('logreg', logreg_pipeline))
+
             # ========== CHOOSE ENSEMBLE STRATEGY ==========
             # SPEED CONTROL: Set to False for faster training with VotingClassifier
             ENABLE_STACKING = False  # Stacking is slower but often more accurate
@@ -2942,6 +2962,8 @@ class ImprovedUFCPredictor:
                 # Stacking ensemble: Base models + meta-learner
                 # Meta-learner learns how to best combine base model predictions
                 meta_learner = LogisticRegression(
+                    C=1.0,              # Regularization strength (inverse) - lower = stronger regularization
+                    penalty='l2',       # Ridge regularization
                     max_iter=1000,
                     random_state=42,
                     n_jobs=-1,
