@@ -1623,7 +1623,7 @@ class ImprovedUFCPredictor:
                         if did_win:
                             fighter_stats[fighter]["vs_finisher_record"]["wins"] += 1
 
-        print("Data leakage fixed successfully!\n")
+        print("\nData leakage fixed successfully!\n")
 
         # Calculate ELO ratings chronologically (no data leakage)
         df = self.calculate_elo_ratings(df)
@@ -2531,10 +2531,24 @@ class ImprovedUFCPredictor:
         X_filtered = X[high_variance_features]
         print(f"Preprocessing: Kept {len(high_variance_features)}/{len(X.columns)} features with sufficient variance")
 
-        # Base estimator for RFECV
-        if HAS_XGBOOST:
+        # Base estimator for RFECV - Use LightGBM for faster feature selection
+        if HAS_LIGHTGBM:
+            # LightGBM is ~2-3x faster than XGBoost for feature selection
+            estimator = LGBMClassifier(
+                n_estimators=100,  # Reduced from 300 for speed (sufficient for feature ranking)
+                max_depth=7,
+                learning_rate=0.05,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                reg_alpha=1.0,
+                reg_lambda=1.0,
+                random_state=42,
+                n_jobs=-1,
+                verbose=-1
+            )
+        elif HAS_XGBOOST:
             estimator = XGBClassifier(
-                n_estimators=300,
+                n_estimators=100,  # Reduced from 300 for speed
                 max_depth=7,
                 learning_rate=0.05,
                 subsample=0.8,
@@ -2546,16 +2560,16 @@ class ImprovedUFCPredictor:
             )
         else:
             estimator = RandomForestClassifier(
-                n_estimators=300,
+                n_estimators=100,  # Reduced from 300 for speed
                 max_depth=12,
                 random_state=42,
                 n_jobs=-1
             )
 
         # RFECV with TimeSeriesSplit
-        min_features = 204  # Minimum features to test
+        min_features = 60  # Minimum features to test
         n_features = len(high_variance_features)  # Test all high-variance features
-        step = 1
+        step = 5  # Increased from 1 to 5 for 5x speedup (removes 5 features at a time)
 
         print(f"\nRunning RFECV (testing {min_features}-{n_features} features with 3-fold CV)...")
 
@@ -2575,9 +2589,9 @@ class ImprovedUFCPredictor:
 
         # Calculate estimated iterations (for user info)
         total_iterations = (n_features - min_features) // step + 1
-        estimated_time = total_iterations * 3 * 0.4  # ~0.4 sec per fold per feature subset
+        estimated_time = total_iterations * 3 * 0.15  # ~0.15 sec per fold (LightGBM + fewer trees)
         print(f"Estimated iterations: {total_iterations} feature subsets × 3 folds = {total_iterations * 3} model fits")
-        print(f"Estimated time: ~{estimated_time/60:.1f} minutes\n")
+        print(f"Estimated time: ~{estimated_time/60:.1f} minutes (optimized with LightGBM + step={step})\n")
 
         # Start timer
         start_time = time.time()
@@ -2730,22 +2744,16 @@ class ImprovedUFCPredictor:
         # RFECV will find optimal number of features automatically via cross-validation
         selected_features = self.select_features_by_importance(X_train, y_train)
 
-        # DEBUG: Check for issues before filtering
-        print(f"\nDEBUG - Before filtering:")
-        print(f"  len(selected_features): {len(selected_features)}")
-        print(f"  len(set(selected_features)): {len(set(selected_features))}")  # Check for duplicates
-        print(f"  X_train.shape: {X_train.shape}")
-
         # Check if all selected features exist in X_train
         missing_features = [f for f in selected_features if f not in X_train.columns]
         if missing_features:
-            print(f"  WARNING: {len(missing_features)} selected features not in X_train!")
+            print(f"\n⚠️ WARNING: {len(missing_features)} selected features not in X_train!")
             print(f"  Missing: {missing_features[:5]}")
 
         # Check for duplicate columns in X_train
         duplicate_cols = X_train.columns[X_train.columns.duplicated()].tolist()
         if duplicate_cols:
-            print(f"  WARNING: X_train has {len(duplicate_cols)} duplicate column names!")
+            print(f"\n⚠️ WARNING: X_train has {len(duplicate_cols)} duplicate column names!")
             print(f"  Duplicates: {duplicate_cols}")
 
         # CRITICAL FIX: Remove duplicate columns from ALL dataframes FIRST
@@ -2754,22 +2762,11 @@ class ImprovedUFCPredictor:
         X_val = X_val.loc[:, ~X_val.columns.duplicated()].copy()
         X_test = X_test.loc[:, ~X_test.columns.duplicated()].copy()
 
-        print(f"\nAfter removing duplicate columns:")
-        print(f"  X_train shape: {X_train.shape}")
-        print(f"  X_val shape: {X_val.shape}")
-        print(f"  X_test shape: {X_test.shape}")
-
         # Remove duplicates from selected_features list (preserves order)
         selected_features_unique = list(dict.fromkeys(selected_features))
 
-        print(f"\nCleaned selected_features:")
-        print(f"  Original count: {len(selected_features)}")
-        print(f"  Unique count: {len(selected_features_unique)}")
-
         # Filter to only features that exist in all datasets
         valid_features = [f for f in selected_features_unique if f in X_train.columns and f in X_val.columns and f in X_test.columns]
-
-        print(f"  Valid features (exist in all datasets): {len(valid_features)}")
 
         # Update datasets with valid features only
         X_train = X_train[valid_features].copy()
@@ -2778,11 +2775,6 @@ class ImprovedUFCPredictor:
 
         # Update selected_features to the cleaned list
         selected_features = valid_features
-
-        print(f"\nAfter filtering to valid features:")
-        print(f"  X_train shape: {X_train.shape}")
-        print(f"  X_val shape: {X_val.shape}")
-        print(f"  X_test shape: {X_test.shape}")
 
         # Create train+val AFTER feature selection (for final training only)
         # Reset indices to avoid any index conflicts during concat
@@ -2800,18 +2792,13 @@ class ImprovedUFCPredictor:
 
         available_features = selected_features  # Update for later use
 
-        print("\nFinal feature verification:")
-        print(f"  Selected features count: {len(selected_features)}")
-        print(f"  X_train_val shape: {X_train_val.shape}")
-        print(f"  X_train_val columns: {len(X_train_val.columns)}")
-
         # Safety check - raise error if mismatch
         if X_train_val.shape[1] != len(selected_features):
             raise ValueError(f"Feature count mismatch! X_train_val has {X_train_val.shape[1]} columns but selected_features has {len(selected_features)} features")
 
         # Hyperparameter optimization: Use ONLY training set with time-series CV
         if HAS_OPTUNA and HAS_XGBOOST:
-            self.best_params = self.optimize_hyperparameters(X_train, y_train, n_trials=1) ### OPTUNA TRIALS ####
+            self.best_params = self.optimize_hyperparameters(X_train, y_train, n_trials=50) ### OPTUNA TRIALS ####
         else:
             self.best_params = {
                 'n_estimators': 800,
@@ -2870,12 +2857,11 @@ class ImprovedUFCPredictor:
                     verbose=-1
                 )
                 estimators.append(('lgbm', lgbm_model))
-                print("✓ Added LightGBM to ensemble")
 
             # Add CatBoost if available (handles categorical features differently, robust to overfitting)
             if HAS_CATBOOST:
                 catboost_model = CatBoostClassifier(
-                    iterations=self.best_params.get('n_estimators', 800),
+                    iterations=500,  # Reduced from 800 for speed (still sufficient for accuracy)
                     depth=self.best_params.get('max_depth', 7),
                     learning_rate=self.best_params.get('learning_rate', 0.02),
                     subsample=self.best_params.get('subsample', 0.8),
@@ -2883,10 +2869,12 @@ class ImprovedUFCPredictor:
                     scale_pos_weight=scale_weight,
                     random_state=42,
                     verbose=0,
-                    thread_count=-1
+                    thread_count=-1,
+                    # Speed optimizations without sacrificing accuracy
+                    border_count=128,  # Reduced from 254 for ~2x faster split computation
+                    rsm=0.8,  # Random subspace method - sample 80% of features per split
                 )
                 estimators.append(('catboost', catboost_model))
-                print("✓ Added CatBoost to ensemble")
 
             # Add RandomForest for diversity (tree-based but different approach)
             rf_model = RandomForestClassifier(
@@ -2900,7 +2888,6 @@ class ImprovedUFCPredictor:
                 n_jobs=-1
             )
             estimators.append(('rf', rf_model))
-            print("✓ Added RandomForest to ensemble")
 
             # Add Neural Network if available (non-tree-based for diversity)
             if HAS_NEURAL_NET:
@@ -2925,7 +2912,6 @@ class ImprovedUFCPredictor:
                     ('mlp', mlp_model)
                 ])
                 estimators.append(('mlp', mlp_pipeline))
-                print("✓ Added Neural Network (MLP) to ensemble")
 
             # ========== CHOOSE ENSEMBLE STRATEGY ==========
             # SPEED CONTROL: Set to False for faster training with VotingClassifier
