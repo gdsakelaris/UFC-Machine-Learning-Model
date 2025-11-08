@@ -9,9 +9,10 @@ import io
 from contextlib import redirect_stdout
 from sklearn.model_selection import train_test_split, TimeSeriesSplit, StratifiedKFold
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier
-from sklearn.feature_selection import SelectPercentile, f_classif, RFECV
+from sklearn.feature_selection import SelectPercentile, f_classif
 from sklearn.metrics import log_loss, accuracy_score, roc_auc_score, classification_report
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.linear_model import LogisticRegression
 # permutation_importance removed - using model built-in importance instead
 from scipy.stats import linregress
 import warnings
@@ -597,33 +598,38 @@ class ImprovedUFCPredictor:
 
     def augment_data_conservatively(self, df):
         """
-        Data augmentation to eliminate corner bias by doubling dataset
-        100% augmentation = 2x dataset size (all fights + all corner-swapped versions)
+        Conservative data augmentation to eliminate bias without overfitting
+        Using 35% augmentation (same as Model 5) for optimal generalization
         """
         print("\n" + "="*80)
-        print("DATA AUGMENTATION (100% - DOUBLING DATASET)")
+        print("OPTIMIZED DATA AUGMENTATION (80% augmentation)")
         print("="*80)
 
         red_bias = (df["winner"] == "Red").mean()
         print(f"Original Red corner win rate: {red_bias:.3f}")
 
-        # Create fully augmented dataset by swapping ALL fights
-        print("Creating corner-swapped augmented data for all fights...")
-        df_augmented = self.swap_corners(df)
+        # Only augment if bias > 3%
+        if abs(red_bias - 0.5) > 0.03:
+            print(f"Bias detected ({abs(red_bias - 0.5):.3f}), applying conservative augmentation...")
 
-        # Combine original and augmented (100% augmentation = double dataset)
-        df_combined = pd.concat([df, df_augmented], ignore_index=True)
+            # Create augmented dataset by swapping corners
+            df_augmented = self.swap_corners(df)
 
-        new_red_bias = (df_combined["winner"] == "Red").mean()
-        print(f"After augmentation: {len(df)} -> {len(df_combined)} fights (2.00x)")
-        print(f"New Red corner win rate: {new_red_bias:.3f}")
+            # OPTIMIZED: 80% augmentation - sweet spot for balance without overfitting
+            sample_size = int(len(df_augmented) * 0.80)
+            df_augmented_sampled = df_augmented.sample(n=sample_size, random_state=42)
 
-        if abs(new_red_bias - 0.5) < 0.02:
-            print("✓ Augmentation successfully balanced corner bias")
+            # Combine original and augmented data
+            df_combined = pd.concat([df, df_augmented_sampled], ignore_index=True)
+
+            new_red_bias = (df_combined["winner"] == "Red").mean()
+            print(f"After augmentation: {len(df)} -> {len(df_combined)} fights (1.80x)")
+            print(f"New Red corner win rate: {new_red_bias:.3f}")
+
+            return df_combined
         else:
-            print(f"⚠️ WARNING: Bias still present after augmentation: {abs(new_red_bias - 0.5):.3f}")
-
-        return df_combined
+            print("Bias is minimal (<3%), no augmentation needed")
+            return df
 
     def swap_corners(self, df):
         """Swap red and blue corners to create augmented data"""
@@ -670,10 +676,7 @@ class ImprovedUFCPredictor:
             # that don't auto-update when constituents are negated
             "total_finish_threat", "elo_x_finish",
             "elite_finisher", "complete_fighter", "unstoppable_streak",
-            "veteran_advantage",  # Added: was missing
             "momentum_combo",
-            "age_prime_advantage",  # Added: was missing
-            "freshness_advantage",  # Added: was missing
             # RESEARCH-BACKED: Positional compound interactions
             "clinch_x_grappling", "distance_x_striking", "ground_x_control",
             "positional_mastery", "control_dominance",
@@ -693,9 +696,6 @@ class ImprovedUFCPredictor:
         for col in interaction_features:
             if col in df_swapped.columns:
                 df_swapped[col] = -df_swapped[col]
-
-        # NOTE: style_clash_severity is NOT negated because it's abs() of differentials
-        # When corners swap, abs(x) = abs(-x), so it remains the same
 
         # Note: r_prob_pre_fight and b_prob_pre_fight are already swapped by the r_/b_ swap loop above
         # No need to swap them again (that would double-swap them back to original)
@@ -1473,7 +1473,7 @@ class ImprovedUFCPredictor:
 
     # ===== HYPERPARAMETER OPTIMIZATION WITH OPTUNA =====
 
-    def optimize_hyperparameters(self, X, y, n_trials=100):
+    def optimize_hyperparameters(self, X, y, n_trials=50):
         """Optimize hyperparameters using Optuna Bayesian optimization"""
         if not HAS_OPTUNA or not HAS_XGBOOST:
             print("Optuna or XGBoost not available, using default parameters")
@@ -1493,16 +1493,14 @@ class ImprovedUFCPredictor:
 
         def objective(trial):
             params = {
-                'n_estimators': trial.suggest_int('n_estimators', 400, 1000),
-                'max_depth': trial.suggest_int('max_depth', 4, 6),  # Balanced - can learn patterns without extreme overfitting
-                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.03, log=True),
-                'subsample': trial.suggest_float('subsample', 0.65, 0.85),  # Moderate sampling
-                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.65, 0.85),
-                'colsample_bynode': trial.suggest_float('colsample_bynode', 0.65, 0.85),
-                'reg_alpha': trial.suggest_float('reg_alpha', 1, 15, log=True),  # Moderate L1 regularization
-                'reg_lambda': trial.suggest_float('reg_lambda', 1, 15, log=True),  # Moderate L2 regularization
-                'min_child_weight': trial.suggest_int('min_child_weight', 5, 12),
-                'gamma': trial.suggest_float('gamma', 0, 5),  # Allow easier splits
+                'n_estimators': trial.suggest_int('n_estimators', 200, 1200),
+                'max_depth': trial.suggest_int('max_depth', 4, 8),  # Balanced: allow complexity without overfitting (was 3-6)
+                'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.05, log=True),
+                'subsample': trial.suggest_float('subsample', 0.7, 0.95),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.7, 0.95),
+                'reg_alpha': trial.suggest_float('reg_alpha', 0.3, 2.0),  # Relaxed regularization (was 1.0-5.0)
+                'reg_lambda': trial.suggest_float('reg_lambda', 0.8, 3.0),  # Relaxed regularization (was 1.5-5.0)
+                'min_child_weight': trial.suggest_int('min_child_weight', 3, 12),  # Relaxed minimum samples (was 5-20)
                 'random_state': 42,
                 'n_jobs': -1,
             }
@@ -1537,30 +1535,30 @@ class ImprovedUFCPredictor:
 
         return study.best_params
 
-    # ===== RFECV FEATURE SELECTION =====
+    # ===== PERMUTATION IMPORTANCE FEATURE SELECTION =====
 
-    def select_features_by_importance(self, X, y):
+    def select_features_by_importance(self, X, y, max_features=55):
         """
-        RFECV: Recursive Feature Elimination with Cross-Validation
-        Automatically finds optimal number of features using cross-validation.
-        Trusts RFECV to determine optimal feature count via CV (no artificial caps).
+        Robust feature selection using model-based importance with adaptive thresholding.
+        Automatically determines optimal feature count based on importance distribution.
         """
         print("\n" + "="*80)
-        print("RFECV FEATURE SELECTION")
+        print("INTELLIGENT FEATURE SELECTION")
         print("="*80 + "\n")
 
-        # Remove constant or near-constant features first
+        # Remove constant or near-constant features first (variance threshold)
+        print("Step 1: Removing low-variance features...")
         variances = X.var()
-        variance_threshold = variances.quantile(0.01)
+        variance_threshold = variances.quantile(0.01)  # Remove bottom 1%
         high_variance_features = variances[variances > variance_threshold].index.tolist()
         X_filtered = X[high_variance_features]
-        print(f"Preprocessing: Kept {len(high_variance_features)}/{len(X.columns)} features with sufficient variance")
+        print(f"  Kept {len(high_variance_features)}/{len(X.columns)} features with sufficient variance")
 
-        # Base estimator for RFECV
+        # Train model on larger sample for more stable importance
         if HAS_XGBOOST:
-            estimator = XGBClassifier(
-                n_estimators=200,
-                max_depth=6,
+            model = XGBClassifier(
+                n_estimators=400,
+                max_depth=8,
                 learning_rate=0.05,
                 subsample=0.8,
                 colsample_bytree=0.8,
@@ -1568,110 +1566,82 @@ class ImprovedUFCPredictor:
                 n_jobs=-1
             )
         else:
-            estimator = RandomForestClassifier(
-                n_estimators=200,
-                max_depth=12,
-                random_state=42,
-                n_jobs=-1
-            )
+            model = RandomForestClassifier(n_estimators=400, max_depth=15, random_state=42, n_jobs=-1)
 
-        # RFECV with TimeSeriesSplit
-        min_features = 1  # Minimum features to test
-        n_features = len(high_variance_features)  # Test all high-variance features
-        step = 1
-
-        print(f"\nRunning RFECV (testing {min_features}-{n_features} features with 5-fold CV)...")
-
-        rfecv = RFECV(
-            estimator=estimator,
-            step=step,
-            cv=TimeSeriesSplit(n_splits=5),
-            scoring='accuracy',
-            min_features_to_select=min_features,
-            n_jobs=-1,
-            verbose=0  # Suppress verbose output
+        # Use 40% for validation (more stable than 20%)
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_filtered, y, test_size=0.4, random_state=42, stratify=y
         )
 
-        # Fit RFECV with animated progress indicator
-        import threading
-        import time
+        print("Step 2: Training model for importance calculation...")
+        model.fit(X_train, y_train)
 
-        # Calculate estimated iterations (for user info)
-        total_iterations = (n_features - min_features) // step + 1
-        estimated_time = total_iterations * 5 * 0.3  # ~0.3 sec per fold per feature subset
-        print(f"Estimated iterations: {total_iterations} feature subsets × 5 folds = {total_iterations * 5} model fits")
-        print(f"Estimated time: ~{estimated_time/60:.1f} minutes\n")
+        # Use model's built-in feature importance (much more stable than permutation)
+        if HAS_XGBOOST:
+            importances = model.feature_importances_
+        else:
+            importances = model.feature_importances_
 
-        # Start timer
-        start_time = time.time()
+        # Get feature names
+        feature_names = X_filtered.columns.tolist()
 
-        # Animated progress indicator
-        stop_progress = threading.Event()
-        def show_progress():
-            spinner = ['|', '/', '-', '\\']
-            idx = 0
-            dots = 0
-            while not stop_progress.is_set():
-                elapsed = int(time.time() - start_time)
-                mins, secs = divmod(elapsed, 60)
-
-                # Animated bar
-                bar_length = 40
-                filled = (dots % (bar_length + 1))
-                if filled <= bar_length // 2:
-                    bar = '=' * filled + '>' + '-' * (bar_length - filled - 1)
-                else:
-                    bar = '=' * (bar_length - (filled - bar_length // 2)) + '<' + '-' * (filled - bar_length // 2 - 1)
-
-                sys.stdout.write('\r' + ' ' * 80 + '\r')
-                sys.stdout.write(f"Running RFECV... [{bar}] {spinner[idx]} ({mins:02d}:{secs:02d})")
-                sys.stdout.flush()
-
-                idx = (idx + 1) % len(spinner)
-                dots = (dots + 1) % (bar_length * 2)
-                time.sleep(0.15)
-
-        progress_thread = threading.Thread(target=show_progress, daemon=True)
-        progress_thread.start()
-
-        try:
-            rfecv.fit(X_filtered, y)
-        finally:
-            stop_progress.set()
-            progress_thread.join(timeout=0.5)
-            elapsed = int(time.time() - start_time)
-            mins, secs = divmod(elapsed, 60)
-            sys.stdout.write('\r' + ' ' * 80 + '\r')
-            bar = '=' * 40
-            sys.stdout.write(f"RFECV Complete! [{bar}] ✓ ({mins:02d}:{secs:02d})\n\n")
-            sys.stdout.flush()
-
-        # Get RFECV results
-        selected_mask = rfecv.support_
-        selected_features = X_filtered.columns[selected_mask].tolist()
-        n_selected = len(selected_features)
-        best_score = rfecv.cv_results_['mean_test_score'].max()
-
-        # Rank selected features by importance
-        importances = rfecv.estimator_.feature_importances_
+        # Create importance DataFrame
         importance_df = pd.DataFrame({
-            'feature': selected_features,
+            'feature': feature_names,
             'importance': importances
         }).sort_values('importance', ascending=False)
 
-        # Results summary
-        print("="*80)
-        print(f"Selected Features: {n_selected}")
-        print(f"Best CV Score:     {best_score:.4f}")
-        print("="*80)
-        print(f"\nAll {n_selected} Selected Features (Ranked by Importance):")
-        print(importance_df[['feature', 'importance']].to_string(index=False))
+        print("\nStep 3: Analyzing importance distribution...")
 
-        # Store for later
+        # Calculate statistics
+        mean_importance = importance_df['importance'].mean()
+        median_importance = importance_df['importance'].median()
+
+        # Strategy: Use elbow method - find where importance drops sharply
+        importance_df['importance_ratio'] = importance_df['importance'] / importance_df['importance'].max()
+        importance_df['importance_change'] = importance_df['importance_ratio'].diff().abs()
+
+        # Find features above mean importance (natural threshold)
+        above_mean = importance_df[importance_df['importance'] > mean_importance]
+
+        # Also consider cumulative importance approach
+        total_importance = importance_df['importance'].sum()
+        importance_df['cumulative'] = importance_df['importance'].cumsum() / total_importance
+
+        # Select features that:
+        # 1. Are above mean importance OR
+        # 2. Are in top percentile by cumulative importance (100% = all features)
+        cumulative_100 = importance_df[importance_df['cumulative'] <= 1.00]
+
+        # Take union of both methods
+        selected_by_mean = set(above_mean['feature'].tolist())
+        selected_by_cumulative = set(cumulative_100['feature'].tolist())
+        selected_features_set = selected_by_mean.union(selected_by_cumulative)
+
+        # Filter importance_df to selected features
+        selected_features = importance_df[importance_df['feature'].isin(selected_features_set)]
+
+        # Apply soft cap if way too many features
+        if len(selected_features) > max_features:
+            print(f"  Too many features ({len(selected_features)}), applying soft cap...")
+            selected_features = selected_features.head(max_features)
+
+        print(f"\n  Mean importance: {mean_importance:.6f}")
+        print(f"  Median importance: {median_importance:.6f}")
+        print(f"  Features above mean: {len(above_mean)}")
+        print(f"  Features for 100% cumulative: {len(cumulative_100)}")
+        print(f"  Selected (union): {len(selected_features)}")
+
+        print(f"\nTop {len(selected_features)} Most Important Features (Ranked):")
+        print(selected_features[['feature', 'importance']].to_string(index=False))
+
+        top_features = selected_features['feature'].tolist()
+
+        print(f"\nFinal Selection: {len(top_features)} features")
+        print(f"  Validation Accuracy: {model.score(X_val, y_val):.4f}")
+
         self.feature_importance = importance_df
-        self.rfecv = rfecv
-
-        return selected_features
+        return top_features
 
     # ===== TRAINING WITH PROPER VALIDATION =====
 
@@ -1692,22 +1662,6 @@ class ImprovedUFCPredictor:
 
         # Conservative data augmentation (35% vs 90%)
         df = self.augment_data_conservatively(df)
-
-        # FIX 2: Verify augmentation balance
-        red_wins = (df["winner"] == "Red").sum()
-        blue_wins = (df["winner"] == "Blue").sum()
-        total = len(df)
-        print(f"\n{'='*80}")
-        print("AUGMENTATION BALANCE CHECK")
-        print(f"{'='*80}")
-        print(f"Red wins after augmentation:  {red_wins} ({red_wins/total*100:.1f}%)")
-        print(f"Blue wins after augmentation: {blue_wins} ({blue_wins/total*100:.1f}%)")
-        print(f"Total fights: {total}")
-        if abs(red_wins - blue_wins) / total > 0.05:
-            print("⚠️  WARNING: Imbalanced augmentation detected (>5% difference)!")
-        else:
-            print("✓ Augmentation is balanced")
-        print(f"{'='*80}\n")
 
         # Get core feature names
         core_features = self.get_core_feature_names()
@@ -1749,24 +1703,22 @@ class ImprovedUFCPredictor:
         print(f"Validation set: {len(X_val)} fights")
         print(f"Test set: {len(X_test)} fights (HELD OUT)")
 
-        # Feature selection: Use ONLY training set to avoid data leakage
-        # RFECV will find optimal number of features automatically via cross-validation
-        selected_features = self.select_features_by_importance(X_train, y_train)
+        # Feature selection: Reduce to top 35 most important features
+        X_train_val = pd.concat([X_train, X_val])
+        y_train_val = pd.concat([y_train, y_val])
+
+        selected_features = self.select_features_by_importance(X_train_val, y_train_val, max_features=55) ### <-- Number of features here
 
         # Update datasets with selected features only
         X_train = X_train[selected_features]
         X_val = X_val[selected_features]
         X_test = X_test[selected_features]
-
-        # Create train+val AFTER feature selection (for final training only)
-        X_train_val = pd.concat([X_train, X_val])
-        y_train_val = pd.concat([y_train, y_val])
-
+        X_train_val = X_train_val[selected_features]
         available_features = selected_features  # Update for later use
 
-        # Hyperparameter optimization: Use ONLY training set with time-series CV
+        # Hyperparameter optimization on train+val
         if HAS_OPTUNA and HAS_XGBOOST:
-            self.best_params = self.optimize_hyperparameters(X_train, y_train, n_trials=50) ### OPTUNA TRIALS ####
+            self.best_params = self.optimize_hyperparameters(X_train_val, y_train_val, n_trials=50) # 50 or 100
         else:
             self.best_params = {
                 'n_estimators': 600,
@@ -1778,84 +1730,71 @@ class ImprovedUFCPredictor:
                 'reg_lambda': 0.8,
             }
 
-        # Train final model
+        # Train final model with ensemble diversity
         print("\n" + "="*80)
-        print("TRAINING MODEL")
+        print("TRAINING ENSEMBLE MODEL")
         print("="*80 + "\n")
 
-        if HAS_XGBOOST:
-            # Use natural class distribution (augmentation handles bias correction)
+        if HAS_XGBOOST and self.use_ensemble:
+            # Calculate scale_pos_weight for class balancing
             scale_weight = (y_train_val == 0).sum() / (y_train_val == 1).sum()
+            print(f"Applying class balancing: scale_pos_weight = {scale_weight:.3f}")
 
-            print(f"Class balancing: scale_pos_weight={scale_weight:.3f} (no adjustment - augmentation balances bias)")
+            # Create diverse ensemble with XGBoost, RandomForest, and LogisticRegression
+            print("Creating ensemble with XGBoost, RandomForest, and LogisticRegression...")
 
-            # Create XGBoost model
             xgb_model = XGBClassifier(
                 **self.best_params,
                 scale_pos_weight=scale_weight,
                 random_state=42,
-                n_jobs=-1,
-                tree_method='hist',
+                n_jobs=-1
             )
 
-            # Create ensemble with diverse models for better generalization
-            estimators = [('xgb', xgb_model)]
-
-            # Add LightGBM if available (different algorithm, often complementary to XGBoost)
-            if HAS_LIGHTGBM:
-                lgbm_model = LGBMClassifier(
-                    n_estimators=self.best_params.get('n_estimators', 600),
-                    max_depth=self.best_params.get('max_depth', 5),
-                    learning_rate=self.best_params.get('learning_rate', 0.02),
-                    subsample=self.best_params.get('subsample', 0.75),
-                    colsample_bytree=self.best_params.get('colsample_bytree', 0.75),
-                    reg_alpha=self.best_params.get('reg_alpha', 3),
-                    reg_lambda=self.best_params.get('reg_lambda', 3),
-                    min_child_samples=self.best_params.get('min_child_weight', 8) * 2,
-                    scale_pos_weight=scale_weight,
-                    random_state=42,
-                    n_jobs=-1,
-                    verbose=-1
-                )
-                estimators.append(('lgbm', lgbm_model))
-
-            # Add RandomForest for diversity (tree-based but different approach)
             rf_model = RandomForestClassifier(
                 n_estimators=400,
-                max_depth=8,
-                min_samples_split=10,
-                min_samples_leaf=5,
-                max_features='sqrt',
-                class_weight={0: 1.0, 1: scale_weight},
+                max_depth=12,
+                min_samples_split=8,
                 random_state=42,
                 n_jobs=-1
             )
-            estimators.append(('rf', rf_model))
 
-            # Create voting ensemble - soft voting combines probability predictions
+            lr_model = LogisticRegression(
+                C=0.1,
+                max_iter=1000,
+                random_state=42,
+                n_jobs=-1
+            )
+
             base_model = VotingClassifier(
-                estimators=estimators,
+                estimators=[
+                    ('xgb', xgb_model),
+                    ('rf', rf_model),
+                    ('lr', lr_model)
+                ],
                 voting='soft',
-                weights=[3, 2, 1] if HAS_LIGHTGBM else [3, 1],  # Emphasize XGBoost
                 n_jobs=-1
             )
-
-            print(f"Training ensemble with {len(estimators)} models: {[name for name, _ in estimators]}")
-        else:
-            # Fallback: RandomForest
-            base_model = RandomForestClassifier(
-                n_estimators=600,
-                max_depth=10,
-                min_samples_split=10,
+        elif HAS_XGBOOST:
+            # Single XGBoost model if ensemble disabled
+            scale_weight = (y_train_val == 0).sum() / (y_train_val == 1).sum()
+            print(f"Applying class balancing: scale_pos_weight = {scale_weight:.3f}")
+            base_model = XGBClassifier(
+                **self.best_params,
+                scale_pos_weight=scale_weight,
                 random_state=42,
                 n_jobs=-1
             )
+        else:
+            base_model = RandomForestClassifier(
+                n_estimators=600, max_depth=15, min_samples_split=8,
+                random_state=42, n_jobs=-1
+            )
 
-        # Train final model on train+val
-        print("Training final ensemble on train+val...")
+        # Train on train+val (already created with selected features)
+        print("Training ensemble model...")
         base_model.fit(X_train_val, y_train_val)
 
-        # Calibrate probabilities on train+val
+        # Calibrate probabilities
         print("\n" + "="*80)
         print("CALIBRATING PROBABILITIES")
         print("="*80 + "\n")
@@ -1900,40 +1839,6 @@ class ImprovedUFCPredictor:
             print(f"\nWarning: Large train-validation gap ({train_val_gap:.4f}) suggests possible overfitting")
         else:
             print(f"\nTrain-validation gap ({train_val_gap:.4f}) is acceptable")
-
-        # RED CORNER BIAS CORRECTION
-        print("\n" + "="*80)
-        print("RED CORNER BIAS ANALYSIS")
-        print("="*80 + "\n")
-
-        # Check actual distribution in training data
-        actual_red_wins = (y_train_val == 1).sum()
-        actual_red_rate = actual_red_wins / len(y_train_val)
-
-        # Check predicted distribution on validation set
-        y_pred_val = self.winner_model.predict(X_val)
-        predicted_red_wins = (y_pred_val == 1).sum()
-        predicted_red_rate = predicted_red_wins / len(y_pred_val)
-
-        # Calculate bias (difference between predicted and actual red win rates)
-        red_bias = predicted_red_rate - actual_red_rate
-
-        # Calculate optimal threshold adjustment
-        # If model predicts red too often, we need a higher threshold for red
-        # If model predicts blue too often, we need a lower threshold for red
-        # FIX 4: Full correction instead of dampened (1.0 instead of 0.5)
-        self.red_corner_bias_adjustment = red_bias * 1.0  # Full bias correction
-
-        print(f"Actual Red Corner Win Rate:    {actual_red_rate:.4f} ({actual_red_wins}/{len(y_train_val)})")
-        print(f"Predicted Red Corner Win Rate: {predicted_red_rate:.4f} ({predicted_red_wins}/{len(y_pred_val)})")
-        print(f"Red Corner Bias:               {red_bias:+.4f}")
-        print(f"Threshold Adjustment:          {self.red_corner_bias_adjustment:+.4f}")
-
-        if abs(red_bias) > 0.05:
-            print("\nWARNING: Significant corner bias detected!")
-            print(f"Model is biased toward {'RED' if red_bias > 0 else 'BLUE'} corner")
-        else:
-            print("Corner bias is within acceptable range (< 5%)")
 
         # Time series cross-validation for robustness check
         print("\n" + "="*80)
@@ -2327,17 +2232,10 @@ class ImprovedUFCPredictor:
 
         # Get winner prediction with calibrated probabilities
         winner_proba = self.winner_model.predict_proba(X)[0]
-
-        # APPLY RED CORNER BIAS CORRECTION
-        # Adjust the decision threshold based on detected corner bias
-        red_proba = winner_proba[1]  # Probability of red corner winning
-
-        # Apply threshold adjustment (if red_corner_bias_adjustment > 0, red needs higher confidence to win)
-        adjusted_threshold = 0.5 + getattr(self, 'red_corner_bias_adjustment', 0.0)
-        winner_pred = 1 if red_proba >= adjusted_threshold else 0
+        winner_pred = self.winner_model.predict(X)[0]
         winner_name = "Red" if winner_pred == 1 else "Blue"
 
-        # Calculate confidence level using the actual probability (not adjusted)
+        # Calculate confidence level
         winner_confidence = winner_proba[winner_pred]
         if winner_confidence >= 0.70:
             confidence_level = "HIGH"
