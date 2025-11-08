@@ -166,10 +166,13 @@ class ImprovedUFCPredictor:
             "ko_rate_diff_corrected",
             "sub_rate_diff_corrected",
 
-            # TIER 2: Physical/Style (10 features)
+            # TIER 2: Physical/Style (13 features - expanded stance features)
             "reach_diff",
             "age_at_event_diff",
-            "stance_matchup_advantage",
+            "orthodox_vs_southpaw_advantage",  # Directional: +1 if red ortho & blue south, -1 if opposite
+            "orthodox_vs_switch_advantage",    # Directional: +1 if red ortho & blue switch, -1 if opposite
+            "southpaw_vs_switch_advantage",    # Directional: +1 if red south & blue switch, -1 if opposite
+            "mirror_matchup",                  # Symmetric: 1 if both same stance, 0 otherwise
             "striker_vs_grappler",
             "experience_gap",
             "height_diff",
@@ -1706,8 +1709,54 @@ class ImprovedUFCPredictor:
         df["b_grappler_score"] = df["b_pro_td_avg_corrected"] + df["b_pro_sub_avg_corrected"]
         df["grappler_advantage"] = df["r_grappler_score"] - df["b_grappler_score"]
 
-        # Stance matchup
-        df["stance_matchup_advantage"] = 0  # Will be calculated if stance data available
+        # Stance matchup features (4 features)
+        # Initialize
+        df["orthodox_vs_southpaw_advantage"] = 0
+        df["orthodox_vs_switch_advantage"] = 0
+        df["southpaw_vs_switch_advantage"] = 0
+        df["mirror_matchup"] = 0
+
+        # Calculate if stance data is available
+        if "r_stance" in df.columns and "b_stance" in df.columns:
+            for idx in df.index:
+                r_stance = df.at[idx, "r_stance"]
+                b_stance = df.at[idx, "b_stance"]
+
+                # Handle missing/NaN stances
+                if pd.isna(r_stance):
+                    r_stance = "Orthodox"
+                if pd.isna(b_stance):
+                    b_stance = "Orthodox"
+
+                # Feature 1: Orthodox vs Southpaw (directional - auto-negated on swap via "_advantage")
+                if r_stance == "Orthodox" and b_stance == "Southpaw":
+                    df.at[idx, "orthodox_vs_southpaw_advantage"] = 1
+                elif r_stance == "Southpaw" and b_stance == "Orthodox":
+                    df.at[idx, "orthodox_vs_southpaw_advantage"] = -1
+                else:
+                    df.at[idx, "orthodox_vs_southpaw_advantage"] = 0
+
+                # Feature 2: Orthodox vs Switch (directional - auto-negated on swap via "_advantage")
+                if r_stance == "Orthodox" and b_stance == "Switch":
+                    df.at[idx, "orthodox_vs_switch_advantage"] = 1
+                elif r_stance == "Switch" and b_stance == "Orthodox":
+                    df.at[idx, "orthodox_vs_switch_advantage"] = -1
+                else:
+                    df.at[idx, "orthodox_vs_switch_advantage"] = 0
+
+                # Feature 3: Southpaw vs Switch (directional - auto-negated on swap via "_advantage")
+                if r_stance == "Southpaw" and b_stance == "Switch":
+                    df.at[idx, "southpaw_vs_switch_advantage"] = 1
+                elif r_stance == "Switch" and b_stance == "Southpaw":
+                    df.at[idx, "southpaw_vs_switch_advantage"] = -1
+                else:
+                    df.at[idx, "southpaw_vs_switch_advantage"] = 0
+
+                # Feature 4: Mirror matchup (symmetric - NOT negated on swap)
+                if r_stance == b_stance:
+                    df.at[idx, "mirror_matchup"] = 1
+                else:
+                    df.at[idx, "mirror_matchup"] = 0
 
         # Fighter trajectory (simplified)
         df["r_trajectory_3"] = 0
@@ -2412,7 +2461,7 @@ class ImprovedUFCPredictor:
 
             # Time series cross-validation
             cv_scores = []
-            tscv = TimeSeriesSplit(n_splits=3)  # 3-fold CV for faster optimization
+            tscv = TimeSeriesSplit(n_splits=5)  # 5-fold CV for more robust hyperparameter selection
 
             for train_idx, val_idx in tscv.split(X):
                 X_train_fold = X.iloc[train_idx] if hasattr(X, 'iloc') else X[train_idx]
@@ -2531,11 +2580,23 @@ class ImprovedUFCPredictor:
         X_filtered = X[high_variance_features]
         print(f"Preprocessing: Kept {len(high_variance_features)}/{len(X.columns)} features with sufficient variance")
 
-        # Base estimator for RFECV - Use LightGBM for faster feature selection
-        if HAS_LIGHTGBM:
-            # LightGBM is ~2-3x faster than XGBoost for feature selection
+        # Base estimator for RFECV - Use XGBoost for best feature selection accuracy
+        if HAS_XGBOOST:
+            # XGBoost provides most stable/reliable feature importance for selection
+            estimator = XGBClassifier(
+                n_estimators=200,  # Increased for more reliable feature ranking (was 100)
+                max_depth=7,
+                learning_rate=0.05,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                reg_alpha=1.0,
+                reg_lambda=1.0,
+                random_state=42,
+                n_jobs=-1
+            )
+        elif HAS_LIGHTGBM:
             estimator = LGBMClassifier(
-                n_estimators=100,  # Reduced from 300 for speed (sufficient for feature ranking)
+                n_estimators=200,
                 max_depth=7,
                 learning_rate=0.05,
                 subsample=0.8,
@@ -2546,37 +2607,25 @@ class ImprovedUFCPredictor:
                 n_jobs=-1,
                 verbose=-1
             )
-        elif HAS_XGBOOST:
-            estimator = XGBClassifier(
-                n_estimators=100,  # Reduced from 300 for speed
-                max_depth=7,
-                learning_rate=0.05,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                reg_alpha=1.0,
-                reg_lambda=1.0,
-                random_state=42,
-                n_jobs=-1
-            )
         else:
             estimator = RandomForestClassifier(
-                n_estimators=100,  # Reduced from 300 for speed
+                n_estimators=200,
                 max_depth=12,
                 random_state=42,
                 n_jobs=-1
             )
 
         # RFECV with TimeSeriesSplit
-        min_features = 60  # Minimum features to test
+        min_features = 60  # Aggressive feature selection to reduce overfitting
         n_features = len(high_variance_features)  # Test all high-variance features
-        step = 5  # Increased from 1 to 5 for 5x speedup (removes 5 features at a time)
+        step = 2  # Reduced from 5 to 2 for finer-grained feature selection
 
-        print(f"\nRunning RFECV (testing {min_features}-{n_features} features with 3-fold CV)...")
+        print(f"\nRunning RFECV (testing {min_features}-{n_features} features with 5-fold CV)...")
 
         rfecv = RFECV(
             estimator=estimator,
             step=step,
-            cv=TimeSeriesSplit(n_splits=3),  # 3-fold CV (faster than 5-fold)
+            cv=TimeSeriesSplit(n_splits=5),  # 5-fold CV for more robust feature selection
             scoring='accuracy',
             min_features_to_select=min_features,
             n_jobs=-1,
@@ -2589,9 +2638,9 @@ class ImprovedUFCPredictor:
 
         # Calculate estimated iterations (for user info)
         total_iterations = (n_features - min_features) // step + 1
-        estimated_time = total_iterations * 3 * 0.15  # ~0.15 sec per fold (LightGBM + fewer trees)
-        print(f"Estimated iterations: {total_iterations} feature subsets × 3 folds = {total_iterations * 3} model fits")
-        print(f"Estimated time: ~{estimated_time/60:.1f} minutes (optimized with LightGBM + step={step})\n")
+        estimated_time = total_iterations * 5 * 0.25  # ~0.25 sec per fold (XGBoost 200 trees, 5-fold CV)
+        print(f"Estimated iterations: {total_iterations} feature subsets × 5 folds = {total_iterations * 5} model fits")
+        print(f"Estimated time: ~{estimated_time/60:.1f} minutes (improved accuracy: XGBoost + 5-fold CV)\n")
 
         # Start timer
         start_time = time.time()
@@ -2861,7 +2910,7 @@ class ImprovedUFCPredictor:
             # Add CatBoost if available (handles categorical features differently, robust to overfitting)
             if HAS_CATBOOST:
                 catboost_model = CatBoostClassifier(
-                    iterations=500,  # Reduced from 800 for speed (still sufficient for accuracy)
+                    iterations=1000,  # Increased for better convergence and higher weight in ensemble
                     depth=self.best_params.get('max_depth', 7),
                     learning_rate=self.best_params.get('learning_rate', 0.02),
                     subsample=self.best_params.get('subsample', 0.8),
@@ -2870,9 +2919,9 @@ class ImprovedUFCPredictor:
                     random_state=42,
                     verbose=0,
                     thread_count=-1,
-                    # Speed optimizations without sacrificing accuracy
-                    border_count=128,  # Reduced from 254 for ~2x faster split computation
-                    rsm=0.8,  # Random subspace method - sample 80% of features per split
+                    # Removed aggressive speed optimizations to improve accuracy
+                    # border_count default (254) for better split quality
+                    # rsm default (1.0) to use all features
                 )
                 estimators.append(('catboost', catboost_model))
 
@@ -3028,44 +3077,12 @@ class ImprovedUFCPredictor:
         else:
             print(f"\nTrain-validation gap ({train_val_gap:.4f}) is acceptable")
 
-        # RED CORNER BIAS CORRECTION
-        print("\n" + "="*80)
-        print("RED CORNER BIAS ANALYSIS")
-        print("="*80 + "\n")
-
-        # Check actual distribution in training data
-        actual_red_wins = (y_train_val == 1).sum()
-        actual_red_rate = actual_red_wins / len(y_train_val)
-
-        # Check predicted distribution on validation set
-        y_pred_val = self.winner_model.predict(X_val_np)
-        predicted_red_wins = (y_pred_val == 1).sum()
-        predicted_red_rate = predicted_red_wins / len(y_pred_val)
-
-        # Calculate bias (difference between predicted and actual red win rates)
-        red_bias = predicted_red_rate - actual_red_rate
-
-        # NOTE: Bias adjustment disabled - augmentation provides balanced training
-        # Temporal distribution shifts in test/real data are real patterns, not bias
-        self.red_corner_bias_adjustment = 0.0  # No adjustment
-
-        print(f"Actual Red Corner Win Rate:    {actual_red_rate:.4f} ({actual_red_wins}/{len(y_train_val)})")
-        print(f"Predicted Red Corner Win Rate: {predicted_red_rate:.4f} ({predicted_red_wins}/{len(y_pred_val)})")
-        print(f"Red Corner Bias:               {red_bias:+.4f}")
-        print("Note: Bias adjustment disabled (augmentation handles balance)")
-
-        if abs(red_bias) > 0.05:
-            print("\nNote: Apparent bias may reflect temporal distribution shift in test data")
-            print(f"Model prediction pattern: {'RED' if red_bias > 0 else 'BLUE'} corner more frequent")
-        else:
-            print("Corner bias is within acceptable range (< 5%)")
-
         # Time series cross-validation for robustness check
         print("\n" + "="*80)
         print("TIME SERIES CROSS-VALIDATION (Robustness Check)")
         print("="*80 + "\n")
 
-        tscv = TimeSeriesSplit(n_splits=3)  # 3-fold CV for faster validation
+        tscv = TimeSeriesSplit(n_splits=5)  # 5-fold CV for more robust evaluation
         cv_scores = []
 
         for fold, (train_idx, val_idx) in enumerate(tscv.split(X_train_val)):
@@ -3082,7 +3099,7 @@ class ImprovedUFCPredictor:
             fold_model.fit(X_fold_train, y_fold_train)
             score = fold_model.score(X_fold_val, y_fold_val)
             cv_scores.append(score)
-            print(f"  Fold {fold + 1}/3: {score:.4f}")
+            print(f"  Fold {fold + 1}/5: {score:.4f}")
 
         print(f"\nCV Mean: {np.mean(cv_scores):.4f} ± {np.std(cv_scores):.4f}")
 
@@ -3229,7 +3246,47 @@ class ImprovedUFCPredictor:
         fight_features["b_grappler_score"] = b_grappler_score
 
         fight_features["striker_vs_grappler"] = 0
-        fight_features["stance_matchup_advantage"] = 0
+
+        # Stance matchup features (4 features)
+        r_stance = r_stats.get("stance", "Orthodox")
+        b_stance = b_stats.get("stance", "Orthodox")
+
+        # Handle missing/NaN stances
+        if pd.isna(r_stance) or r_stance == "" or r_stance is None:
+            r_stance = "Orthodox"
+        if pd.isna(b_stance) or b_stance == "" or b_stance is None:
+            b_stance = "Orthodox"
+
+        # Feature 1: Orthodox vs Southpaw (directional)
+        if r_stance == "Orthodox" and b_stance == "Southpaw":
+            fight_features["orthodox_vs_southpaw_advantage"] = 1
+        elif r_stance == "Southpaw" and b_stance == "Orthodox":
+            fight_features["orthodox_vs_southpaw_advantage"] = -1
+        else:
+            fight_features["orthodox_vs_southpaw_advantage"] = 0
+
+        # Feature 2: Orthodox vs Switch (directional)
+        if r_stance == "Orthodox" and b_stance == "Switch":
+            fight_features["orthodox_vs_switch_advantage"] = 1
+        elif r_stance == "Switch" and b_stance == "Orthodox":
+            fight_features["orthodox_vs_switch_advantage"] = -1
+        else:
+            fight_features["orthodox_vs_switch_advantage"] = 0
+
+        # Feature 3: Southpaw vs Switch (directional)
+        if r_stance == "Southpaw" and b_stance == "Switch":
+            fight_features["southpaw_vs_switch_advantage"] = 1
+        elif r_stance == "Switch" and b_stance == "Southpaw":
+            fight_features["southpaw_vs_switch_advantage"] = -1
+        else:
+            fight_features["southpaw_vs_switch_advantage"] = 0
+
+        # Feature 4: Mirror matchup (symmetric)
+        if r_stance == b_stance:
+            fight_features["mirror_matchup"] = 1
+        else:
+            fight_features["mirror_matchup"] = 0
+
         fight_features["r_trajectory_3"] = 0
         fight_features["b_trajectory_3"] = 0
         fight_features["ring_rust_factor"] = 0
