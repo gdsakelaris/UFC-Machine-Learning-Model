@@ -238,7 +238,6 @@ class ImprovedUFCPredictor:
 
             # RESEARCH-BACKED: Top features from RF/GBDT/SVM analysis
             # NEW: Opponent quality (was placeholder returning 0!)
-            "opponent_quality_diff",
             "avg_opponent_elo_diff_corrected",
 
             # NEW: Recent momentum vs career average (improving/declining fighters)
@@ -284,6 +283,133 @@ class ImprovedUFCPredictor:
 
             # NEW FEATURE: Main event experience
             "main_event_experience_diff",  # Count of 5-round fights (championship experience)
+
+            # ========== PHASE 1A: POLYNOMIAL FEATURES (42 features) ==========
+            # Squared terms for non-linear effects
+            "elo_diff_squared",
+            "age_diff_squared",
+            "age_diff_cubic",
+            "win_loss_ratio_diff_squared",
+            "reach_diff_squared",
+            "recent_form_diff_squared",
+            "win_streak_diff_squared",
+            "momentum_swing_squared",
+            "pro_SLpM_diff_squared",
+            "pro_sig_str_acc_diff_squared",
+            "pro_td_avg_diff_squared",
+            "net_striking_advantage_squared",
+            "height_diff_squared",
+            "weight_diff_squared",
+            "ape_index_diff_squared",
+            "experience_gap_squared",
+            "days_since_last_fight_squared",
+            "ko_rate_diff_squared",
+            "sub_rate_diff_squared",
+            "finish_rate_diff_squared",
+            "pro_str_def_diff_squared",
+            "pro_td_def_diff_squared",
+            "durability_diff_squared",
+            "clinch_pct_diff_squared",
+            "ground_pct_diff_squared",
+            "distance_pct_diff_squared",
+            "avg_ctrl_sec_diff_squared",
+            "elo_x_form_squared",
+            "striker_advantage_squared",
+            "grappler_advantage_squared",
+            "slpm_momentum_diff_squared",
+            "ctrl_sec_momentum_diff_squared",
+            "elite_finisher_squared",
+            "veteran_advantage_squared",
+            "unstoppable_streak_squared",
+            "h2h_advantage_squared",
+            "avg_opponent_elo_diff_squared",
+            "main_event_experience_diff_squared",
+            # Cubic terms for complex curves
+            "elo_diff_cubic",
+            "win_loss_ratio_diff_cubic",
+            "reach_diff_cubic",
+            "experience_gap_cubic",
+
+            # ========== PHASE 1B: ROLLING STATISTICS FEATURES (27 features) ==========
+            # Rolling averages (3/5/10 fight windows)
+            "rolling_slpm_3_diff", "rolling_slpm_5_diff", "rolling_slpm_10_diff",
+            "rolling_sapm_3_diff", "rolling_sapm_5_diff", "rolling_sapm_10_diff",
+            "rolling_td_acc_3_diff", "rolling_td_acc_5_diff", "rolling_td_acc_10_diff",
+            "rolling_td_def_3_diff", "rolling_td_def_5_diff", "rolling_td_def_10_diff",
+            "rolling_ctrl_3_diff", "rolling_ctrl_5_diff", "rolling_ctrl_10_diff",
+            "rolling_finish_rate_3_diff", "rolling_finish_rate_5_diff", "rolling_finish_rate_10_diff",
+            "rolling_strike_acc_3_diff", "rolling_strike_acc_5_diff", "rolling_strike_acc_10_diff",
+            "rolling_damage_3_diff", "rolling_damage_5_diff", "rolling_damage_10_diff",
+            # Variance/consistency metrics
+            "slpm_variance_5_diff",
+            "sapm_variance_5_diff",
+            "performance_consistency_5_diff",
+            # Trend features (improving/declining)
+            "slpm_trend_5_diff",
+            "td_acc_trend_5_diff",
+            "finish_rate_trend_5_diff",
+
+            # ========== PHASE 1C: OPPONENT-ADJUSTED FEATURES (17 features) ==========
+            # Base opponent-adjusted metrics (9 features)
+            "win_rate_vs_elite_diff",
+            "win_rate_vs_strikers_diff",
+            "win_rate_vs_grapplers_diff",
+            "win_rate_vs_durable_diff",
+            "win_rate_vs_finishers_diff",
+            "finish_rate_vs_elite_diff",
+            "recent_opponent_quality_5_diff",
+            "style_versatility_diff",
+            "step_up_performance_diff",
+            # Interaction features (6 features)
+            "step_up_x_elo",
+            "versatility_x_form",
+            "elite_wins_x_opp_quality",
+            "elite_finish_x_power",
+            "striker_killer_metric",
+            "grappler_killer_metric",
+            # Composite metrics (2 features)
+            "championship_readiness",
+            "competition_level",
+
+            # ========== PHASE 1D: STATISTICAL RATIO FEATURES (29 features) ==========
+            # Efficiency ratios (6 features)
+            "striking_output_quality_diff",
+            "grappling_output_quality_diff",
+            "damage_ratio_diff",
+            "defense_offense_balance_diff",
+            "td_defense_offense_balance_diff",
+            "finish_efficiency_diff",
+            # Quality over quantity (3 features)
+            "precision_striking_diff",
+            "quality_grappling_diff",
+            "submission_threat_ratio_diff",
+            # Defensive efficiency (3 features)
+            "damage_absorption_efficiency_diff",
+            "total_defense_index_diff",
+            "defense_versatility_diff",
+            # Offensive versatility (3 features)
+            "total_offense_index_diff",
+            "offensive_versatility_diff",
+            "striker_index_diff",
+            # Win quality (3 features)
+            "win_loss_ratio_squared_diff",
+            "experience_quality_diff",
+            "win_efficiency_diff",
+            # Recent form ratios (1 feature)
+            "recent_form_ratio_diff",
+            # Physical efficiency (3 features)
+            "reach_efficiency_diff",
+            "size_adjusted_striking_diff",
+            "size_adjusted_grappling_diff",
+            # Advanced composites (4 features)
+            "complete_fighter_index_diff",
+            "pressure_fighter_index_diff",
+            "counter_fighter_index_diff",
+            "finishing_threat_composite_diff",
+            # Rolling performance ratios (3 features)
+            "recent_vs_career_striking_diff",
+            "striking_consistency_ratio_diff",
+            "improvement_trajectory_ratio_diff",
         ]
 
     def calculate_streak(self, recent_wins, count_wins=True):
@@ -879,6 +1005,24 @@ class ImprovedUFCPredictor:
             "recent_slpm": [], "recent_ctrl_sec": [],
             # NEW: Main event experience (5-round fights)
             "main_event_fights": 0,
+            # PHASE 1B: Rolling statistics tracking (lists of recent values)
+            "rolling_slpm": [],  # Last 10 fights SLpM
+            "rolling_sapm": [],  # Last 10 fights SApM
+            "rolling_td_acc": [],  # Last 10 fights TD accuracy
+            "rolling_td_def": [],  # Last 10 fights TD defense
+            "rolling_ctrl_time": [],  # Last 10 fights control time
+            "rolling_finishes": [],  # Last 10 fights finish indicator (1=finish, 0=decision)
+            "rolling_strike_acc": [],  # Last 10 fights striking accuracy
+            "rolling_damage": [],  # Last 10 fights damage (sig_str - sig_str_absorbed)
+            # PHASE 1C: Opponent-adjusted performance tracking
+            "vs_elite_record": {"wins": 0, "fights": 0},  # Record vs top 25% ELO opponents
+            "vs_striker_record": {"wins": 0, "fights": 0},  # Record vs strikers (high SLpM)
+            "vs_grappler_record": {"wins": 0, "fights": 0},  # Record vs grapplers (high TD avg)
+            "vs_durable_record": {"wins": 0, "fights": 0},  # Record vs durable fighters
+            "vs_finisher_record": {"wins": 0, "fights": 0},  # Record vs fighters with high finish rate
+            "finish_vs_elite": {"finishes": 0, "fights": 0},  # Finish rate vs elite
+            "recent_opponent_elos": [],  # Last 5 opponent ELOs
+            "recent_opponent_styles": [],  # Last 5 opponent styles (striker=1, grappler=-1, balanced=0)
         }
 
         # Initialize corrected columns
@@ -897,7 +1041,25 @@ class ImprovedUFCPredictor:
                          # NEW: Recent momentum vs career
                          "distance_pct_momentum", "slpm_momentum", "ctrl_sec_momentum",
                          # NEW: Main event experience
-                         "main_event_fights"]:
+                         "main_event_fights",
+                         # PHASE 1B: Rolling statistics (averages over last 3/5/10 fights)
+                         "rolling_slpm_3", "rolling_slpm_5", "rolling_slpm_10",
+                         "rolling_sapm_3", "rolling_sapm_5", "rolling_sapm_10",
+                         "rolling_td_acc_3", "rolling_td_acc_5", "rolling_td_acc_10",
+                         "rolling_td_def_3", "rolling_td_def_5", "rolling_td_def_10",
+                         "rolling_ctrl_3", "rolling_ctrl_5", "rolling_ctrl_10",
+                         "rolling_finish_rate_3", "rolling_finish_rate_5", "rolling_finish_rate_10",
+                         "rolling_strike_acc_3", "rolling_strike_acc_5", "rolling_strike_acc_10",
+                         "rolling_damage_3", "rolling_damage_5", "rolling_damage_10",
+                         # Variance/consistency metrics
+                         "slpm_variance_5", "sapm_variance_5",
+                         "performance_consistency_5",
+                         # Trend features (improving/declining)
+                         "slpm_trend_5", "td_acc_trend_5", "finish_rate_trend_5",
+                         # PHASE 1C: Opponent-adjusted metrics
+                         "win_rate_vs_elite", "win_rate_vs_strikers", "win_rate_vs_grapplers",
+                         "win_rate_vs_durable", "win_rate_vs_finishers", "finish_rate_vs_elite",
+                         "recent_opponent_quality_5", "style_versatility", "step_up_performance"]:
                 df[f"{prefix}_{stat}_corrected"] = 0.0
 
         df["h2h_advantage"] = 0.0
@@ -1025,6 +1187,139 @@ class ImprovedUFCPredictor:
                 # NEW: Main event experience (5-round fights)
                 df.at[idx, f"{prefix}_main_event_fights_corrected"] = stats["main_event_fights"]
 
+                # PHASE 1B: Rolling statistics (last 3/5/10 fights averages)
+                # Helper function to calculate rolling average
+                def rolling_avg(values, window):
+                    if len(values) >= window:
+                        return sum(values[-window:]) / window
+                    elif len(values) > 0:
+                        return sum(values) / len(values)
+                    return 0
+
+                # SLpM rolling averages
+                df.at[idx, f"{prefix}_rolling_slpm_3_corrected"] = rolling_avg(stats["rolling_slpm"], 3)
+                df.at[idx, f"{prefix}_rolling_slpm_5_corrected"] = rolling_avg(stats["rolling_slpm"], 5)
+                df.at[idx, f"{prefix}_rolling_slpm_10_corrected"] = rolling_avg(stats["rolling_slpm"], 10)
+
+                # SApM rolling averages
+                df.at[idx, f"{prefix}_rolling_sapm_3_corrected"] = rolling_avg(stats["rolling_sapm"], 3)
+                df.at[idx, f"{prefix}_rolling_sapm_5_corrected"] = rolling_avg(stats["rolling_sapm"], 5)
+                df.at[idx, f"{prefix}_rolling_sapm_10_corrected"] = rolling_avg(stats["rolling_sapm"], 10)
+
+                # TD accuracy rolling averages
+                df.at[idx, f"{prefix}_rolling_td_acc_3_corrected"] = rolling_avg(stats["rolling_td_acc"], 3)
+                df.at[idx, f"{prefix}_rolling_td_acc_5_corrected"] = rolling_avg(stats["rolling_td_acc"], 5)
+                df.at[idx, f"{prefix}_rolling_td_acc_10_corrected"] = rolling_avg(stats["rolling_td_acc"], 10)
+
+                # TD defense rolling averages
+                df.at[idx, f"{prefix}_rolling_td_def_3_corrected"] = rolling_avg(stats["rolling_td_def"], 3)
+                df.at[idx, f"{prefix}_rolling_td_def_5_corrected"] = rolling_avg(stats["rolling_td_def"], 5)
+                df.at[idx, f"{prefix}_rolling_td_def_10_corrected"] = rolling_avg(stats["rolling_td_def"], 10)
+
+                # Control time rolling averages
+                df.at[idx, f"{prefix}_rolling_ctrl_3_corrected"] = rolling_avg(stats["rolling_ctrl_time"], 3)
+                df.at[idx, f"{prefix}_rolling_ctrl_5_corrected"] = rolling_avg(stats["rolling_ctrl_time"], 5)
+                df.at[idx, f"{prefix}_rolling_ctrl_10_corrected"] = rolling_avg(stats["rolling_ctrl_time"], 10)
+
+                # Finish rate rolling averages
+                df.at[idx, f"{prefix}_rolling_finish_rate_3_corrected"] = rolling_avg(stats["rolling_finishes"], 3)
+                df.at[idx, f"{prefix}_rolling_finish_rate_5_corrected"] = rolling_avg(stats["rolling_finishes"], 5)
+                df.at[idx, f"{prefix}_rolling_finish_rate_10_corrected"] = rolling_avg(stats["rolling_finishes"], 10)
+
+                # Strike accuracy rolling averages
+                df.at[idx, f"{prefix}_rolling_strike_acc_3_corrected"] = rolling_avg(stats["rolling_strike_acc"], 3)
+                df.at[idx, f"{prefix}_rolling_strike_acc_5_corrected"] = rolling_avg(stats["rolling_strike_acc"], 5)
+                df.at[idx, f"{prefix}_rolling_strike_acc_10_corrected"] = rolling_avg(stats["rolling_strike_acc"], 10)
+
+                # Damage rolling averages (net striking)
+                df.at[idx, f"{prefix}_rolling_damage_3_corrected"] = rolling_avg(stats["rolling_damage"], 3)
+                df.at[idx, f"{prefix}_rolling_damage_5_corrected"] = rolling_avg(stats["rolling_damage"], 5)
+                df.at[idx, f"{prefix}_rolling_damage_10_corrected"] = rolling_avg(stats["rolling_damage"], 10)
+
+                # Variance/Consistency metrics (last 5 fights)
+                if len(stats["rolling_slpm"]) >= 5:
+                    values = stats["rolling_slpm"][-5:]
+                    mean_val = sum(values) / 5
+                    variance = sum((x - mean_val) ** 2 for x in values) / 5
+                    df.at[idx, f"{prefix}_slpm_variance_5_corrected"] = variance
+
+                if len(stats["rolling_sapm"]) >= 5:
+                    values = stats["rolling_sapm"][-5:]
+                    mean_val = sum(values) / 5
+                    variance = sum((x - mean_val) ** 2 for x in values) / 5
+                    df.at[idx, f"{prefix}_sapm_variance_5_corrected"] = variance
+
+                # Performance consistency (inverse of variance in damage output)
+                if len(stats["rolling_damage"]) >= 5:
+                    values = stats["rolling_damage"][-5:]
+                    mean_val = sum(values) / 5
+                    variance = sum((x - mean_val) ** 2 for x in values) / 5
+                    # Consistency = 1 / (1 + variance) - higher = more consistent
+                    df.at[idx, f"{prefix}_performance_consistency_5_corrected"] = 1.0 / (1.0 + variance)
+
+                # Trend features (improving/declining) - linear regression slope
+                def calculate_trend(values):
+                    """Calculate linear trend slope"""
+                    if len(values) < 3:
+                        return 0
+                    n = len(values)
+                    x = list(range(n))
+                    x_mean = sum(x) / n
+                    y_mean = sum(values) / n
+                    numerator = sum((x[i] - x_mean) * (values[i] - y_mean) for i in range(n))
+                    denominator = sum((x[i] - x_mean) ** 2 for i in range(n))
+                    return numerator / denominator if denominator != 0 else 0
+
+                if len(stats["rolling_slpm"]) >= 3:
+                    df.at[idx, f"{prefix}_slpm_trend_5_corrected"] = calculate_trend(stats["rolling_slpm"][-5:] if len(stats["rolling_slpm"]) >= 5 else stats["rolling_slpm"])
+
+                if len(stats["rolling_td_acc"]) >= 3:
+                    df.at[idx, f"{prefix}_td_acc_trend_5_corrected"] = calculate_trend(stats["rolling_td_acc"][-5:] if len(stats["rolling_td_acc"]) >= 5 else stats["rolling_td_acc"])
+
+                if len(stats["rolling_finishes"]) >= 3:
+                    df.at[idx, f"{prefix}_finish_rate_trend_5_corrected"] = calculate_trend(stats["rolling_finishes"][-5:] if len(stats["rolling_finishes"]) >= 5 else stats["rolling_finishes"])
+
+                # PHASE 1C: Opponent-adjusted performance metrics
+                # Win rate vs elite opponents (top 25% ELO > ~1600)
+                if stats["vs_elite_record"]["fights"] > 0:
+                    df.at[idx, f"{prefix}_win_rate_vs_elite_corrected"] = stats["vs_elite_record"]["wins"] / stats["vs_elite_record"]["fights"]
+
+                # Win rate vs strikers (high SLpM opponents)
+                if stats["vs_striker_record"]["fights"] > 0:
+                    df.at[idx, f"{prefix}_win_rate_vs_strikers_corrected"] = stats["vs_striker_record"]["wins"] / stats["vs_striker_record"]["fights"]
+
+                # Win rate vs grapplers (high TD avg opponents)
+                if stats["vs_grappler_record"]["fights"] > 0:
+                    df.at[idx, f"{prefix}_win_rate_vs_grapplers_corrected"] = stats["vs_grappler_record"]["wins"] / stats["vs_grappler_record"]["fights"]
+
+                # Win rate vs durable opponents (high durability)
+                if stats["vs_durable_record"]["fights"] > 0:
+                    df.at[idx, f"{prefix}_win_rate_vs_durable_corrected"] = stats["vs_durable_record"]["wins"] / stats["vs_durable_record"]["fights"]
+
+                # Win rate vs finishers (high finish rate opponents)
+                if stats["vs_finisher_record"]["fights"] > 0:
+                    df.at[idx, f"{prefix}_win_rate_vs_finishers_corrected"] = stats["vs_finisher_record"]["wins"] / stats["vs_finisher_record"]["fights"]
+
+                # Finish rate vs elite opponents
+                if stats["finish_vs_elite"]["fights"] > 0:
+                    df.at[idx, f"{prefix}_finish_rate_vs_elite_corrected"] = stats["finish_vs_elite"]["finishes"] / stats["finish_vs_elite"]["fights"]
+
+                # Recent opponent quality (avg ELO of last 5 opponents)
+                if len(stats["recent_opponent_elos"]) > 0:
+                    df.at[idx, f"{prefix}_recent_opponent_quality_5_corrected"] = sum(stats["recent_opponent_elos"]) / len(stats["recent_opponent_elos"])
+                else:
+                    df.at[idx, f"{prefix}_recent_opponent_quality_5_corrected"] = 1500  # Default
+
+                # Style versatility (can beat both strikers and grapplers)
+                striker_success = stats["vs_striker_record"]["wins"] / stats["vs_striker_record"]["fights"] if stats["vs_striker_record"]["fights"] > 0 else 0.5
+                grappler_success = stats["vs_grappler_record"]["wins"] / stats["vs_grappler_record"]["fights"] if stats["vs_grappler_record"]["fights"] > 0 else 0.5
+                df.at[idx, f"{prefix}_style_versatility_corrected"] = min(striker_success, grappler_success)  # Worst matchup determines versatility
+
+                # Step-up performance (performance vs elite - performance vs non-elite)
+                elite_rate = stats["vs_elite_record"]["wins"] / stats["vs_elite_record"]["fights"] if stats["vs_elite_record"]["fights"] > 0 else 0.5
+                overall_rate = stats["wins"] / max(stats["wins"] + stats["losses"], 1)
+                df.at[idx, f"{prefix}_step_up_performance_corrected"] = elite_rate - overall_rate
+
             # Calculate opponent quality differential
             r_opp_elo = df.at[idx, "r_avg_opponent_elo_corrected"]
             b_opp_elo = df.at[idx, "b_avg_opponent_elo_corrected"]
@@ -1148,6 +1443,162 @@ class ImprovedUFCPredictor:
                     if len(fighter_stats[fighter]["recent_ctrl_sec"]) > 3:
                         fighter_stats[fighter]["recent_ctrl_sec"] = fighter_stats[fighter]["recent_ctrl_sec"][-3:]
 
+                    # PHASE 1B: Update rolling statistics (keep last 10 fights)
+                    # SLpM for this fight
+                    if fight_time > 0:
+                        this_fight_slpm = row.get(f"{f_prefix}_sig_str", 0) / fight_time if pd.notna(row.get(f"{f_prefix}_sig_str")) else 0
+                        fighter_stats[fighter]["rolling_slpm"].append(this_fight_slpm)
+                        if len(fighter_stats[fighter]["rolling_slpm"]) > 10:
+                            fighter_stats[fighter]["rolling_slpm"] = fighter_stats[fighter]["rolling_slpm"][-10:]
+
+                    # SApM for this fight
+                    if fight_time > 0:
+                        opp_prefix = "b" if f_prefix == "r" else "r"
+                        this_fight_sapm = row.get(f"{opp_prefix}_sig_str", 0) / fight_time if pd.notna(row.get(f"{opp_prefix}_sig_str")) else 0
+                        fighter_stats[fighter]["rolling_sapm"].append(this_fight_sapm)
+                        if len(fighter_stats[fighter]["rolling_sapm"]) > 10:
+                            fighter_stats[fighter]["rolling_sapm"] = fighter_stats[fighter]["rolling_sapm"][-10:]
+
+                    # TD accuracy for this fight
+                    td_att = row.get(f"{f_prefix}_td_att", 0)
+                    if pd.notna(td_att) and td_att > 0:
+                        this_fight_td_acc = row.get(f"{f_prefix}_td", 0) / td_att
+                    else:
+                        this_fight_td_acc = 0
+                    fighter_stats[fighter]["rolling_td_acc"].append(this_fight_td_acc)
+                    if len(fighter_stats[fighter]["rolling_td_acc"]) > 10:
+                        fighter_stats[fighter]["rolling_td_acc"] = fighter_stats[fighter]["rolling_td_acc"][-10:]
+
+                    # TD defense for this fight
+                    opp_prefix = "b" if f_prefix == "r" else "r"
+                    opp_td_att = row.get(f"{opp_prefix}_td_att", 0)
+                    if pd.notna(opp_td_att) and opp_td_att > 0:
+                        opp_td = row.get(f"{opp_prefix}_td", 0)
+                        this_fight_td_def = 1.0 - (opp_td / opp_td_att)
+                    else:
+                        this_fight_td_def = 1.0  # Perfect defense if opponent had no attempts
+                    fighter_stats[fighter]["rolling_td_def"].append(this_fight_td_def)
+                    if len(fighter_stats[fighter]["rolling_td_def"]) > 10:
+                        fighter_stats[fighter]["rolling_td_def"] = fighter_stats[fighter]["rolling_td_def"][-10:]
+
+                    # Control time for this fight
+                    this_fight_ctrl_sec = row.get(f"{f_prefix}_ctrl_sec", 0) if pd.notna(row.get(f"{f_prefix}_ctrl_sec")) else 0
+                    fighter_stats[fighter]["rolling_ctrl_time"].append(this_fight_ctrl_sec)
+                    if len(fighter_stats[fighter]["rolling_ctrl_time"]) > 10:
+                        fighter_stats[fighter]["rolling_ctrl_time"] = fighter_stats[fighter]["rolling_ctrl_time"][-10:]
+
+                    # Finish indicator (1 = finish, 0 = decision)
+                    method = str(row.get("method", "")).lower()
+                    is_finish = 1 if ("ko" in method or "tko" in method or "sub" in method) else 0
+                    fighter_stats[fighter]["rolling_finishes"].append(is_finish)
+                    if len(fighter_stats[fighter]["rolling_finishes"]) > 10:
+                        fighter_stats[fighter]["rolling_finishes"] = fighter_stats[fighter]["rolling_finishes"][-10:]
+
+                    # Strike accuracy for this fight
+                    sig_str_att = row.get(f"{f_prefix}_sig_str_att", 0)
+                    if pd.notna(sig_str_att) and sig_str_att > 0:
+                        this_fight_strike_acc = row.get(f"{f_prefix}_sig_str", 0) / sig_str_att
+                    else:
+                        this_fight_strike_acc = 0
+                    fighter_stats[fighter]["rolling_strike_acc"].append(this_fight_strike_acc)
+                    if len(fighter_stats[fighter]["rolling_strike_acc"]) > 10:
+                        fighter_stats[fighter]["rolling_strike_acc"] = fighter_stats[fighter]["rolling_strike_acc"][-10:]
+
+                    # Damage (net striking) for this fight
+                    sig_str = row.get(f"{f_prefix}_sig_str", 0) if pd.notna(row.get(f"{f_prefix}_sig_str")) else 0
+                    opp_sig_str = row.get(f"{opp_prefix}_sig_str", 0) if pd.notna(row.get(f"{opp_prefix}_sig_str")) else 0
+                    this_fight_damage = sig_str - opp_sig_str
+                    fighter_stats[fighter]["rolling_damage"].append(this_fight_damage)
+                    if len(fighter_stats[fighter]["rolling_damage"]) > 10:
+                        fighter_stats[fighter]["rolling_damage"] = fighter_stats[fighter]["rolling_damage"][-10:]
+
+                    # PHASE 1C: Update opponent-adjusted performance records
+                    # Classify opponent based on THEIR pre-fight stats
+                    opponent = r_fighter if f_prefix == "b" else b_fighter
+                    opp_stats = fighter_stats.get(opponent, {})
+
+                    # Get opponent's pre-fight ELO (from the recorded value at fight start)
+                    opp_elo = row.get(f"{opp_prefix}_elo_before_corrected", 1500)
+                    if pd.notna(opp_elo):
+                        fighter_stats[fighter]["recent_opponent_elos"].append(opp_elo)
+                        if len(fighter_stats[fighter]["recent_opponent_elos"]) > 5:
+                            fighter_stats[fighter]["recent_opponent_elos"] = fighter_stats[fighter]["recent_opponent_elos"][-5:]
+
+                    # Classify opponent as elite (top 25% ELO ~ 1600+)
+                    is_elite_opponent = opp_elo >= 1600 if pd.notna(opp_elo) else False
+
+                    # Classify opponent style based on their career averages
+                    opp_slpm = row.get(f"{opp_prefix}_pro_SLpM_corrected", 0)
+                    opp_td_avg = row.get(f"{opp_prefix}_pro_td_avg_corrected", 0)
+
+                    is_striker = False
+                    is_grappler = False
+                    opponent_style = 0  # -1=grappler, 0=balanced, 1=striker
+
+                    if pd.notna(opp_slpm) and pd.notna(opp_td_avg):
+                        # High SLpM (>4.0) and low TD avg (<2.0) = Striker
+                        if opp_slpm > 4.0 and opp_td_avg < 2.0:
+                            is_striker = True
+                            opponent_style = 1
+                        # High TD avg (>3.0) and lower SLpM = Grappler
+                        elif opp_td_avg > 3.0 and opp_slpm < 4.5:
+                            is_grappler = True
+                            opponent_style = -1
+
+                    fighter_stats[fighter]["recent_opponent_styles"].append(opponent_style)
+                    if len(fighter_stats[fighter]["recent_opponent_styles"]) > 5:
+                        fighter_stats[fighter]["recent_opponent_styles"] = fighter_stats[fighter]["recent_opponent_styles"][-5:]
+
+                    # Classify opponent as durable (high fight count, good defense)
+                    opp_fights = opp_stats.get("wins", 0) + opp_stats.get("losses", 0)
+                    opp_str_def = row.get(f"{opp_prefix}_pro_str_def_corrected", 0)
+                    is_durable = (opp_fights >= 15 and opp_str_def > 0.55) if pd.notna(opp_str_def) else False
+
+                    # Classify opponent as finisher (high finish rate)
+                    opp_finishes = opp_stats.get("finishes", 0)
+                    opp_finish_rate = opp_finishes / max(opp_fights, 1) if opp_fights > 0 else 0
+                    is_finisher = opp_finish_rate > 0.65
+
+                    # Determine if fighter won this fight
+                    winner = row.get("winner")
+                    did_win = (winner == "Red" and f_prefix == "r") or (winner == "Blue" and f_prefix == "b")
+
+                    # Update vs_elite record
+                    if is_elite_opponent:
+                        fighter_stats[fighter]["vs_elite_record"]["fights"] += 1
+                        if did_win:
+                            fighter_stats[fighter]["vs_elite_record"]["wins"] += 1
+
+                        # Track finishes vs elite
+                        fighter_stats[fighter]["finish_vs_elite"]["fights"] += 1
+                        method = str(row.get("method", "")).lower()
+                        if did_win and ("ko" in method or "tko" in method or "sub" in method):
+                            fighter_stats[fighter]["finish_vs_elite"]["finishes"] += 1
+
+                    # Update vs_striker record
+                    if is_striker:
+                        fighter_stats[fighter]["vs_striker_record"]["fights"] += 1
+                        if did_win:
+                            fighter_stats[fighter]["vs_striker_record"]["wins"] += 1
+
+                    # Update vs_grappler record
+                    if is_grappler:
+                        fighter_stats[fighter]["vs_grappler_record"]["fights"] += 1
+                        if did_win:
+                            fighter_stats[fighter]["vs_grappler_record"]["wins"] += 1
+
+                    # Update vs_durable record
+                    if is_durable:
+                        fighter_stats[fighter]["vs_durable_record"]["fights"] += 1
+                        if did_win:
+                            fighter_stats[fighter]["vs_durable_record"]["wins"] += 1
+
+                    # Update vs_finisher record
+                    if is_finisher:
+                        fighter_stats[fighter]["vs_finisher_record"]["fights"] += 1
+                        if did_win:
+                            fighter_stats[fighter]["vs_finisher_record"]["wins"] += 1
+
         print("Data leakage fixed successfully!\n")
 
         # Calculate ELO ratings chronologically (no data leakage)
@@ -1158,7 +1609,7 @@ class ImprovedUFCPredictor:
     def prepare_core_features(self, df):
         """Prepare only the core 50-60 features"""
         print("\n" + "="*80)
-        print("PREPARING CORE FEATURES (50-60 vs previous 200+)")
+        print("PREPARING CORE FEATURES")
         print("="*80 + "\n")
 
         # Filter to valid winners only
@@ -1489,6 +1940,407 @@ class ImprovedUFCPredictor:
         # Simple count differential - big fight experience matters
         df["main_event_experience_diff"] = df["main_event_fights_diff_corrected"]
 
+        # ========== PHASE 1A: POLYNOMIAL FEATURES (NON-LINEAR EFFECTS) ==========
+
+        # TIER 1: Critical Non-Linear Features (Top importances)
+        # These capture U-shaped curves, saturation effects, and prime years
+
+        # 1. ELO Squared (elite fighters have exponential advantage)
+        df["elo_diff_squared"] = df["elo_diff"] ** 2
+
+        # 2. Age Squared (prime years = 26-33, U-shaped curve)
+        df["age_diff_squared"] = df["age_at_event_diff"] ** 2
+
+        # 3. Age Cubic (better captures prime decline after 35)
+        df["age_diff_cubic"] = df["age_at_event_diff"] ** 3
+
+        # 4. Win/Loss Ratio Squared (elite records matter more)
+        df["win_loss_ratio_diff_squared"] = df["win_loss_ratio_diff_corrected"] ** 2
+
+        # 5. Reach Squared (extreme reach advantages compound)
+        df["reach_diff_squared"] = df["reach_diff"] ** 2
+
+        # TIER 2: Momentum Non-Linearity (hot streaks are exponential)
+
+        # 6. Recent Form Squared (momentum snowballs)
+        df["recent_form_diff_squared"] = df["recent_form_diff_corrected"] ** 2
+
+        # 7. Win Streak Squared (long streaks = confidence boost)
+        df["win_streak_diff_squared"] = df["win_streak_diff_corrected"] ** 2
+
+        # 8. Momentum Swing Squared (extreme momentum matters more)
+        df["momentum_swing_squared"] = df["momentum_swing"] ** 2
+
+        # TIER 3: Skill Saturation (diminishing returns at extremes)
+
+        # 9. Striking Volume Squared (high output vs very high output)
+        df["pro_SLpM_diff_squared"] = df["pro_SLpM_diff_corrected"] ** 2
+
+        # 10. Striking Accuracy Squared (precision compounds)
+        df["pro_sig_str_acc_diff_squared"] = df["pro_sig_str_acc_diff_corrected"] ** 2
+
+        # 11. Takedown Average Squared (TD specialists dominate)
+        df["pro_td_avg_diff_squared"] = df["pro_td_avg_diff_corrected"] ** 2
+
+        # 12. Net Striking Squared (elite strikers pull away)
+        df["net_striking_advantage_squared"] = df["net_striking_advantage"] ** 2
+
+        # TIER 4: Physical Attributes (size advantages compound)
+
+        # 13. Height Squared (tall fighters control distance exponentially)
+        df["height_diff_squared"] = df["height_diff"] ** 2
+
+        # 14. Weight Squared (weight cuts/advantages non-linear)
+        df["weight_diff_squared"] = df["weight_diff"] ** 2
+
+        # 15. Ape Index Squared (extreme wingspan = huge advantage)
+        df["ape_index_diff_squared"] = df["ape_index_diff"] ** 2
+
+        # TIER 5: Experience Effects (veteran wisdom vs youth)
+
+        # 16. Experience Gap Squared (huge experience gaps matter more)
+        df["experience_gap_squared"] = df["experience_gap"] ** 2
+
+        # 17. Days Since Last Fight Squared (ring rust/overtraining curves)
+        df["days_since_last_fight_squared"] = df["days_since_last_fight_diff_corrected"] ** 2
+
+        # TIER 6: Finishing Ability (finish rates plateau/accelerate)
+
+        # 18. KO Rate Squared (KO artists have disproportionate impact)
+        df["ko_rate_diff_squared"] = df["ko_rate_diff_corrected"] ** 2
+
+        # 19. Sub Rate Squared (submission specialists create fear)
+        df["sub_rate_diff_squared"] = df["sub_rate_diff_corrected"] ** 2
+
+        # 20. Finish Rate Squared (combined finishing threat)
+        df["finish_rate_diff_squared"] = df["finish_rate_diff"] ** 2
+
+        # TIER 7: Defense/Durability (defense compounds exponentially)
+
+        # 21. Striking Defense Squared (elite defense = hard to hit)
+        df["pro_str_def_diff_squared"] = df["pro_str_def_diff_corrected"] ** 2
+
+        # 22. TD Defense Squared (elite wrestlers hard to take down)
+        df["pro_td_def_diff_squared"] = df["pro_td_def_diff_corrected"] ** 2
+
+        # 23. Durability Squared (iron chins rare and valuable)
+        df["durability_diff_squared"] = df["durability_diff_corrected"] ** 2
+
+        # TIER 8: Positional Mastery (specialist advantages compound)
+
+        # 24. Clinch % Squared (clinch specialists dominate there)
+        df["clinch_pct_diff_squared"] = df["clinch_pct_diff_corrected"] ** 2
+
+        # 25. Ground % Squared (ground-and-pound specialists)
+        df["ground_pct_diff_squared"] = df["ground_pct_diff_corrected"] ** 2
+
+        # 26. Distance % Squared (distance strikers control range)
+        df["distance_pct_diff_squared"] = df["distance_pct_diff_corrected"] ** 2
+
+        # 27. Control Time Squared (control time dominance compounds)
+        df["avg_ctrl_sec_diff_squared"] = df["avg_ctrl_sec_diff_corrected"] ** 2
+
+        # TIER 9: Advanced Interaction Squares (amplify synergies)
+
+        # 28. ELO × Form Squared (hot elite fighters unbeatable)
+        df["elo_x_form_squared"] = df["elo_x_form"] ** 2
+
+        # 29. Striker Advantage Squared (pure strikers vs pure grapplers)
+        df["striker_advantage_squared"] = df["striker_advantage"] ** 2
+
+        # 30. Grappler Advantage Squared (pure grapplers dominate)
+        df["grappler_advantage_squared"] = df["grappler_advantage"] ** 2
+
+        # TIER 10: Quality/Momentum Trends (recent changes matter more)
+
+        # 31. SLpM Momentum Squared (improving strikers surge)
+        df["slpm_momentum_diff_squared"] = df["slpm_momentum_diff_corrected"] ** 2
+
+        # 32. Control Momentum Squared (grappling improvements)
+        df["ctrl_sec_momentum_diff_squared"] = df["ctrl_sec_momentum_diff_corrected"] ** 2
+
+        # TIER 11: Elite Compound Squares (championship factors)
+
+        # 33. Elite Finisher Squared (triple threat advantage)
+        df["elite_finisher_squared"] = df["elite_finisher"] ** 2
+
+        # 34. Veteran Advantage Squared (experience in prime)
+        df["veteran_advantage_squared"] = df["veteran_advantage"] ** 2
+
+        # 35. Unstoppable Streak Squared (peak momentum)
+        df["unstoppable_streak_squared"] = df["unstoppable_streak"] ** 2
+
+        # TIER 12: H2H and Special Cases (history repeats)
+
+        # 36. H2H Advantage Squared (rematches favor previous winner)
+        df["h2h_advantage_squared"] = df["h2h_advantage"] ** 2
+
+        # 37. Opponent Quality Squared (strength of schedule non-linear)
+        df["avg_opponent_elo_diff_squared"] = df["avg_opponent_elo_diff_corrected"] ** 2
+
+        # 38. Main Event Experience Squared (championship pedigree)
+        df["main_event_experience_diff_squared"] = df["main_event_experience_diff"] ** 2
+
+        # TIER 13: Cubic Terms for Complex Curves (age prime is critical)
+
+        # 39. ELO Cubic (extreme rating gaps = certain victory)
+        df["elo_diff_cubic"] = df["elo_diff"] ** 3
+
+        # 40. Win/Loss Ratio Cubic (undefeated fighters vs journeymen)
+        df["win_loss_ratio_diff_cubic"] = df["win_loss_ratio_diff_corrected"] ** 3
+
+        # 41. Reach Cubic (extreme reach = impossible to close distance)
+        df["reach_diff_cubic"] = df["reach_diff"] ** 3
+
+        # 42. Experience Gap Cubic (veterans vs debuters)
+        df["experience_gap_cubic"] = df["experience_gap"] ** 3
+
+        # ========== PHASE 1B: ROLLING STATISTICS DIFFERENTIALS ==========
+
+        # Rolling averages (recent performance trends)
+        rolling_features = [
+            "rolling_slpm_3", "rolling_slpm_5", "rolling_slpm_10",
+            "rolling_sapm_3", "rolling_sapm_5", "rolling_sapm_10",
+            "rolling_td_acc_3", "rolling_td_acc_5", "rolling_td_acc_10",
+            "rolling_td_def_3", "rolling_td_def_5", "rolling_td_def_10",
+            "rolling_ctrl_3", "rolling_ctrl_5", "rolling_ctrl_10",
+            "rolling_finish_rate_3", "rolling_finish_rate_5", "rolling_finish_rate_10",
+            "rolling_strike_acc_3", "rolling_strike_acc_5", "rolling_strike_acc_10",
+            "rolling_damage_3", "rolling_damage_5", "rolling_damage_10",
+        ]
+
+        for feature in rolling_features:
+            df[f"{feature}_diff"] = df[f"r_{feature}_corrected"] - df[f"b_{feature}_corrected"]
+
+        # Variance/consistency metrics
+        variance_features = ["slpm_variance_5", "sapm_variance_5", "performance_consistency_5"]
+        for feature in variance_features:
+            df[f"{feature}_diff"] = df[f"r_{feature}_corrected"] - df[f"b_{feature}_corrected"]
+
+        # Trend features (improving/declining)
+        trend_features = ["slpm_trend_5", "td_acc_trend_5", "finish_rate_trend_5"]
+        for feature in trend_features:
+            df[f"{feature}_diff"] = df[f"r_{feature}_corrected"] - df[f"b_{feature}_corrected"]
+
+        # ========== PHASE 1C: OPPONENT-ADJUSTED METRICS DIFFERENTIALS ==========
+
+        # Core opponent-adjusted metrics (base differentials)
+        opponent_features = [
+            "win_rate_vs_elite", "win_rate_vs_strikers", "win_rate_vs_grapplers",
+            "win_rate_vs_durable", "win_rate_vs_finishers", "finish_rate_vs_elite",
+            "recent_opponent_quality_5", "style_versatility", "step_up_performance"
+        ]
+
+        for feature in opponent_features:
+            df[f"{feature}_diff"] = df[f"r_{feature}_corrected"] - df[f"b_{feature}_corrected"]
+
+        # Interaction features (opponent-adjusted × other factors)
+        # 10. Step-up performance × ELO (elite fighters who perform better vs elite)
+        df["step_up_x_elo"] = df["step_up_performance_diff"] * df["elo_diff"]
+
+        # 11. Style versatility × Recent form (well-rounded fighters with momentum)
+        df["versatility_x_form"] = df["style_versatility_diff"] * df["recent_form_diff_corrected"]
+
+        # 12. Elite win rate × Opponent quality (proven vs quality opposition)
+        df["elite_wins_x_opp_quality"] = df["win_rate_vs_elite_diff"] * df["recent_opponent_quality_5_diff"]
+
+        # 13. Finish rate vs elite × Power metrics (finishers vs best competition)
+        df["elite_finish_x_power"] = df["finish_rate_vs_elite_diff"] * df["pro_SLpM_diff_corrected"]
+
+        # 14. Striker wins × Opponent striking (striker killer advantage)
+        df["striker_killer_metric"] = df["win_rate_vs_strikers_diff"] * df["pro_SLpM_diff_corrected"]
+
+        # 15. Grappler wins × Opponent grappling (grappler killer advantage)
+        df["grappler_killer_metric"] = df["win_rate_vs_grapplers_diff"] * df["pro_td_avg_diff_corrected"]
+
+        # Advanced composite metrics
+        # 16. Championship readiness (elite performance + opponent quality + step-up)
+        df["championship_readiness"] = (
+            df["win_rate_vs_elite_diff"] +
+            df["step_up_performance_diff"] +
+            (df["recent_opponent_quality_5_diff"] / 100)  # Scale down ELO
+        ) / 3
+
+        # 17. Competition level faced (recent opponent quality normalized)
+        df["competition_level"] = df["recent_opponent_quality_5_diff"] / 100  # Normalize ELO to similar scale
+
+        # ========== PHASE 1D: STATISTICAL RATIOS ==========
+
+        # TIER 1: Efficiency Ratios (damage/output per resource)
+        # 1. Striking output quality (volume × accuracy)
+        df["striking_output_quality_diff"] = df["pro_SLpM_diff_corrected"] * df["pro_sig_str_acc_diff_corrected"]
+
+        # 2. Grappling output quality (takedowns × accuracy)
+        df["grappling_output_quality_diff"] = df["pro_td_avg_diff_corrected"] * df["pro_td_acc_diff_corrected"]
+
+        # 3. Damage differential ratio (offense/defense in striking)
+        # SLpM / SApM shows who deals more than they take
+        r_damage_ratio = df["r_pro_SLpM_corrected"] / (df["r_pro_SApM_corrected"] + 0.01)  # Avoid div by 0
+        b_damage_ratio = df["b_pro_SLpM_corrected"] / (df["b_pro_SApM_corrected"] + 0.01)
+        df["damage_ratio_diff"] = r_damage_ratio - b_damage_ratio
+
+        # 4. Defense-to-offense balance (striking)
+        # Higher str_def / lower str_acc = defensive fighter
+        r_def_off_balance = (df["r_pro_str_def_corrected"] + 0.01) / (df["r_pro_sig_str_acc_corrected"] + 0.01)
+        b_def_off_balance = (df["b_pro_str_def_corrected"] + 0.01) / (df["b_pro_sig_str_acc_corrected"] + 0.01)
+        df["defense_offense_balance_diff"] = r_def_off_balance - b_def_off_balance
+
+        # 5. Takedown defense-to-offense balance
+        r_td_balance = (df["r_pro_td_def_corrected"] + 0.01) / (df["r_pro_td_acc_corrected"] + 0.01)
+        b_td_balance = (df["b_pro_td_def_corrected"] + 0.01) / (df["b_pro_td_acc_corrected"] + 0.01)
+        df["td_defense_offense_balance_diff"] = r_td_balance - b_td_balance
+
+        # 6. Finish efficiency (finishes per fight)
+        r_finish_rate = df["r_finish_rate"]
+        b_finish_rate = df["b_finish_rate"]
+        df["finish_efficiency_diff"] = r_finish_rate - b_finish_rate
+
+        # TIER 2: Quality Over Quantity Metrics
+        # 7. Precision striking (high accuracy relative to output)
+        # Accuracy / Volume = patient, precise striker
+        r_precision = (df["r_pro_sig_str_acc_corrected"] + 0.01) / (df["r_pro_SLpM_corrected"] + 0.01)
+        b_precision = (df["b_pro_sig_str_acc_corrected"] + 0.01) / (df["b_pro_SLpM_corrected"] + 0.01)
+        df["precision_striking_diff"] = r_precision - b_precision
+
+        # 8. Quality grappling (TD accuracy relative to attempts)
+        # High TD acc with moderate attempts = efficient grappler
+        r_quality_grappling = df["r_pro_td_acc_corrected"] * (df["r_pro_td_avg_corrected"] ** 0.5)
+        b_quality_grappling = df["b_pro_td_acc_corrected"] * (df["b_pro_td_avg_corrected"] ** 0.5)
+        df["quality_grappling_diff"] = r_quality_grappling - b_quality_grappling
+
+        # 9. Submission threat ratio (sub attempts relative to grappling)
+        r_sub_threat = (df["r_pro_sub_avg_corrected"] + 0.01) / (df["r_pro_td_avg_corrected"] + 0.01)
+        b_sub_threat = (df["b_pro_sub_avg_corrected"] + 0.01) / (df["b_pro_td_avg_corrected"] + 0.01)
+        df["submission_threat_ratio_diff"] = r_sub_threat - b_sub_threat
+
+        # TIER 3: Defensive Efficiency
+        # 10. Damage absorption relative to defense (lower is better)
+        # High SApM despite high str_def = facing tough competition or getting hit clean
+        r_absorption_efficiency = df["r_pro_SApM_corrected"] / (df["r_pro_str_def_corrected"] + 0.01)
+        b_absorption_efficiency = df["b_pro_SApM_corrected"] / (df["b_pro_str_def_corrected"] + 0.01)
+        df["damage_absorption_efficiency_diff"] = r_absorption_efficiency - b_absorption_efficiency
+
+        # 11. Total defense index (striking + grappling defense combined)
+        r_total_defense = (df["r_pro_str_def_corrected"] + df["r_pro_td_def_corrected"]) / 2
+        b_total_defense = (df["b_pro_str_def_corrected"] + df["b_pro_td_def_corrected"]) / 2
+        df["total_defense_index_diff"] = r_total_defense - b_total_defense
+
+        # 12. Defense versatility (both striking AND grappling defense)
+        r_def_versatility = (df["r_pro_str_def_corrected"] * df["r_pro_td_def_corrected"]) ** 0.5
+        b_def_versatility = (df["b_pro_str_def_corrected"] * df["b_pro_td_def_corrected"]) ** 0.5
+        df["defense_versatility_diff"] = r_def_versatility - b_def_versatility
+
+        # TIER 4: Offensive Versatility
+        # 13. Total offense index (striking + grappling output)
+        # Normalized to similar scales (SLpM usually 2-6, td_avg usually 1-4)
+        r_total_offense = df["r_pro_SLpM_corrected"] + (df["r_pro_td_avg_corrected"] * 1.5)
+        b_total_offense = df["b_pro_SLpM_corrected"] + (df["b_pro_td_avg_corrected"] * 1.5)
+        df["total_offense_index_diff"] = r_total_offense - b_total_offense
+
+        # 14. Offensive versatility (both striking AND grappling threat)
+        # Geometric mean rewards being good at both
+        r_off_versatility = (df["r_pro_SLpM_corrected"] * df["r_pro_td_avg_corrected"]) ** 0.5
+        b_off_versatility = (df["b_pro_SLpM_corrected"] * df["b_pro_td_avg_corrected"]) ** 0.5
+        df["offensive_versatility_diff"] = r_off_versatility - b_off_versatility
+
+        # 15. Strike-to-grapple ratio (striker vs grappler index)
+        # >1 = striker, <1 = grappler
+        r_striker_index = (df["r_pro_SLpM_corrected"] + 0.1) / (df["r_pro_td_avg_corrected"] + 0.1)
+        b_striker_index = (df["b_pro_SLpM_corrected"] + 0.1) / (df["b_pro_td_avg_corrected"] + 0.1)
+        df["striker_index_diff"] = r_striker_index - b_striker_index
+
+        # TIER 5: Win Quality Metrics
+        # 16. Win/loss ratio squared (magnifies gap between winners and losers)
+        df["win_loss_ratio_squared_diff"] = (df["r_win_loss_ratio_corrected"] ** 2) - (df["b_win_loss_ratio_corrected"] ** 2)
+
+        # 17. Experience quality (wins relative to total fights)
+        r_experience_quality = df["r_wins_corrected"] / (df["r_wins_corrected"] + df["r_losses_corrected"] + 1)
+        b_experience_quality = df["b_wins_corrected"] / (df["b_wins_corrected"] + df["b_losses_corrected"] + 1)
+        df["experience_quality_diff"] = r_experience_quality - b_experience_quality
+
+        # 18. Win efficiency (wins per year of career)
+        # Assumes fighters with more wins in shorter time = active and successful
+        r_win_efficiency = df["r_wins_corrected"] / (df["r_age_at_event"] - 18 + 1)  # Career length approximation
+        b_win_efficiency = df["b_wins_corrected"] / (df["b_age_at_event"] - 18 + 1)
+        df["win_efficiency_diff"] = r_win_efficiency - b_win_efficiency
+
+        # TIER 6: Recent Form Ratios
+        # 19. Recent form to career average ratio (recent performance vs career baseline)
+        r_form_ratio = (df["r_recent_form_corrected"] + 5) / (r_experience_quality + 0.5)  # Center recent_form around 5
+        b_form_ratio = (df["b_recent_form_corrected"] + 5) / (b_experience_quality + 0.5)
+        df["recent_form_ratio_diff"] = r_form_ratio - b_form_ratio
+
+        # 20. Momentum quality (win streak relative to total wins)
+        r_momentum_quality = (df["r_win_streak_corrected"] + 1) / (df["r_wins_corrected"] + 1)
+        b_momentum_quality = (df["b_win_streak_corrected"] + 1) / (df["b_wins_corrected"] + 1)
+        df["momentum_quality_diff"] = r_momentum_quality - b_momentum_quality
+
+        # TIER 7: Physical Efficiency Ratios
+        # 21. Reach efficiency (reach relative to height)
+        # Ape index already captures this, but ratio form emphasizes it
+        r_reach_efficiency = (df["r_reach"] + 1) / (df["r_height"] + 1)
+        b_reach_efficiency = (df["b_reach"] + 1) / (df["b_height"] + 1)
+        df["reach_efficiency_diff"] = r_reach_efficiency - b_reach_efficiency
+
+        # 22. Size-adjusted striking (SLpM relative to weight class)
+        # Heavier fighters often strike less frequently
+        # Normalized by dividing by weight (in lbs)
+        r_size_adj_striking = df["r_pro_SLpM_corrected"] / ((df["r_weight"] / 100) + 0.01)
+        b_size_adj_striking = df["b_pro_SLpM_corrected"] / ((df["b_weight"] / 100) + 0.01)
+        df["size_adjusted_striking_diff"] = r_size_adj_striking - b_size_adj_striking
+
+        # 23. Size-adjusted grappling (TD avg relative to weight)
+        r_size_adj_grappling = df["r_pro_td_avg_corrected"] / ((df["r_weight"] / 100) + 0.01)
+        b_size_adj_grappling = df["b_pro_td_avg_corrected"] / ((df["b_weight"] / 100) + 0.01)
+        df["size_adjusted_grappling_diff"] = r_size_adj_grappling - b_size_adj_grappling
+
+        # TIER 8: Advanced Composite Ratios
+        # 24. Complete fighter index (offense × defense × finish rate)
+        # Geometric mean of all aspects
+        r_complete = ((df["r_pro_SLpM_corrected"] + 1) *
+                      (df["r_pro_str_def_corrected"] + 0.1) *
+                      (df["r_finish_rate"] + 0.1)) ** (1/3)
+        b_complete = ((df["b_pro_SLpM_corrected"] + 1) *
+                      (df["b_pro_str_def_corrected"] + 0.1) *
+                      (df["b_finish_rate"] + 0.1)) ** (1/3)
+        df["complete_fighter_index_diff"] = r_complete - b_complete
+
+        # 25. Pressure fighter index (output / defense)
+        # High offense, lower defense = aggressive pressure fighter
+        r_pressure = (df["r_pro_SLpM_corrected"] + df["r_pro_td_avg_corrected"]) / (df["r_pro_str_def_corrected"] + 0.3)
+        b_pressure = (df["b_pro_SLpM_corrected"] + df["b_pro_td_avg_corrected"]) / (df["b_pro_str_def_corrected"] + 0.3)
+        df["pressure_fighter_index_diff"] = r_pressure - b_pressure
+
+        # 26. Counter fighter index (defense / offense)
+        # High defense, lower offense = counter-striker
+        r_counter = (df["r_pro_str_def_corrected"] + 0.1) / (df["r_pro_SLpM_corrected"] + 1)
+        b_counter = (df["b_pro_str_def_corrected"] + 0.1) / (df["b_pro_SLpM_corrected"] + 1)
+        df["counter_fighter_index_diff"] = r_counter - b_counter
+
+        # 27. Finishing threat composite (KO power + submission threat)
+        # Uses finish rate and submission average
+        r_finish_threat = (df["r_finish_rate"] + 0.1) * (df["r_pro_sub_avg_corrected"] + 0.1)
+        b_finish_threat = (df["b_finish_rate"] + 0.1) * (df["b_pro_sub_avg_corrected"] + 0.1)
+        df["finishing_threat_composite_diff"] = r_finish_threat - b_finish_threat
+
+        # TIER 9: Rolling Performance Ratios
+        # 28. Recent vs career performance (rolling vs career average)
+        r_recent_career_ratio = (df["r_rolling_slpm_5_corrected"] + 0.1) / (df["r_pro_SLpM_corrected"] + 0.1)
+        b_recent_career_ratio = (df["b_rolling_slpm_5_corrected"] + 0.1) / (df["b_pro_SLpM_corrected"] + 0.1)
+        df["recent_vs_career_striking_diff"] = r_recent_career_ratio - b_recent_career_ratio
+
+        # 29. Consistency ratio (inverse of variance)
+        # Lower variance = more consistent
+        r_consistency = 1 / (df["r_slpm_variance_5_corrected"] + 0.1)
+        b_consistency = 1 / (df["b_slpm_variance_5_corrected"] + 0.1)
+        df["striking_consistency_ratio_diff"] = r_consistency - b_consistency
+
+        # 30. Improvement trajectory ratio (trend / career average)
+        # Positive trend relative to career baseline = improving fighter
+        r_improvement = (df["r_slpm_trend_5_corrected"]) / (df["r_pro_SLpM_corrected"] + 0.1)
+        b_improvement = (df["b_slpm_trend_5_corrected"]) / (df["b_pro_SLpM_corrected"] + 0.1)
+        df["improvement_trajectory_ratio_diff"] = r_improvement - b_improvement
+
         print(f"Core features prepared: {len(self.get_core_feature_names())} features")
 
         return df
@@ -1540,6 +2392,12 @@ class ImprovedUFCPredictor:
                 X_val_fold = X.iloc[val_idx] if hasattr(X, 'iloc') else X[val_idx]
                 y_train_fold = y.iloc[train_idx] if hasattr(y, 'iloc') else y[train_idx]
                 y_val_fold = y.iloc[val_idx] if hasattr(y, 'iloc') else y[val_idx]
+
+                # Convert to numpy arrays to avoid dtype issues with XGBoost
+                X_train_fold = np.array(X_train_fold) if hasattr(X_train_fold, 'values') else X_train_fold
+                X_val_fold = np.array(X_val_fold) if hasattr(X_val_fold, 'values') else X_val_fold
+                y_train_fold = np.array(y_train_fold) if hasattr(y_train_fold, 'values') else y_train_fold
+                y_val_fold = np.array(y_val_fold) if hasattr(y_val_fold, 'values') else y_val_fold
 
                 model.fit(X_train_fold, y_train_fold)
                 score = model.score(X_val_fold, y_val_fold)
@@ -1598,7 +2456,7 @@ class ImprovedUFCPredictor:
             )
 
         # RFECV with TimeSeriesSplit
-        min_features = 1  # Minimum features to test
+        min_features = 200  # Minimum features to test
         n_features = len(high_variance_features)  # Test all high-variance features
         step = 1
 
@@ -1620,7 +2478,7 @@ class ImprovedUFCPredictor:
 
         # Calculate estimated iterations (for user info)
         total_iterations = (n_features - min_features) // step + 1
-        estimated_time = total_iterations * 5 * 0.2  # ~0.2 sec per fold per feature subset
+        estimated_time = total_iterations * 5 * 0.4  # ~0.4 sec per fold per feature subset
         print(f"Estimated iterations: {total_iterations} feature subsets × 5 folds = {total_iterations * 5} model fits")
         print(f"Estimated time: ~{estimated_time/60:.1f} minutes\n")
 
@@ -1775,20 +2633,88 @@ class ImprovedUFCPredictor:
         # RFECV will find optimal number of features automatically via cross-validation
         selected_features = self.select_features_by_importance(X_train, y_train)
 
-        # Update datasets with selected features only
-        X_train = X_train[selected_features]
-        X_val = X_val[selected_features]
-        X_test = X_test[selected_features]
+        # DEBUG: Check for issues before filtering
+        print(f"\nDEBUG - Before filtering:")
+        print(f"  len(selected_features): {len(selected_features)}")
+        print(f"  len(set(selected_features)): {len(set(selected_features))}")  # Check for duplicates
+        print(f"  X_train.shape: {X_train.shape}")
+
+        # Check if all selected features exist in X_train
+        missing_features = [f for f in selected_features if f not in X_train.columns]
+        if missing_features:
+            print(f"  WARNING: {len(missing_features)} selected features not in X_train!")
+            print(f"  Missing: {missing_features[:5]}")
+
+        # Check for duplicate columns in X_train
+        duplicate_cols = X_train.columns[X_train.columns.duplicated()].tolist()
+        if duplicate_cols:
+            print(f"  WARNING: X_train has {len(duplicate_cols)} duplicate column names!")
+            print(f"  Duplicates: {duplicate_cols}")
+
+        # CRITICAL FIX: Remove duplicate columns from ALL dataframes FIRST
+        # Keep only the first occurrence of each column
+        X_train = X_train.loc[:, ~X_train.columns.duplicated()].copy()
+        X_val = X_val.loc[:, ~X_val.columns.duplicated()].copy()
+        X_test = X_test.loc[:, ~X_test.columns.duplicated()].copy()
+
+        print(f"\nAfter removing duplicate columns:")
+        print(f"  X_train shape: {X_train.shape}")
+        print(f"  X_val shape: {X_val.shape}")
+        print(f"  X_test shape: {X_test.shape}")
+
+        # Remove duplicates from selected_features list (preserves order)
+        selected_features_unique = list(dict.fromkeys(selected_features))
+
+        print(f"\nCleaned selected_features:")
+        print(f"  Original count: {len(selected_features)}")
+        print(f"  Unique count: {len(selected_features_unique)}")
+
+        # Filter to only features that exist in all datasets
+        valid_features = [f for f in selected_features_unique if f in X_train.columns and f in X_val.columns and f in X_test.columns]
+
+        print(f"  Valid features (exist in all datasets): {len(valid_features)}")
+
+        # Update datasets with valid features only
+        X_train = X_train[valid_features].copy()
+        X_val = X_val[valid_features].copy()
+        X_test = X_test[valid_features].copy()
+
+        # Update selected_features to the cleaned list
+        selected_features = valid_features
+
+        print(f"\nAfter filtering to valid features:")
+        print(f"  X_train shape: {X_train.shape}")
+        print(f"  X_val shape: {X_val.shape}")
+        print(f"  X_test shape: {X_test.shape}")
 
         # Create train+val AFTER feature selection (for final training only)
-        X_train_val = pd.concat([X_train, X_val])
-        y_train_val = pd.concat([y_train, y_val])
+        # Reset indices to avoid any index conflicts during concat
+        X_train_reset = X_train.reset_index(drop=True)
+        X_val_reset = X_val.reset_index(drop=True)
+        y_train_reset = y_train.reset_index(drop=True)
+        y_val_reset = y_val.reset_index(drop=True)
+
+        # Concatenate along rows (axis=0)
+        X_train_val = pd.concat([X_train_reset, X_val_reset], axis=0, ignore_index=True)
+        y_train_val = pd.concat([y_train_reset, y_val_reset], axis=0, ignore_index=True)
+
+        # Final verification - ensure ONLY selected features exist
+        X_train_val = X_train_val[selected_features].copy()
 
         available_features = selected_features  # Update for later use
 
+        print("\nFinal feature verification:")
+        print(f"  Selected features count: {len(selected_features)}")
+        print(f"  X_train_val shape: {X_train_val.shape}")
+        print(f"  X_train_val columns: {len(X_train_val.columns)}")
+
+        # Safety check - raise error if mismatch
+        if X_train_val.shape[1] != len(selected_features):
+            raise ValueError(f"Feature count mismatch! X_train_val has {X_train_val.shape[1]} columns but selected_features has {len(selected_features)} features")
+
         # Hyperparameter optimization: Use ONLY training set with time-series CV
         if HAS_OPTUNA and HAS_XGBOOST:
-            self.best_params = self.optimize_hyperparameters(X_train, y_train, n_trials=50) ### OPTUNA TRIALS ####
+            self.best_params = self.optimize_hyperparameters(X_train, y_train, n_trials=5) ### OPTUNA TRIALS ####
         else:
             self.best_params = {
                 'n_estimators': 600,
@@ -1875,7 +2801,10 @@ class ImprovedUFCPredictor:
 
         # Train final model on train+val
         print("Training final ensemble on train+val...")
-        base_model.fit(X_train_val, y_train_val)
+        # Convert to numpy to avoid dtype issues
+        X_train_val_np = np.array(X_train_val)
+        y_train_val_np = np.array(y_train_val)
+        base_model.fit(X_train_val_np, y_train_val_np)
 
         # Calibrate probabilities on train+val
         print("\n" + "="*80)
@@ -1887,7 +2816,7 @@ class ImprovedUFCPredictor:
             method='isotonic',
             cv=5
         )
-        self.calibrated_model.fit(X_train_val, y_train_val)
+        self.calibrated_model.fit(X_train_val_np, y_train_val_np)
 
         self.winner_model = self.calibrated_model
 
@@ -1896,13 +2825,18 @@ class ImprovedUFCPredictor:
         print("FINAL MODEL PERFORMANCE")
         print("="*80)
 
+        # Convert test/train/val X sets to numpy for predictions
+        X_test_np = np.array(X_test)
+        X_train_np = np.array(X_train)
+        X_val_np = np.array(X_val)
+
         # Get predictions and probabilities
-        y_pred_test = self.winner_model.predict(X_test)
-        y_proba_test = self.winner_model.predict_proba(X_test)[:, 1]
+        y_pred_test = self.winner_model.predict(X_test_np)
+        y_proba_test = self.winner_model.predict_proba(X_test_np)[:, 1]
 
         # Calculate all metrics
-        train_acc = self.winner_model.score(X_train, y_train)
-        val_acc = self.winner_model.score(X_val, y_val)
+        train_acc = self.winner_model.score(X_train_np, y_train)
+        val_acc = self.winner_model.score(X_val_np, y_val)
         test_acc = accuracy_score(y_test, y_pred_test)
         test_roc_auc = roc_auc_score(y_test, y_proba_test)
 
@@ -1933,7 +2867,7 @@ class ImprovedUFCPredictor:
         actual_red_rate = actual_red_wins / len(y_train_val)
 
         # Check predicted distribution on validation set
-        y_pred_val = self.winner_model.predict(X_val)
+        y_pred_val = self.winner_model.predict(X_val_np)
         predicted_red_wins = (y_pred_val == 1).sum()
         predicted_red_rate = predicted_red_wins / len(y_pred_val)
 
@@ -1968,6 +2902,10 @@ class ImprovedUFCPredictor:
             X_fold_val = X_train_val.iloc[val_idx]
             y_fold_train = y_train_val.iloc[train_idx]
             y_fold_val = y_train_val.iloc[val_idx]
+
+            # Convert to numpy arrays to avoid dtype issues
+            X_fold_train = np.array(X_fold_train)
+            X_fold_val = np.array(X_fold_val)
 
             fold_model = XGBClassifier(**self.best_params, random_state=42, n_jobs=-1) if HAS_XGBOOST else RandomForestClassifier(n_estimators=600, random_state=42, n_jobs=-1)
             fold_model.fit(X_fold_train, y_fold_train)
@@ -2345,8 +3283,11 @@ class ImprovedUFCPredictor:
 
         X = X[feature_columns]
 
+        # Convert to numpy array to avoid dtype issues
+        X_np = np.array(X)
+
         # Get winner prediction with calibrated probabilities
-        winner_proba = self.winner_model.predict_proba(X)[0]
+        winner_proba = self.winner_model.predict_proba(X_np)[0]
 
         # Get winner prediction (no bias adjustment - augmentation handles balance)
         red_proba = winner_proba[1]  # Probability of red corner winning
