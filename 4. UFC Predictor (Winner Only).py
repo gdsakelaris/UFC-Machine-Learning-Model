@@ -281,6 +281,9 @@ class ImprovedUFCPredictor:
             "distance_x_striking",
             "ground_x_control",
             "positional_mastery",
+
+            # NEW FEATURE: Main event experience
+            "main_event_experience_diff",  # Count of 5-round fights (championship experience)
         ]
 
     def calculate_streak(self, recent_wins, count_wins=True):
@@ -874,6 +877,8 @@ class ImprovedUFCPredictor:
             # NEW: Recent stats for momentum (last 3 fights)
             "recent_distance_pct": [], "recent_clinch_pct": [], "recent_ground_pct": [],
             "recent_slpm": [], "recent_ctrl_sec": [],
+            # NEW: Main event experience (5-round fights)
+            "main_event_fights": 0,
         }
 
         # Initialize corrected columns
@@ -890,7 +895,9 @@ class ImprovedUFCPredictor:
                          # NEW: Opponent quality
                          "avg_opponent_elo",
                          # NEW: Recent momentum vs career
-                         "distance_pct_momentum", "slpm_momentum", "ctrl_sec_momentum"]:
+                         "distance_pct_momentum", "slpm_momentum", "ctrl_sec_momentum",
+                         # NEW: Main event experience
+                         "main_event_fights"]:
                 df[f"{prefix}_{stat}_corrected"] = 0.0
 
         df["h2h_advantage"] = 0.0
@@ -1015,6 +1022,9 @@ class ImprovedUFCPredictor:
                     career_avg = stats["ctrl_sec_total"] / stats["fight_count"] if stats["fight_count"] > 0 else 0
                     df.at[idx, f"{prefix}_ctrl_sec_momentum_corrected"] = recent_avg - career_avg
 
+                # NEW: Main event experience (5-round fights)
+                df.at[idx, f"{prefix}_main_event_fights_corrected"] = stats["main_event_fights"]
+
             # Calculate opponent quality differential
             r_opp_elo = df.at[idx, "r_avg_opponent_elo_corrected"]
             b_opp_elo = df.at[idx, "b_avg_opponent_elo_corrected"]
@@ -1111,6 +1121,11 @@ class ImprovedUFCPredictor:
                     fighter_stats[b_fighter]["total_opponent_elo"] += r_elo
                     fighter_stats[b_fighter]["opponents_faced"] += 1
 
+                # NEW: Track main event fights (5-round fights)
+                if row.get("total_rounds", 3) == 5:
+                    fighter_stats[r_fighter]["main_event_fights"] += 1
+                    fighter_stats[b_fighter]["main_event_fights"] += 1
+
                 # NEW: Track recent stats for momentum (last 3 fights)
                 for fighter, f_prefix in [(r_fighter, "r"), (b_fighter, "b")]:
                     # Track recent positional percentages
@@ -1179,7 +1194,9 @@ class ImprovedUFCPredictor:
                      "head_pct", "body_pct", "leg_pct",
                      "avg_ctrl_sec", "avg_rev",
                      # NEW: Opponent quality and momentum
-                     "avg_opponent_elo", "distance_pct_momentum", "slpm_momentum", "ctrl_sec_momentum"]:
+                     "avg_opponent_elo", "distance_pct_momentum", "slpm_momentum", "ctrl_sec_momentum",
+                     # NEW: Main event experience
+                     "main_event_fights"]:
             df[f"{stat}_diff_corrected"] = df[f"r_{stat}_corrected"] - df[f"b_{stat}_corrected"]
 
         # Physical differentials
@@ -1466,6 +1483,11 @@ class ImprovedUFCPredictor:
         df["r_form_consistency"] = 0.5
         df["b_form_consistency"] = 0.5
         df["form_consistency_diff"] = 0
+
+        # ========== NEW FEATURE: MAIN EVENT EXPERIENCE ==========
+        # Championship fight experience (5-round fights)
+        # Simple count differential - big fight experience matters
+        df["main_event_experience_diff"] = df["main_event_fights_diff_corrected"]
 
         print(f"Core features prepared: {len(self.get_core_feature_names())} features")
 
