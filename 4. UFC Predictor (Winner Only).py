@@ -12,6 +12,8 @@ from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.feature_selection import SelectPercentile, f_classif, RFECV
 from sklearn.metrics import log_loss, accuracy_score, roc_auc_score, classification_report
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LogisticRegression
 # permutation_importance removed - using model built-in importance instead
 from scipy.stats import linregress
 import warnings
@@ -71,6 +73,28 @@ try:
 except ImportError:
     HAS_LIGHTGBM = False
     print("LightGBM not available.")
+
+try:
+    from catboost import CatBoostClassifier
+    HAS_CATBOOST = True
+except ImportError:
+    HAS_CATBOOST = False
+    print("CatBoost not available. Install with: pip install catboost")
+
+try:
+    from sklearn.neural_network import MLPClassifier
+    from sklearn.preprocessing import StandardScaler
+    HAS_NEURAL_NET = True
+except ImportError:
+    HAS_NEURAL_NET = False
+    print("Neural Network not available.")
+
+try:
+    from sklearn.ensemble import StackingClassifier
+    HAS_STACKING = True
+except ImportError:
+    HAS_STACKING = False
+    print("StackingClassifier not available.")
 
 try:
     import optuna
@@ -2388,7 +2412,7 @@ class ImprovedUFCPredictor:
 
             # Time series cross-validation
             cv_scores = []
-            tscv = TimeSeriesSplit(n_splits=5)
+            tscv = TimeSeriesSplit(n_splits=3)  # 3-fold CV for faster optimization
 
             for train_idx, val_idx in tscv.split(X):
                 X_train_fold = X.iloc[train_idx] if hasattr(X, 'iloc') else X[train_idx]
@@ -2419,6 +2443,74 @@ class ImprovedUFCPredictor:
             print(f"  {key}: {value}")
 
         return study.best_params
+
+    # ===== DYNAMIC ENSEMBLE WEIGHT OPTIMIZATION =====
+
+    def optimize_ensemble_weights(self, estimators, X_train, y_train, X_val, y_val):
+        """
+        Optimize ensemble weights using grid search on validation set.
+        Finds the best combination of weights for each model in the ensemble.
+        """
+        from itertools import product
+
+        # Convert to numpy arrays
+        X_train_np = np.array(X_train)
+        y_train_np = np.array(y_train)
+        X_val_np = np.array(X_val)
+        y_val_np = np.array(y_val)
+
+        # Train all models first
+        trained_models = []
+        print("Training individual models for weight optimization...")
+        for name, model in estimators:
+            print(f"  Training {name}...")
+            model.fit(X_train_np, y_train_np)
+            trained_models.append((name, model))
+
+        # Get predictions from each model on validation set
+        model_predictions = []
+        for name, model in trained_models:
+            if hasattr(model, 'predict_proba'):
+                preds = model.predict_proba(X_val_np)[:, 1]
+            else:
+                preds = model.predict(X_val_np)
+            model_predictions.append(preds)
+
+        # Grid search for optimal weights
+        # Test combinations of weights from 1-5 for each model
+        n_models = len(estimators)
+        weight_range = [1, 2, 3, 4, 5]
+
+        best_score = 0
+        best_weights = [1] * n_models
+
+        # Generate all weight combinations
+        weight_combinations = list(product(weight_range, repeat=n_models))
+
+        # Limit search space for efficiency (sample if too many)
+        if len(weight_combinations) > 1000:
+            random.seed(42)
+            weight_combinations = random.sample(weight_combinations, 1000)
+
+        print(f"Testing {len(weight_combinations)} weight combinations...")
+
+        for weights in weight_combinations:
+            # Compute weighted average of predictions
+            weighted_preds = np.zeros(len(X_val_np))
+            for i, preds in enumerate(model_predictions):
+                weighted_preds += weights[i] * preds
+            weighted_preds /= sum(weights)
+
+            # Convert to binary predictions
+            binary_preds = (weighted_preds >= 0.5).astype(int)
+            score = accuracy_score(y_val_np, binary_preds)
+
+            if score > best_score:
+                best_score = score
+                best_weights = list(weights)
+
+        print(f"Best validation score with optimized weights: {best_score:.4f}")
+        return best_weights
 
     # ===== RFECV FEATURE SELECTION =====
 
@@ -2461,16 +2553,16 @@ class ImprovedUFCPredictor:
             )
 
         # RFECV with TimeSeriesSplit
-        min_features = 200  # Minimum features to test
+        min_features = 204  # Minimum features to test
         n_features = len(high_variance_features)  # Test all high-variance features
         step = 1
 
-        print(f"\nRunning RFECV (testing {min_features}-{n_features} features with 5-fold CV)...")
+        print(f"\nRunning RFECV (testing {min_features}-{n_features} features with 3-fold CV)...")
 
         rfecv = RFECV(
             estimator=estimator,
             step=step,
-            cv=TimeSeriesSplit(n_splits=5),
+            cv=TimeSeriesSplit(n_splits=3),  # 3-fold CV (faster than 5-fold)
             scoring='accuracy',
             min_features_to_select=min_features,
             n_jobs=-1,
@@ -2483,8 +2575,8 @@ class ImprovedUFCPredictor:
 
         # Calculate estimated iterations (for user info)
         total_iterations = (n_features - min_features) // step + 1
-        estimated_time = total_iterations * 5 * 0.4  # ~0.4 sec per fold per feature subset
-        print(f"Estimated iterations: {total_iterations} feature subsets × 5 folds = {total_iterations * 5} model fits")
+        estimated_time = total_iterations * 3 * 0.4  # ~0.4 sec per fold per feature subset
+        print(f"Estimated iterations: {total_iterations} feature subsets × 3 folds = {total_iterations * 3} model fits")
         print(f"Estimated time: ~{estimated_time/60:.1f} minutes\n")
 
         # Start timer
@@ -2719,7 +2811,7 @@ class ImprovedUFCPredictor:
 
         # Hyperparameter optimization: Use ONLY training set with time-series CV
         if HAS_OPTUNA and HAS_XGBOOST:
-            self.best_params = self.optimize_hyperparameters(X_train, y_train, n_trials=5) ### OPTUNA TRIALS ####
+            self.best_params = self.optimize_hyperparameters(X_train, y_train, n_trials=1) ### OPTUNA TRIALS ####
         else:
             self.best_params = {
                 'n_estimators': 800,
@@ -2754,26 +2846,47 @@ class ImprovedUFCPredictor:
                 tree_method='hist',
             )
 
-            # Create ensemble with diverse models for better generalization
+            # ========== PHASE 3: ADVANCED ENSEMBLE WITH DIVERSE MODELS ==========
+            print("\n" + "="*80)
+            print("PHASE 3: BUILDING ADVANCED ENSEMBLE")
+            print("="*80 + "\n")
+
             estimators = [('xgb', xgb_model)]
 
             # Add LightGBM if available (different algorithm, often complementary to XGBoost)
             if HAS_LIGHTGBM:
                 lgbm_model = LGBMClassifier(
-                    n_estimators=self.best_params.get('n_estimators', 600),
-                    max_depth=self.best_params.get('max_depth', 5),
+                    n_estimators=self.best_params.get('n_estimators', 800),
+                    max_depth=self.best_params.get('max_depth', 7),
                     learning_rate=self.best_params.get('learning_rate', 0.02),
-                    subsample=self.best_params.get('subsample', 0.75),
-                    colsample_bytree=self.best_params.get('colsample_bytree', 0.75),
-                    reg_alpha=self.best_params.get('reg_alpha', 3),
-                    reg_lambda=self.best_params.get('reg_lambda', 3),
-                    min_child_samples=self.best_params.get('min_child_weight', 8) * 2,
+                    subsample=self.best_params.get('subsample', 0.8),
+                    colsample_bytree=self.best_params.get('colsample_bytree', 0.8),
+                    reg_alpha=self.best_params.get('reg_alpha', 1.0),
+                    reg_lambda=self.best_params.get('reg_lambda', 1.0),
+                    min_child_samples=self.best_params.get('min_child_weight', 5) * 2,
                     scale_pos_weight=scale_weight,
                     random_state=42,
                     n_jobs=-1,
                     verbose=-1
                 )
                 estimators.append(('lgbm', lgbm_model))
+                print("✓ Added LightGBM to ensemble")
+
+            # Add CatBoost if available (handles categorical features differently, robust to overfitting)
+            if HAS_CATBOOST:
+                catboost_model = CatBoostClassifier(
+                    iterations=self.best_params.get('n_estimators', 800),
+                    depth=self.best_params.get('max_depth', 7),
+                    learning_rate=self.best_params.get('learning_rate', 0.02),
+                    subsample=self.best_params.get('subsample', 0.8),
+                    l2_leaf_reg=self.best_params.get('reg_lambda', 1.0),
+                    scale_pos_weight=scale_weight,
+                    random_state=42,
+                    verbose=0,
+                    thread_count=-1
+                )
+                estimators.append(('catboost', catboost_model))
+                print("✓ Added CatBoost to ensemble")
 
             # Add RandomForest for diversity (tree-based but different approach)
             rf_model = RandomForestClassifier(
@@ -2787,16 +2900,80 @@ class ImprovedUFCPredictor:
                 n_jobs=-1
             )
             estimators.append(('rf', rf_model))
+            print("✓ Added RandomForest to ensemble")
 
-            # Create voting ensemble - soft voting combines probability predictions
-            base_model = VotingClassifier(
-                estimators=estimators,
-                voting='soft',
-                weights=[3, 2, 1] if HAS_LIGHTGBM else [3, 1],  # Emphasize XGBoost
-                n_jobs=-1
-            )
+            # Add Neural Network if available (non-tree-based for diversity)
+            if HAS_NEURAL_NET:
+                mlp_model = MLPClassifier(
+                    hidden_layer_sizes=(128, 64),  # Reduced to 2 layers for speed
+                    activation='relu',
+                    solver='adam',
+                    alpha=0.001,  # L2 regularization
+                    batch_size=256,
+                    learning_rate='adaptive',
+                    learning_rate_init=0.001,
+                    max_iter=200,  # Reduced from 300 for speed
+                    early_stopping=True,
+                    validation_fraction=0.15,
+                    n_iter_no_change=15,  # Reduced from 20 for earlier stopping
+                    random_state=42
+                )
 
-            print(f"Training ensemble with {len(estimators)} models: {[name for name, _ in estimators]}")
+                # Wrap MLP with scaler for proper pipeline
+                mlp_pipeline = Pipeline([
+                    ('scaler', StandardScaler()),
+                    ('mlp', mlp_model)
+                ])
+                estimators.append(('mlp', mlp_pipeline))
+                print("✓ Added Neural Network (MLP) to ensemble")
+
+            # ========== CHOOSE ENSEMBLE STRATEGY ==========
+            # SPEED CONTROL: Set to False for faster training with VotingClassifier
+            ENABLE_STACKING = False  # Stacking is slower but often more accurate
+            USE_STACKING = ENABLE_STACKING and HAS_STACKING and len(estimators) >= 3
+
+            if USE_STACKING:
+                print("\n" + "="*80)
+                print("CREATING STACKING ENSEMBLE WITH META-LEARNER")
+                print("="*80 + "\n")
+
+                # Stacking ensemble: Base models + meta-learner
+                # Meta-learner learns how to best combine base model predictions
+                meta_learner = LogisticRegression(
+                    max_iter=1000,
+                    random_state=42,
+                    n_jobs=-1,
+                    solver='lbfgs'
+                )
+
+                base_model = StackingClassifier(
+                    estimators=estimators,
+                    final_estimator=meta_learner,
+                    cv=3,  # 3-fold CV for generating meta-features (faster than 5-fold)
+                    n_jobs=-1,
+                    passthrough=False  # Don't pass original features to meta-learner
+                )
+                print(f"✓ Stacking ensemble created with {len(estimators)} base models + LogisticRegression meta-learner")
+                print(f"  Base models: {[name for name, _ in estimators]}")
+            else:
+                # ========== DYNAMIC WEIGHT OPTIMIZATION (for Voting Ensemble only) ==========
+                print(f"\nOptimizing ensemble weights for {len(estimators)} models...")
+
+                # Use validation set to find optimal weights
+                optimal_weights = self.optimize_ensemble_weights(
+                    estimators, X_train, y_train, X_val, y_val
+                )
+
+                print(f"Optimal weights: {dict(zip([name for name, _ in estimators], optimal_weights))}")
+
+                # Voting ensemble with optimized weights
+                base_model = VotingClassifier(
+                    estimators=estimators,
+                    voting='soft',
+                    weights=optimal_weights,
+                    n_jobs=-1
+                )
+                print(f"\n✓ Voting ensemble created with {len(estimators)} models: {[name for name, _ in estimators]}")
         else:
             # Fallback: RandomForest
             base_model = RandomForestClassifier(
@@ -2822,7 +2999,7 @@ class ImprovedUFCPredictor:
         self.calibrated_model = CalibratedClassifierCV(
             base_model,
             method='isotonic',
-            cv=5
+            cv=3  # 3-fold CV (faster than 5-fold)
         )
         self.calibrated_model.fit(X_train_val_np, y_train_val_np)
 
@@ -2902,7 +3079,7 @@ class ImprovedUFCPredictor:
         print("TIME SERIES CROSS-VALIDATION (Robustness Check)")
         print("="*80 + "\n")
 
-        tscv = TimeSeriesSplit(n_splits=5)
+        tscv = TimeSeriesSplit(n_splits=3)  # 3-fold CV for faster validation
         cv_scores = []
 
         for fold, (train_idx, val_idx) in enumerate(tscv.split(X_train_val)):
@@ -2919,7 +3096,7 @@ class ImprovedUFCPredictor:
             fold_model.fit(X_fold_train, y_fold_train)
             score = fold_model.score(X_fold_val, y_fold_val)
             cv_scores.append(score)
-            print(f"  Fold {fold + 1}/5: {score:.4f}")
+            print(f"  Fold {fold + 1}/3: {score:.4f}")
 
         print(f"\nCV Mean: {np.mean(cv_scores):.4f} ± {np.std(cv_scores):.4f}")
 
