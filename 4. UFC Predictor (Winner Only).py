@@ -1598,7 +1598,7 @@ class ImprovedUFCPredictor:
 
         # Calculate estimated iterations (for user info)
         total_iterations = (n_features - min_features) // step + 1
-        estimated_time = total_iterations * 5 * 0.1  # ~0.1 sec per fold per feature subset
+        estimated_time = total_iterations * 5 * 0.2  # ~0.2 sec per fold per feature subset
         print(f"Estimated iterations: {total_iterations} feature subsets × 5 folds = {total_iterations * 5} model fits")
         print(f"Estimated time: ~{estimated_time/60:.1f} minutes\n")
 
