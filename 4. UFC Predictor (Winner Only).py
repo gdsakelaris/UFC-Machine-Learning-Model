@@ -1598,7 +1598,7 @@ class ImprovedUFCPredictor:
 
         # Calculate estimated iterations (for user info)
         total_iterations = (n_features - min_features) // step + 1
-        estimated_time = total_iterations * 5 * 0.3  # ~0.3 sec per fold per feature subset
+        estimated_time = total_iterations * 5 * 0.1  # ~0.1 sec per fold per feature subset
         print(f"Estimated iterations: {total_iterations} feature subsets × 5 folds = {total_iterations * 5} model fits")
         print(f"Estimated time: ~{estimated_time/60:.1f} minutes\n")
 
@@ -1918,20 +1918,18 @@ class ImprovedUFCPredictor:
         # Calculate bias (difference between predicted and actual red win rates)
         red_bias = predicted_red_rate - actual_red_rate
 
-        # Calculate optimal threshold adjustment
-        # If model predicts red too often, we need a higher threshold for red
-        # If model predicts blue too often, we need a lower threshold for red
-        # FIX 4: Full correction instead of dampened (1.0 instead of 0.5)
-        self.red_corner_bias_adjustment = red_bias * 1.0  # Full bias correction
+        # NOTE: Bias adjustment disabled - augmentation provides balanced training
+        # Temporal distribution shifts in test/real data are real patterns, not bias
+        self.red_corner_bias_adjustment = 0.0  # No adjustment
 
         print(f"Actual Red Corner Win Rate:    {actual_red_rate:.4f} ({actual_red_wins}/{len(y_train_val)})")
         print(f"Predicted Red Corner Win Rate: {predicted_red_rate:.4f} ({predicted_red_wins}/{len(y_pred_val)})")
         print(f"Red Corner Bias:               {red_bias:+.4f}")
-        print(f"Threshold Adjustment:          {self.red_corner_bias_adjustment:+.4f}")
+        print("Note: Bias adjustment disabled (augmentation handles balance)")
 
         if abs(red_bias) > 0.05:
-            print("\nWARNING: Significant corner bias detected!")
-            print(f"Model is biased toward {'RED' if red_bias > 0 else 'BLUE'} corner")
+            print("\nNote: Apparent bias may reflect temporal distribution shift in test data")
+            print(f"Model prediction pattern: {'RED' if red_bias > 0 else 'BLUE'} corner more frequent")
         else:
             print("Corner bias is within acceptable range (< 5%)")
 
@@ -2328,13 +2326,11 @@ class ImprovedUFCPredictor:
         # Get winner prediction with calibrated probabilities
         winner_proba = self.winner_model.predict_proba(X)[0]
 
-        # APPLY RED CORNER BIAS CORRECTION
-        # Adjust the decision threshold based on detected corner bias
+        # Get winner prediction (no bias adjustment - augmentation handles balance)
         red_proba = winner_proba[1]  # Probability of red corner winning
 
-        # Apply threshold adjustment (if red_corner_bias_adjustment > 0, red needs higher confidence to win)
-        adjusted_threshold = 0.5 + getattr(self, 'red_corner_bias_adjustment', 0.0)
-        winner_pred = 1 if red_proba >= adjusted_threshold else 0
+        # Use standard 0.5 threshold (augmentation balances training data)
+        winner_pred = 1 if red_proba >= 0.5 else 0
         winner_name = "Red" if winner_pred == 1 else "Blue"
 
         # Calculate confidence level using the actual probability (not adjusted)
