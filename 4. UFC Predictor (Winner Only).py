@@ -12,7 +12,6 @@ from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.feature_selection import SelectPercentile, f_classif, RFECV
 from sklearn.metrics import log_loss, accuracy_score, roc_auc_score, classification_report
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 # permutation_importance removed - using model built-in importance instead
 from scipy.stats import linregress
@@ -80,14 +79,6 @@ try:
 except ImportError:
     HAS_CATBOOST = False
     print("CatBoost not available. Install with: pip install catboost")
-
-try:
-    from sklearn.neural_network import MLPClassifier
-    from sklearn.preprocessing import StandardScaler
-    HAS_NEURAL_NET = True
-except ImportError:
-    HAS_NEURAL_NET = False
-    print("Neural Network not available.")
 
 try:
     from sklearn.ensemble import StackingClassifier
@@ -2620,12 +2611,12 @@ class ImprovedUFCPredictor:
         n_features = len(high_variance_features)  # Test all high-variance features
         step = 2  # Reduced from 5 to 2 for finer-grained feature selection
 
-        print(f"\nRunning RFECV (testing {min_features}-{n_features} features with 5-fold CV)...")
+        print(f"\nRunning RFECV (testing {min_features}-{n_features} features with 3-fold CV)...")
 
         rfecv = RFECV(
             estimator=estimator,
             step=step,
-            cv=TimeSeriesSplit(n_splits=5),  # 5-fold CV for more robust feature selection
+            cv=TimeSeriesSplit(n_splits=3),  # 3-fold CV for faster feature selection
             scoring='accuracy',
             min_features_to_select=min_features,
             n_jobs=-1,
@@ -2638,9 +2629,9 @@ class ImprovedUFCPredictor:
 
         # Calculate estimated iterations (for user info)
         total_iterations = (n_features - min_features) // step + 1
-        estimated_time = total_iterations * 5 * 0.25  # ~0.25 sec per fold (XGBoost 200 trees, 5-fold CV)
-        print(f"Estimated iterations: {total_iterations} feature subsets × 5 folds = {total_iterations * 5} model fits")
-        print(f"Estimated time: ~{estimated_time/60:.1f} minutes (improved accuracy: XGBoost + 5-fold CV)\n")
+        estimated_time = total_iterations * 3 * 0.25  # ~0.25 sec per fold (XGBoost 200 trees, 3-fold CV)
+        print(f"Estimated iterations: {total_iterations} feature subsets × 3 folds = {total_iterations * 3} model fits")
+        print(f"Estimated time: ~{estimated_time/60:.1f} minutes (faster feature selection: XGBoost + 3-fold CV)\n")
 
         # Start timer
         start_time = time.time()
@@ -2937,30 +2928,6 @@ class ImprovedUFCPredictor:
                 n_jobs=-1
             )
             estimators.append(('rf', rf_model))
-
-            # Add Neural Network if available (non-tree-based for diversity)
-            if HAS_NEURAL_NET:
-                mlp_model = MLPClassifier(
-                    hidden_layer_sizes=(128, 64),  # Reduced to 2 layers for speed
-                    activation='relu',
-                    solver='adam',
-                    alpha=0.001,  # L2 regularization
-                    batch_size=256,
-                    learning_rate='adaptive',
-                    learning_rate_init=0.001,
-                    max_iter=200,  # Reduced from 300 for speed
-                    early_stopping=True,
-                    validation_fraction=0.15,
-                    n_iter_no_change=15,  # Reduced from 20 for earlier stopping
-                    random_state=42
-                )
-
-                # Wrap MLP with scaler for proper pipeline
-                mlp_pipeline = Pipeline([
-                    ('scaler', StandardScaler()),
-                    ('mlp', mlp_model)
-                ])
-                estimators.append(('mlp', mlp_pipeline))
 
             # ========== CHOOSE ENSEMBLE STRATEGY ==========
             # SPEED CONTROL: Set to False for faster training with VotingClassifier
