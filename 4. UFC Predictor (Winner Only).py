@@ -2352,13 +2352,16 @@ class ImprovedUFCPredictor:
         if not HAS_OPTUNA or not HAS_XGBOOST:
             print("Optuna or XGBoost not available, using default parameters")
             return {
-                'n_estimators': 600,
-                'max_depth': 8,
+                'n_estimators': 800,
+                'max_depth': 7,
                 'learning_rate': 0.02,
-                'subsample': 0.85,
-                'colsample_bytree': 0.85,
-                'reg_alpha': 0.1,
-                'reg_lambda': 0.8,
+                'subsample': 0.8,
+                'colsample_bytree': 0.8,
+                'colsample_bynode': 0.8,
+                'reg_alpha': 1.0,
+                'reg_lambda': 1.0,
+                'min_child_weight': 5,
+                'gamma': 0.5,
             }
 
         print(f"\n{'='*80}")
@@ -2367,16 +2370,16 @@ class ImprovedUFCPredictor:
 
         def objective(trial):
             params = {
-                'n_estimators': trial.suggest_int('n_estimators', 400, 1000),
-                'max_depth': trial.suggest_int('max_depth', 4, 6),  # Balanced - can learn patterns without extreme overfitting
-                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.03, log=True),
-                'subsample': trial.suggest_float('subsample', 0.65, 0.85),  # Moderate sampling
-                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.65, 0.85),
-                'colsample_bynode': trial.suggest_float('colsample_bynode', 0.65, 0.85),
-                'reg_alpha': trial.suggest_float('reg_alpha', 1, 15, log=True),  # Moderate L1 regularization
-                'reg_lambda': trial.suggest_float('reg_lambda', 1, 15, log=True),  # Moderate L2 regularization
-                'min_child_weight': trial.suggest_int('min_child_weight', 5, 12),
-                'gamma': trial.suggest_float('gamma', 0, 5),  # Allow easier splits
+                'n_estimators': trial.suggest_int('n_estimators', 300, 2000),  # Wider range for more trees
+                'max_depth': trial.suggest_int('max_depth', 3, 12),  # Much deeper trees allowed
+                'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.1, log=True),  # Wider learning rate range
+                'subsample': trial.suggest_float('subsample', 0.5, 1.0),  # Full range of row sampling
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),  # Full range of column sampling
+                'colsample_bynode': trial.suggest_float('colsample_bynode', 0.5, 1.0),  # Full range of node sampling
+                'reg_alpha': trial.suggest_float('reg_alpha', 0.001, 50, log=True),  # Much wider L1 regularization
+                'reg_lambda': trial.suggest_float('reg_lambda', 0.001, 50, log=True),  # Much wider L2 regularization
+                'min_child_weight': trial.suggest_int('min_child_weight', 1, 20),  # Wider child weight range
+                'gamma': trial.suggest_float('gamma', 0, 10),  # Wider gamma range for split control
                 'random_state': 42,
                 'n_jobs': -1,
             }
@@ -2439,17 +2442,19 @@ class ImprovedUFCPredictor:
         # Base estimator for RFECV
         if HAS_XGBOOST:
             estimator = XGBClassifier(
-                n_estimators=200,
-                max_depth=6,
+                n_estimators=300,
+                max_depth=7,
                 learning_rate=0.05,
                 subsample=0.8,
                 colsample_bytree=0.8,
+                reg_alpha=1.0,
+                reg_lambda=1.0,
                 random_state=42,
                 n_jobs=-1
             )
         else:
             estimator = RandomForestClassifier(
-                n_estimators=200,
+                n_estimators=300,
                 max_depth=12,
                 random_state=42,
                 n_jobs=-1
@@ -2717,13 +2722,16 @@ class ImprovedUFCPredictor:
             self.best_params = self.optimize_hyperparameters(X_train, y_train, n_trials=5) ### OPTUNA TRIALS ####
         else:
             self.best_params = {
-                'n_estimators': 600,
-                'max_depth': 8,
+                'n_estimators': 800,
+                'max_depth': 7,
                 'learning_rate': 0.02,
-                'subsample': 0.85,
-                'colsample_bytree': 0.85,
-                'reg_alpha': 0.1,
-                'reg_lambda': 0.8,
+                'subsample': 0.8,
+                'colsample_bytree': 0.8,
+                'colsample_bynode': 0.8,
+                'reg_alpha': 1.0,
+                'reg_lambda': 1.0,
+                'min_child_weight': 5,
+                'gamma': 0.5,
             }
 
         # Train final model
@@ -2769,10 +2777,10 @@ class ImprovedUFCPredictor:
 
             # Add RandomForest for diversity (tree-based but different approach)
             rf_model = RandomForestClassifier(
-                n_estimators=400,
-                max_depth=8,
-                min_samples_split=10,
-                min_samples_leaf=5,
+                n_estimators=600,
+                max_depth=12,
+                min_samples_split=5,
+                min_samples_leaf=2,
                 max_features='sqrt',
                 class_weight={0: 1.0, 1: scale_weight},
                 random_state=42,
