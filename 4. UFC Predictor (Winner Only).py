@@ -99,16 +99,6 @@ except ImportError:
 
 
 class ImprovedUFCPredictor:
-    """
-    Improved UFC Fight Predictor with optimizations for accuracy:
-    - Reduced feature set (50-60 core features vs 200+)
-    - Conservative data augmentation (35% vs 90%)
-    - Permutation-based feature selection
-    - Optuna hyperparameter optimization
-    - Proper validation with hold-out test set
-    - Calibrated probability estimates
-    """
-
     def __init__(self, use_ensemble=True, debug_mode=False):
         self.winner_model = None
         self.label_encoders = {}
@@ -2529,11 +2519,6 @@ class ImprovedUFCPredictor:
         # Generate all weight combinations
         weight_combinations = list(product(weight_range, repeat=n_models))
 
-        # Limit search space for efficiency (sample if too many)
-        if len(weight_combinations) > 1000:
-            random.seed(42)
-            weight_combinations = random.sample(weight_combinations, 1000)
-
         print(f"Testing {len(weight_combinations)} weight combinations...")
 
         for weights in weight_combinations:
@@ -2840,7 +2825,7 @@ class ImprovedUFCPredictor:
 
         # Hyperparameter optimization: Use ONLY training set with time-series CV
         if HAS_OPTUNA and HAS_XGBOOST:
-            self.best_params = self.optimize_hyperparameters(X_train, y_train, n_trials=50) ### OPTUNA TRIALS ####
+            self.best_params = self.optimize_hyperparameters(X_train, y_train, n_trials=50) ### OPTUNA TRIALS ###
         else:
             self.best_params = {
                 'n_estimators': 800,
