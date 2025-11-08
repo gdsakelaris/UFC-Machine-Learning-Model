@@ -2616,9 +2616,9 @@ class ImprovedUFCPredictor:
 
         # Calculate estimated iterations (for user info)
         total_iterations = (n_features - min_features) // step + 1
-        estimated_time = total_iterations * 3 * 0.25  # ~0.25 sec per fold (XGBoost 200 trees, 3-fold CV)
+        estimated_time = total_iterations * 3 * 1.3  # ~1.3 sec per fold (XGBoost 200 trees, ~209 features, 3-fold CV)
         print(f"Estimated iterations: {total_iterations} feature subsets × 3 folds = {total_iterations * 3} model fits")
-        print(f"Estimated time: ~{estimated_time/60:.1f} minutes (faster feature selection: XGBoost + 3-fold CV)\n")
+        print(f"Estimated time: ~{estimated_time/60:.1f} minutes (XGBoost + 3-fold CV)\n")
 
         # Start timer
         start_time = time.time()
