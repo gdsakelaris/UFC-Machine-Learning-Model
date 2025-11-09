@@ -3892,9 +3892,19 @@ class ImprovedUFCPredictor:
         y_train_reset = y_train.reset_index(drop=True)
         y_val_reset = y_val.reset_index(drop=True)
 
-        # Concatenate along rows (axis=0)
-        X_train_val = pd.concat([X_train_reset, X_val_reset], axis=0, ignore_index=True)
-        y_train_val = pd.concat([y_train_reset, y_val_reset], axis=0, ignore_index=True)
+        # Augment validation set for final training (more data = better final model)
+        # Note: validation was NOT augmented during evaluation, only for final training
+        directional_cols_final = [c for c in X_val_reset.columns if not c.endswith('_inv')]
+        X_val_flipped_final = X_val_reset.copy()
+        X_val_flipped_final[directional_cols_final] = -X_val_reset[directional_cols_final]
+        y_val_flipped_final = 1 - y_val_reset
+
+        X_val_aug_final = pd.concat([X_val_reset, X_val_flipped_final], axis=0, ignore_index=True)
+        y_val_aug_final = pd.concat([y_val_reset, y_val_flipped_final], axis=0, ignore_index=True)
+
+        # Concatenate along rows (axis=0) - train is already augmented, val now augmented too
+        X_train_val = pd.concat([X_train_reset, X_val_aug_final], axis=0, ignore_index=True)
+        y_train_val = pd.concat([y_train_reset, y_val_aug_final], axis=0, ignore_index=True)
 
         # Final verification - ensure ONLY selected features exist
         X_train_val = X_train_val[selected_features].copy()
