@@ -498,6 +498,37 @@ class ImprovedUFCPredictor:
             "ctrl_time_per_td_diff_squared",
             "total_output_pace_diff_squared",
             "pressure_differential_squared",
+
+            # ========== PHASE 3: ADVANCED OPPONENT QUALITY, VOLATILITY & INTERACTION FEATURES (27 features) ==========
+            # Base differentials (20 features)
+            "avg_opponent_elo_l5_diff",
+            "elo_momentum_vs_competition_diff",
+            "performance_vs_ranked_opponents_diff",
+            "performance_volatility_l10_diff",
+            "finish_rate_acceleration_diff",
+            "slpm_coefficient_of_variation_diff",
+            "performance_decline_velocity_diff",
+            "mileage_adjusted_age_diff",
+            "prime_exit_risk_diff",
+            "career_inflection_point_diff",
+            "title_shot_proximity_score_diff",
+            "tactical_evolution_score_diff",
+            "finish_method_diversity_diff",
+            "aging_power_striker_penalty_diff",
+            "elo_volatility_interaction_diff",
+            "layoff_veteran_interaction_diff",
+            "bayesian_finish_rate_diff",
+            "confidence_weighted_damage_ratio_diff",
+            "distance_from_career_peak_diff",
+            "elite_performance_frequency_l10_diff",
+            # Polynomial features (7 features)
+            "avg_opponent_elo_l5_diff_squared",
+            "elo_momentum_vs_competition_diff_squared",
+            "performance_decline_velocity_diff_squared",
+            "mileage_adjusted_age_diff_squared",
+            "layoff_veteran_interaction_diff_squared",
+            "performance_volatility_l10_diff_squared",
+            "finish_rate_acceleration_diff_squared",
         ]
 
     def calculate_streak(self, recent_wins, count_wins=True):
@@ -858,9 +889,23 @@ class ImprovedUFCPredictor:
         # Swap winner
         df_swapped["winner"] = df["winner"].replace({"Red": "Blue", "Blue": "Red"})
 
-        # Swap differential features (negate them)
+        # Swap differential features (negate them) - PARITY-AWARE LOGIC
+        # CRITICAL: Even-power transforms (squared) should NOT be negated!
+        # Mathematical reason: (x)² = (-x)², so squared diffs are swap-invariant
         for col in df.columns:
-            if "_diff" in col or "_advantage" in col or "_gap" in col:
+            # IMPORTANT: Check _squared_diff BEFORE _squared (order matters!)
+            # _squared_diff = diff of squares (r² - b²) → should flip
+            # _diff_squared = square of diff ((r-b)²) → should NOT flip
+            if "_squared_diff" in col:
+                df_swapped[col] = -df[col]  # Flip: this is a differential
+                continue
+
+            # Skip even-power transforms (these are swap-invariant)
+            if "_squared" in col or "_abs" in col:
+                continue  # Do NOT negate squared/abs features
+
+            # Negate odd-power transforms and base differentials
+            if "_diff" in col or "_advantage" in col or "_gap" in col or "_cubic" in col:
                 df_swapped[col] = -df[col]
 
         # Negate interaction features (they're products of differentials, so they're also differentials)
@@ -876,9 +921,7 @@ class ImprovedUFCPredictor:
             "durability_x_striking", "elo_x_durability",
             "submission_x_grappling", "ko_power_x_striking",
             "momentum_x_win_streak",
-            "streak_differential",
-            # NOTE: streak_differential is 2-factor product, but name has "_diff"
-            # Gets auto-negated (wrong!), so we manually negate to cancel it out (double-neg = correct)
+            # NOTE: streak_differential removed - now correctly auto-negated by parity-aware logic
             # NEW: Strategic interactions
             "age_x_win_streak", "elo_x_sub_threat",
             "form_x_durability", "striking_x_grappling_matchup",
@@ -1078,13 +1121,17 @@ class ImprovedUFCPredictor:
         df["event_date"] = pd.to_datetime(df["event_date"])
         df = df.sort_values("event_date").reset_index(drop=True)
 
+        # Initialize ELO tracking for PHASE 3 (must match calculate_elo_ratings logic)
+        self.fighter_elos = {}
+        self.elo_history = {}
+
         fighter_stats = {}
 
         stats_to_track = {
             "wins": 0, "losses": 0, "draws": 0,
             "sig_str_total": 0, "sig_str_att_total": 0, "sig_str_absorbed_total": 0,
             "td_total": 0, "td_att_total": 0, "td_def_success": 0, "td_def_att": 0,
-            "sub_att_total": 0, "kd_total": 0,
+            "sub_att_total": 0, "kd_total": 0, "kd_absorbed": 0,  # kd_absorbed = knockdowns received
             "fight_time_minutes": 0, "fight_count": 0,
             "ko_wins": 0, "sub_wins": 0, "dec_wins": 0,
             "ko_losses": 0, "sub_losses": 0,
@@ -1141,6 +1188,25 @@ class ImprovedUFCPredictor:
             # Recent finish history (last 5 fights)
             "recent_finish_methods": [],  # List of last 5 finish methods
             "recent_finish_rounds": [],  # List of last 5 rounds fights ended
+            # ELO rating (tracked chronologically)
+            "elo": 1500,  # Current ELO rating (starts at 1500)
+            # PHASE 3: Advanced opponent quality, volatility, and interaction features
+            # CLUSTER 1: Opponent Quality Tracking
+            "opponent_elo_history": [],  # Last 10 opponent ELOs
+            "opponent_ranking_history": [],  # Last 10 opponent rankings (percentile)
+            "damage_ratio_history": [],  # Last 10 damage ratios for volatility
+            "slpm_history": [],  # Last 10 SLpM values for CV calculation
+            # CLUSTER 2: Volatility Tracking
+            "finish_rate_history_5": [],  # Track last 5 finish outcomes (1 or 0)
+            "finish_rate_history_10": [],  # Track last 10 finish outcomes
+            # CLUSTER 3: Career Peak Tracking
+            "career_best_damage_ratio": 0.0,  # Best damage ratio ever achieved
+            "elite_performance_count_l10": 0,  # Count of elite performances in last 10
+            "damage_ratio_threshold_80th": None,  # 80th percentile of own damage ratios
+            # CLUSTER 4: Fight Urgency Tracking
+            "current_losing_streak": 0,  # Current consecutive losses
+            # CLUSTER 6: Interaction Terms (uses existing data, no new tracking needed)
+            # CLUSTER 7: Bayesian Tracking (uses existing data, no new tracking needed)
         }
 
         # Initialize corrected columns
@@ -1182,7 +1248,18 @@ class ImprovedUFCPredictor:
                         "total_rounds_fought", "total_fights_fought", "title_fights", "five_round_fights",
                         "last_fight_was_finish", "last_fight_was_win", "last_fight_dominance",
                         "early_finish_rate", "late_finish_rate", "first_round_ko_rate",
-                        "fights_last_24_months", "avg_finish_time_last_3", "chin_deterioration"]:
+                        "fights_last_24_months", "avg_finish_time_last_3", "chin_deterioration",
+                        # PHASE 3: Advanced features
+                        "avg_opponent_elo_l5", "elo_momentum_vs_competition",
+                        "performance_vs_ranked_opponents", "performance_volatility_l10",
+                        "finish_rate_acceleration", "slpm_coefficient_of_variation",
+                        "performance_decline_velocity", "mileage_adjusted_age",
+                        "prime_exit_risk", "career_inflection_point",
+                        "title_shot_proximity_score", "tactical_evolution_score",
+                        "finish_method_diversity", "aging_power_striker_penalty",
+                        "elo_volatility_interaction", "layoff_veteran_interaction",
+                        "bayesian_finish_rate", "confidence_weighted_damage_ratio",
+                        "distance_from_career_peak", "elite_performance_frequency_l10"]:
                 df[f"{prefix}_{stat}_corrected"] = 0.0
 
         df["h2h_advantage"] = 0.0
@@ -1365,6 +1442,179 @@ class ImprovedUFCPredictor:
                 else:
                     df.at[idx, f"{prefix}_chin_deterioration_corrected"] = 0
 
+                # PHASE 3: Record advanced stats before fight
+                # CLUSTER 1: Opponent Quality Features
+                if len(stats["opponent_elo_history"]) >= 5:
+                    df.at[idx, f"{prefix}_avg_opponent_elo_l5_corrected"] = np.mean(stats["opponent_elo_history"][-5:])
+                else:
+                    df.at[idx, f"{prefix}_avg_opponent_elo_l5_corrected"] = np.mean(stats["opponent_elo_history"]) if stats["opponent_elo_history"] else 1500
+
+                # elo_momentum_vs_competition
+                current_elo = stats["elo"]  # Use tracked ELO
+                if len(stats["opponent_elo_history"]) >= 3:
+                    avg_opp_elo_l3 = np.mean(stats["opponent_elo_history"][-3:])
+                    recent_win_rate_3 = sum(stats["recent_wins"][-3:]) / 3 if len(stats["recent_wins"]) >= 3 else 0.5
+                    df.at[idx, f"{prefix}_elo_momentum_vs_competition_corrected"] = (current_elo - avg_opp_elo_l3) * recent_win_rate_3
+                else:
+                    df.at[idx, f"{prefix}_elo_momentum_vs_competition_corrected"] = 0
+
+                # performance_vs_ranked_opponents
+                if len(stats["opponent_ranking_history"]) > 0:
+                    top_50_fights = sum(1 for rank in stats["opponent_ranking_history"] if rank >= 0.5)
+                    top_50_wins = 0
+                    for i, rank in enumerate(stats["opponent_ranking_history"]):
+                        if rank >= 0.5 and i < len(stats["recent_wins"]) and stats["recent_wins"][-(len(stats["opponent_ranking_history"]) - i)]:
+                            top_50_wins += 1
+                    baseline_win_rate = stats["wins"] / max(stats["wins"] + stats["losses"], 1)
+                    win_rate_vs_ranked = top_50_wins / max(top_50_fights, 1) if top_50_fights > 0 else baseline_win_rate
+                    df.at[idx, f"{prefix}_performance_vs_ranked_opponents_corrected"] = win_rate_vs_ranked - baseline_win_rate
+                else:
+                    df.at[idx, f"{prefix}_performance_vs_ranked_opponents_corrected"] = 0
+
+                # CLUSTER 2: Volatility Features
+                if len(stats["damage_ratio_history"]) >= 3:
+                    df.at[idx, f"{prefix}_performance_volatility_l10_corrected"] = np.std(stats["damage_ratio_history"][-10:])
+                else:
+                    df.at[idx, f"{prefix}_performance_volatility_l10_corrected"] = 0
+
+                # finish_rate_acceleration
+                if len(stats["finish_rate_history_10"]) >= 10:
+                    finish_rate_l5 = np.mean(stats["finish_rate_history_10"][-5:])
+                    finish_rate_l6_to_10 = np.mean(stats["finish_rate_history_10"][-10:-5])
+                    df.at[idx, f"{prefix}_finish_rate_acceleration_corrected"] = finish_rate_l5 - finish_rate_l6_to_10
+                elif len(stats["finish_rate_history_10"]) >= 5:
+                    df.at[idx, f"{prefix}_finish_rate_acceleration_corrected"] = np.mean(stats["finish_rate_history_10"][-5:]) - 0.3
+                else:
+                    df.at[idx, f"{prefix}_finish_rate_acceleration_corrected"] = 0
+
+                # slpm_coefficient_of_variation
+                if len(stats["slpm_history"]) >= 3:
+                    mean_slpm = np.mean(stats["slpm_history"][-10:])
+                    if mean_slpm > 0:
+                        df.at[idx, f"{prefix}_slpm_coefficient_of_variation_corrected"] = np.std(stats["slpm_history"][-10:]) / mean_slpm
+                    else:
+                        df.at[idx, f"{prefix}_slpm_coefficient_of_variation_corrected"] = 0
+                else:
+                    df.at[idx, f"{prefix}_slpm_coefficient_of_variation_corrected"] = 0
+
+                # CLUSTER 3: Career Phase & Decline
+                if len(stats["damage_ratio_history"]) >= 10:
+                    dr_l3 = np.mean(stats["damage_ratio_history"][-3:])
+                    dr_l10 = np.mean(stats["damage_ratio_history"][-10:])
+                    age = row[f"{prefix}_age_at_event"]
+                    age_factor = max(0, age - 32) * 0.15
+                    df.at[idx, f"{prefix}_performance_decline_velocity_corrected"] = ((dr_l3 - dr_l10) / 7) * (1 + age_factor)
+                elif len(stats["damage_ratio_history"]) >= 3:
+                    dr_l3 = np.mean(stats["damage_ratio_history"][-3:])
+                    age = row[f"{prefix}_age_at_event"]
+                    age_factor = max(0, age - 32) * 0.15
+                    df.at[idx, f"{prefix}_performance_decline_velocity_corrected"] = (dr_l3 - 1.0) * (1 + age_factor)
+                else:
+                    df.at[idx, f"{prefix}_performance_decline_velocity_corrected"] = 0
+
+                # mileage_adjusted_age
+                age = row[f"{prefix}_age_at_event"]
+                total_rounds = stats["total_rounds_fought"]
+                kd_absorbed = stats["kd_absorbed"]
+                df.at[idx, f"{prefix}_mileage_adjusted_age_corrected"] = age + (total_rounds / 30) + (kd_absorbed * 0.5)
+
+                # prime_exit_risk
+                age = row[f"{prefix}_age_at_event"]
+                if age > 33:
+                    recent_win_rate_5 = sum(stats["recent_wins"][-5:]) / 5 if len(stats["recent_wins"]) >= 5 else 0.5
+                    df.at[idx, f"{prefix}_prime_exit_risk_corrected"] = ((age - 33) ** 2) * (1 - recent_win_rate_5)
+                else:
+                    df.at[idx, f"{prefix}_prime_exit_risk_corrected"] = 0
+
+                # CLUSTER 4: Fight Urgency
+                losing_streak = stats["current_losing_streak"]
+                wins = stats["wins"]
+                age = row[f"{prefix}_age_at_event"]
+                age_penalty = 1 + max(0, age - 35) * 0.3
+                df.at[idx, f"{prefix}_career_inflection_point_corrected"] = losing_streak * (1 / (wins + 1)) * age_penalty
+
+                # title_shot_proximity_score
+                current_elo = stats["elo"]  # Use tracked ELO
+                division_median_elo = 1500
+                win_streak = self.calculate_streak(stats["recent_wins"], True)
+                title_fights = stats["title_fights"]
+                title_multiplier = 0.5 if title_fights > 0 else 1.0
+                df.at[idx, f"{prefix}_title_shot_proximity_score_corrected"] = (current_elo / division_median_elo) * (win_streak / 3) * title_multiplier
+
+                # CLUSTER 5: Style Evolution
+                if len(stats["rolling_slpm"]) >= 10:
+                    striking_rate_l3 = np.mean(stats["rolling_slpm"][-3:])
+                    striking_rate_l10 = np.mean(stats["rolling_slpm"][-10:])
+                    td_rate_l3 = np.mean(stats["rolling_td_acc"][-3:]) if len(stats["rolling_td_acc"]) >= 3 else 0
+                    td_rate_l10 = np.mean(stats["rolling_td_acc"][-10:]) if len(stats["rolling_td_acc"]) >= 10 else 0
+                    df.at[idx, f"{prefix}_tactical_evolution_score_corrected"] = abs(striking_rate_l3 - striking_rate_l10) + abs(td_rate_l3 - td_rate_l10)
+                else:
+                    df.at[idx, f"{prefix}_tactical_evolution_score_corrected"] = 0
+
+                # finish_method_diversity
+                total_fights = stats["wins"] + stats["losses"]
+                if total_fights > 0:
+                    ko_rate = stats["ko_wins"] / total_fights
+                    sub_rate = stats["sub_wins"] / total_fights
+                    dec_rate = stats["dec_wins"] / total_fights
+                    rates = [ko_rate, sub_rate, dec_rate]
+                    rates = [r for r in rates if r > 0]
+                    entropy = -sum(r * np.log(r + 1e-10) for r in rates) if rates else 0
+                    df.at[idx, f"{prefix}_finish_method_diversity_corrected"] = entropy
+                else:
+                    df.at[idx, f"{prefix}_finish_method_diversity_corrected"] = 0
+
+                # CLUSTER 6: Interaction Terms
+                age = row[f"{prefix}_age_at_event"]
+                total_fights = stats["wins"] + stats["losses"]
+                ko_rate = stats["ko_wins"] / total_fights if total_fights > 0 else 0
+                if age > 30:
+                    df.at[idx, f"{prefix}_aging_power_striker_penalty_corrected"] = (age - 30) * ko_rate * (-1)
+                else:
+                    df.at[idx, f"{prefix}_aging_power_striker_penalty_corrected"] = 0
+
+                # elo_volatility_interaction
+                current_elo = stats["elo"]  # Use tracked ELO
+                performance_volatility = df.at[idx, f"{prefix}_performance_volatility_l10_corrected"]
+                df.at[idx, f"{prefix}_elo_volatility_interaction_corrected"] = current_elo * (1 / (1 + performance_volatility))
+
+                # layoff_veteran_interaction
+                days_since_last = df.at[idx, f"{prefix}_days_since_last_fight_corrected"]
+                layoff_severity = max(0, (days_since_last - 365) / 30)
+                total_fights = stats["total_fights_fought"]
+                age = row[f"{prefix}_age_at_event"]
+                age_factor = 1 + max(0, age - 32) * 0.1
+                df.at[idx, f"{prefix}_layoff_veteran_interaction_corrected"] = layoff_severity * (total_fights / 20) * age_factor
+
+                # CLUSTER 7: Bayesian Adjustments
+                total_fights = stats["wins"] + stats["losses"]
+                finish_count = stats["ko_wins"] + stats["sub_wins"]
+                df.at[idx, f"{prefix}_bayesian_finish_rate_corrected"] = (finish_count + 3) / (total_fights + 10)
+
+                # confidence_weighted_damage_ratio
+                if len(stats["damage_ratio_history"]) > 0:
+                    recent_dr = np.mean(stats["damage_ratio_history"][-3:])
+                else:
+                    recent_dr = 1.0
+                total_fights = stats["total_fights_fought"]
+                confidence = min(1.0, total_fights / 15)
+                df.at[idx, f"{prefix}_confidence_weighted_damage_ratio_corrected"] = recent_dr * confidence
+
+                # CLUSTER 9: Peak Performance
+                career_best = stats["career_best_damage_ratio"]
+                if len(stats["damage_ratio_history"]) >= 3 and career_best > 0:
+                    current_l3 = np.mean(stats["damage_ratio_history"][-3:])
+                    df.at[idx, f"{prefix}_distance_from_career_peak_corrected"] = (career_best - current_l3) / career_best
+                else:
+                    df.at[idx, f"{prefix}_distance_from_career_peak_corrected"] = 0
+
+                # elite_performance_frequency_l10
+                if len(stats["damage_ratio_history"]) >= 10:
+                    elite_count = stats["elite_performance_count_l10"]
+                    df.at[idx, f"{prefix}_elite_performance_frequency_l10_corrected"] = elite_count / 10
+                else:
+                    df.at[idx, f"{prefix}_elite_performance_frequency_l10_corrected"] = 0
+
                 # PHASE 1B: Rolling statistics (last 3/5/10 fights averages)
 
                 # SLpM rolling averages
@@ -1527,6 +1777,45 @@ class ImprovedUFCPredictor:
                         fighter_stats[fighter]["recent_wins"] = fighter_stats[fighter]["recent_wins"][-10:]
                     fighter_stats[fighter]["last_fight_date"] = row["event_date"]
 
+                # Update ELO ratings (using proper UFC ELO system for PHASE 3 features)
+                # Initialize fighters in ELO system if not seen before
+                if r_fighter not in self.fighter_elos:
+                    self.fighter_elos[r_fighter] = 1500
+                    self.elo_history[r_fighter] = []
+                if b_fighter not in self.fighter_elos:
+                    self.fighter_elos[b_fighter] = 1500
+                    self.elo_history[b_fighter] = []
+
+                # Sync tracked ELO with main ELO system
+                fighter_stats[r_fighter]["elo"] = self.fighter_elos[r_fighter]
+                fighter_stats[b_fighter]["elo"] = self.fighter_elos[b_fighter]
+
+                # Determine winner for K-factor calculation
+                if row["winner"] == "Red":
+                    winner_fighter = r_fighter
+                    fighter_result = "Win"
+                elif row["winner"] == "Blue":
+                    winner_fighter = b_fighter
+                    fighter_result = "Win"
+                else:  # Draw
+                    winner_fighter = r_fighter
+                    fighter_result = "Draw"
+
+                # Calculate K-factor using the proper UFC ELO system
+                k_factor = self.elo_calculate_k_factor(
+                    row, winner_fighter, fighter_result, self.fighter_elos, self.elo_history
+                )
+
+                # Update ELO ratings using the proper UFC ELO system
+                self.elo_update_ratings(
+                    r_fighter, b_fighter, row["winner"], k_factor,
+                    self.fighter_elos, self.elo_history, row["event_date"]
+                )
+
+                # Update tracked ELO in stats
+                fighter_stats[r_fighter]["elo"] = self.fighter_elos[r_fighter]
+                fighter_stats[b_fighter]["elo"] = self.fighter_elos[b_fighter]
+
                 # Update fight stats
                 for fighter, f_prefix, opp_prefix in [(r_fighter, "r", "b"), (b_fighter, "b", "r")]:
                     if pd.notna(row.get(f"{f_prefix}_sig_str")):
@@ -1541,6 +1830,12 @@ class ImprovedUFCPredictor:
                         fighter_stats[fighter]["td_att_total"] += row[f"{f_prefix}_td_att"]
                     if pd.notna(row.get(f"{f_prefix}_sub_att")):
                         fighter_stats[fighter]["sub_att_total"] += row[f"{f_prefix}_sub_att"]
+
+                    # Track knockdowns scored and absorbed
+                    if pd.notna(row.get(f"{f_prefix}_kd")):
+                        fighter_stats[fighter]["kd_total"] += row[f"{f_prefix}_kd"]
+                    if pd.notna(row.get(f"{opp_prefix}_kd")):
+                        fighter_stats[fighter]["kd_absorbed"] += row[f"{opp_prefix}_kd"]
 
                     fight_time = row.get("total_fight_time_sec", 0) / 60 if pd.notna(row.get("total_fight_time_sec")) else 0
                     fighter_stats[fighter]["fight_time_minutes"] += fight_time
@@ -1832,6 +2127,68 @@ class ImprovedUFCPredictor:
                         fighter_stats[fighter]["vs_finisher_record"]["fights"] += 1
                         if did_win:
                             fighter_stats[fighter]["vs_finisher_record"]["wins"] += 1
+
+                # PHASE 3: Update advanced tracking after fight
+                for fighter, f_prefix, opp_fighter, opp_prefix in [(r_fighter, "r", b_fighter, "b"), (b_fighter, "b", r_fighter, "r")]:
+                    # CLUSTER 1: Track opponent quality
+                    # Get opponent's ELO before this fight
+                    opponent_elo = fighter_stats[opp_fighter]["elo"]  # Use tracked ELO
+                    fighter_stats[fighter]["opponent_elo_history"].append(opponent_elo)
+                    if len(fighter_stats[fighter]["opponent_elo_history"]) > 10:
+                        fighter_stats[fighter]["opponent_elo_history"] = fighter_stats[fighter]["opponent_elo_history"][-10:]
+
+                    # Track opponent ranking (percentile in division)
+                    # Estimate percentile based on ELO (1500 = median)
+                    opponent_percentile = min(1.0, max(0.0, (opponent_elo - 1300) / 400))
+                    fighter_stats[fighter]["opponent_ranking_history"].append(opponent_percentile)
+                    if len(fighter_stats[fighter]["opponent_ranking_history"]) > 10:
+                        fighter_stats[fighter]["opponent_ranking_history"] = fighter_stats[fighter]["opponent_ranking_history"][-10:]
+
+                    # CLUSTER 2: Track performance volatility
+                    # Calculate this fight's damage ratio
+                    my_sig_str = row.get(f"{f_prefix}_sig_str", 0)
+                    opp_sig_str = row.get(f"{opp_prefix}_sig_str", 0)
+                    damage_ratio = my_sig_str / max(opp_sig_str, 1) if opp_sig_str > 0 else my_sig_str / max(my_sig_str, 1)
+
+                    fighter_stats[fighter]["damage_ratio_history"].append(damage_ratio)
+                    if len(fighter_stats[fighter]["damage_ratio_history"]) > 10:
+                        fighter_stats[fighter]["damage_ratio_history"] = fighter_stats[fighter]["damage_ratio_history"][-10:]
+
+                    # Update career best damage ratio
+                    if damage_ratio > fighter_stats[fighter]["career_best_damage_ratio"]:
+                        fighter_stats[fighter]["career_best_damage_ratio"] = damage_ratio
+
+                    # Track if this was an elite performance (top 20% of career)
+                    if len(fighter_stats[fighter]["damage_ratio_history"]) >= 5:
+                        # Calculate 80th percentile threshold
+                        threshold_80 = np.percentile(fighter_stats[fighter]["damage_ratio_history"], 80)
+                        fighter_stats[fighter]["damage_ratio_threshold_80th"] = threshold_80
+
+                        # Update elite performance count for last 10 fights
+                        elite_count = sum(1 for dr in fighter_stats[fighter]["damage_ratio_history"][-10:] if dr >= threshold_80)
+                        fighter_stats[fighter]["elite_performance_count_l10"] = elite_count
+
+                    # Track SLpM for coefficient of variation
+                    if fight_time > 0:
+                        this_fight_slpm = row.get(f"{f_prefix}_sig_str", 0) / (fight_time / 60) if pd.notna(row.get(f"{f_prefix}_sig_str")) else 0
+                        fighter_stats[fighter]["slpm_history"].append(this_fight_slpm)
+                        if len(fighter_stats[fighter]["slpm_history"]) > 10:
+                            fighter_stats[fighter]["slpm_history"] = fighter_stats[fighter]["slpm_history"][-10:]
+
+                    # Track finish outcomes for acceleration
+                    is_finish = method_cat in ["ko", "sub"]
+                    was_winner = (fighter == r_fighter and row["winner"] == "Red") or (fighter == b_fighter and row["winner"] == "Blue")
+                    finish_outcome = 1 if (is_finish and was_winner) else 0
+
+                    fighter_stats[fighter]["finish_rate_history_10"].append(finish_outcome)
+                    if len(fighter_stats[fighter]["finish_rate_history_10"]) > 10:
+                        fighter_stats[fighter]["finish_rate_history_10"] = fighter_stats[fighter]["finish_rate_history_10"][-10:]
+
+                    # CLUSTER 4: Track losing streak
+                    if not was_winner:
+                        fighter_stats[fighter]["current_losing_streak"] += 1
+                    else:
+                        fighter_stats[fighter]["current_losing_streak"] = 0
 
         print("\nData leakage fixed successfully!\n")
 
@@ -2543,6 +2900,30 @@ class ImprovedUFCPredictor:
         # Pressure differential (relentless pressure breaks opponents)
         df["pressure_differential_squared"] = df["pressure_differential"] ** 2
 
+        # ========== PHASE 3: ADVANCED OPPONENT QUALITY, VOLATILITY, AND INTERACTION FEATURES ==========
+
+        # PHASE 3: Calculate differentials for all new features
+        for feature in ["avg_opponent_elo_l5", "elo_momentum_vs_competition",
+                        "performance_vs_ranked_opponents", "performance_volatility_l10",
+                        "finish_rate_acceleration", "slpm_coefficient_of_variation",
+                        "performance_decline_velocity", "mileage_adjusted_age",
+                        "prime_exit_risk", "career_inflection_point",
+                        "title_shot_proximity_score", "tactical_evolution_score",
+                        "finish_method_diversity", "aging_power_striker_penalty",
+                        "elo_volatility_interaction", "layoff_veteran_interaction",
+                        "bayesian_finish_rate", "confidence_weighted_damage_ratio",
+                        "distance_from_career_peak", "elite_performance_frequency_l10"]:
+            df[f"{feature}_diff"] = df[f"r_{feature}_corrected"] - df[f"b_{feature}_corrected"]
+
+        # Add polynomial features for key PHASE 3 features
+        df["avg_opponent_elo_l5_diff_squared"] = df["avg_opponent_elo_l5_diff"] ** 2
+        df["elo_momentum_vs_competition_diff_squared"] = df["elo_momentum_vs_competition_diff"] ** 2
+        df["performance_decline_velocity_diff_squared"] = df["performance_decline_velocity_diff"] ** 2
+        df["mileage_adjusted_age_diff_squared"] = df["mileage_adjusted_age_diff"] ** 2
+        df["layoff_veteran_interaction_diff_squared"] = df["layoff_veteran_interaction_diff"] ** 2
+        df["performance_volatility_l10_diff_squared"] = df["performance_volatility_l10_diff"] ** 2
+        df["finish_rate_acceleration_diff_squared"] = df["finish_rate_acceleration_diff"] ** 2
+
         # ========== PHASE 1B: ROLLING STATISTICS DIFFERENTIALS ==========
 
         # Rolling averages (recent performance trends)
@@ -2986,7 +3367,7 @@ class ImprovedUFCPredictor:
             )
 
         # RFECV with TimeSeriesSplit
-        min_features = 60  # Aggressive feature selection to reduce overfitting
+        min_features = 150  # Aggressive feature selection to reduce overfitting
         n_features = len(high_variance_features)  # Test all high-variance features
         step = 2  # Reduced from 5 to 2 for finer-grained feature selection
 
