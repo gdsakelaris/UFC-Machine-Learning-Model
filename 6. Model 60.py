@@ -4131,8 +4131,52 @@ class ImprovedUFCPredictor:
 
         self.winner_model = self.calibrated_model
 
-        # Evaluate on test set (FIRST TIME)
+        # ========== RED CORNER BIAS DIAGNOSTIC ==========
         print("\n" + "="*80)
+        print("RED CORNER BIAS DIAGNOSTIC")
+        print("="*80)
+
+        # Test on balanced synthetic data
+        n_test = min(1000, len(X_test))  # Use up to 1000 samples
+        X_test_balanced = X_test.iloc[:n_test].copy()
+        X_test_flipped = X_test_balanced.copy()
+
+        # Flip directional features
+        directional_cols = [c for c in X_test_balanced.columns if c in D.columns]
+        X_test_flipped[directional_cols] = -X_test_balanced[directional_cols]
+
+        # Predict on original vs flipped
+        pred_orig = self.calibrated_model.predict_proba(X_test_balanced)[:, 1]
+        pred_flip = self.calibrated_model.predict_proba(X_test_flipped)[:, 1]
+
+        # Check parity: pred_orig + pred_flip should = 1.0
+        parity_error = np.abs((pred_orig + pred_flip) - 1.0)
+        mean_parity_error = parity_error.mean()
+        max_parity_error = parity_error.max()
+
+        # Measure inherent red bias
+        mean_pred_orig = pred_orig.mean()
+        mean_pred_flip = pred_flip.mean()
+        inherent_red_bias = mean_pred_orig - (1 - mean_pred_flip)
+
+        print("Parity Test (should be ~0):")
+        print(f"  Mean error: {mean_parity_error:.4f}")
+        print(f"  Max error:  {max_parity_error:.4f}")
+        print("\nInherent Red Bias:")
+        print(f"  Original predictions avg: {mean_pred_orig:.4f} (should be ~0.50)")
+        print(f"  Flipped predictions avg:  {mean_pred_flip:.4f} (should be ~0.50)")
+        print(f"  Red bias: {inherent_red_bias:+.4f} ({inherent_red_bias*100:+.2f}%)")
+        print("\nInterpretation:")
+        if abs(inherent_red_bias) < 0.02:
+            print("  ✅ GOOD: Bias < 2% - Legitimate (real UFC advantage)")
+        elif abs(inherent_red_bias) < 0.05:
+            print("  ⚠️  BORDERLINE: Bias 2-5% - Check calibration")
+        else:
+            print("  ❌ BAD: Bias > 5% - Model learning corner position")
+        print("="*80 + "\n")
+
+        # Evaluate on test set (FIRST TIME)
+        print("="*80)
         print("FINAL MODEL PERFORMANCE")
         print("="*80)
 
