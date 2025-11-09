@@ -1761,26 +1761,51 @@ class ImprovedUFCPredictor:
                 # Win rate vs elite opponents (top 25% ELO > ~1600)
                 if stats["vs_elite_record"]["fights"] > 0:
                     df.at[idx, f"{prefix}_win_rate_vs_elite_corrected"] = stats["vs_elite_record"]["wins"] / stats["vs_elite_record"]["fights"]
+                else:
+                    # Default to overall win rate if no elite fights yet
+                    overall_rate = stats["wins"] / max(stats["wins"] + stats["losses"], 1)
+                    df.at[idx, f"{prefix}_win_rate_vs_elite_corrected"] = overall_rate
 
                 # Win rate vs strikers (high SLpM opponents)
                 if stats["vs_striker_record"]["fights"] > 0:
                     df.at[idx, f"{prefix}_win_rate_vs_strikers_corrected"] = stats["vs_striker_record"]["wins"] / stats["vs_striker_record"]["fights"]
+                else:
+                    # Default to overall win rate if no striker fights yet
+                    overall_rate = stats["wins"] / max(stats["wins"] + stats["losses"], 1)
+                    df.at[idx, f"{prefix}_win_rate_vs_strikers_corrected"] = overall_rate
 
                 # Win rate vs grapplers (high TD avg opponents)
                 if stats["vs_grappler_record"]["fights"] > 0:
                     df.at[idx, f"{prefix}_win_rate_vs_grapplers_corrected"] = stats["vs_grappler_record"]["wins"] / stats["vs_grappler_record"]["fights"]
+                else:
+                    # Default to overall win rate if no grappler fights yet
+                    overall_rate = stats["wins"] / max(stats["wins"] + stats["losses"], 1)
+                    df.at[idx, f"{prefix}_win_rate_vs_grapplers_corrected"] = overall_rate
 
                 # Win rate vs durable opponents (high durability)
                 if stats["vs_durable_record"]["fights"] > 0:
                     df.at[idx, f"{prefix}_win_rate_vs_durable_corrected"] = stats["vs_durable_record"]["wins"] / stats["vs_durable_record"]["fights"]
+                else:
+                    # Default to overall win rate if no durable fights yet
+                    overall_rate = stats["wins"] / max(stats["wins"] + stats["losses"], 1)
+                    df.at[idx, f"{prefix}_win_rate_vs_durable_corrected"] = overall_rate
 
                 # Win rate vs finishers (high finish rate opponents)
                 if stats["vs_finisher_record"]["fights"] > 0:
                     df.at[idx, f"{prefix}_win_rate_vs_finishers_corrected"] = stats["vs_finisher_record"]["wins"] / stats["vs_finisher_record"]["fights"]
+                else:
+                    # Default to overall win rate if no finisher fights yet
+                    overall_rate = stats["wins"] / max(stats["wins"] + stats["losses"], 1)
+                    df.at[idx, f"{prefix}_win_rate_vs_finishers_corrected"] = overall_rate
 
                 # Finish rate vs elite opponents
                 if stats["finish_vs_elite"]["fights"] > 0:
                     df.at[idx, f"{prefix}_finish_rate_vs_elite_corrected"] = stats["finish_vs_elite"]["finishes"] / stats["finish_vs_elite"]["fights"]
+                else:
+                    # Default to overall finish rate if no elite fights yet
+                    total_fights = stats["wins"] + stats["losses"]
+                    finish_rate = (stats["ko_wins"] + stats["sub_wins"]) / max(total_fights, 1)
+                    df.at[idx, f"{prefix}_finish_rate_vs_elite_corrected"] = finish_rate
 
                 # Recent opponent quality (avg ELO of last 5 opponents)
                 if len(stats["recent_opponent_elos"]) > 0:
@@ -1789,13 +1814,14 @@ class ImprovedUFCPredictor:
                     df.at[idx, f"{prefix}_recent_opponent_quality_5_corrected"] = 1500  # Default
 
                 # Style versatility (can beat both strikers and grapplers)
-                striker_success = stats["vs_striker_record"]["wins"] / stats["vs_striker_record"]["fights"] if stats["vs_striker_record"]["fights"] > 0 else 0.5
-                grappler_success = stats["vs_grappler_record"]["wins"] / stats["vs_grappler_record"]["fights"] if stats["vs_grappler_record"]["fights"] > 0 else 0.5
+                # Use overall win rate as default instead of 0.5 for better differentiation
+                overall_rate = stats["wins"] / max(stats["wins"] + stats["losses"], 1)
+                striker_success = stats["vs_striker_record"]["wins"] / stats["vs_striker_record"]["fights"] if stats["vs_striker_record"]["fights"] > 0 else overall_rate
+                grappler_success = stats["vs_grappler_record"]["wins"] / stats["vs_grappler_record"]["fights"] if stats["vs_grappler_record"]["fights"] > 0 else overall_rate
                 df.at[idx, f"{prefix}_style_versatility_corrected"] = min(striker_success, grappler_success)  # Worst matchup determines versatility
 
                 # Step-up performance (performance vs elite - performance vs non-elite)
-                elite_rate = stats["vs_elite_record"]["wins"] / stats["vs_elite_record"]["fights"] if stats["vs_elite_record"]["fights"] > 0 else 0.5
-                overall_rate = stats["wins"] / max(stats["wins"] + stats["losses"], 1)
+                elite_rate = stats["vs_elite_record"]["wins"] / stats["vs_elite_record"]["fights"] if stats["vs_elite_record"]["fights"] > 0 else overall_rate
                 df.at[idx, f"{prefix}_step_up_performance_corrected"] = elite_rate - overall_rate
 
             # Calculate opponent quality differential
@@ -2149,20 +2175,22 @@ class ImprovedUFCPredictor:
                     is_elite_opponent = opp_elo >= 1600 if pd.notna(opp_elo) else False
 
                     # Classify opponent style based on PRE-COMPUTED career averages (chronologically safe)
-                    opp_slpm = row.get(f"{opp_prefix}_pro_SLpM_corrected", 0)
-                    opp_td_avg = row.get(f"{opp_prefix}_pro_td_avg_corrected", 0)
+                    opp_slpm = row.get(f"{opp_prefix}_pro_SLpM_corrected", None)
+                    opp_td_avg = row.get(f"{opp_prefix}_pro_td_avg_corrected", None)
 
                     is_striker = False
                     is_grappler = False
                     opponent_style = 0  # -1=grappler, 0=balanced, 1=striker
 
                     if pd.notna(opp_slpm) and pd.notna(opp_td_avg):
-                        # High SLpM (>4.0) and low TD avg (<2.0) = Striker
-                        if opp_slpm > 4.0 and opp_td_avg < 2.0:
+                        # Striker: High SLpM (>3.5) and low TD avg (<1.5)
+                        # More inclusive to capture top ~30% strikers
+                        if opp_slpm > 3.5 and opp_td_avg < 1.5:
                             is_striker = True
                             opponent_style = 1
-                        # High TD avg (>3.0) and lower SLpM = Grappler
-                        elif opp_td_avg > 3.0 and opp_slpm < 4.5:
+                        # Grappler: High TD avg (>2.0) and moderate SLpM (<3.5)
+                        # More inclusive to capture top ~30% grapplers
+                        elif opp_td_avg > 2.0 and opp_slpm < 3.5:
                             is_grappler = True
                             opponent_style = -1
 
@@ -2171,17 +2199,19 @@ class ImprovedUFCPredictor:
                         fighter_stats[fighter]["recent_opponent_styles"] = fighter_stats[fighter]["recent_opponent_styles"][-5:]
 
                     # Classify opponent as durable using PRE-COMPUTED values
-                    opp_wins = row.get(f"{opp_prefix}_wins_corrected", 0)
-                    opp_losses = row.get(f"{opp_prefix}_losses_corrected", 0)
+                    # More inclusive: 10+ fights and 52%+ defense (top ~40%)
+                    opp_wins = row.get(f"{opp_prefix}_wins_corrected", None)
+                    opp_losses = row.get(f"{opp_prefix}_losses_corrected", None)
                     opp_fights = opp_wins + opp_losses if pd.notna(opp_wins) and pd.notna(opp_losses) else 0
-                    opp_str_def = row.get(f"{opp_prefix}_pro_str_def_corrected", 0)
-                    is_durable = (opp_fights >= 15 and opp_str_def > 0.55) if pd.notna(opp_str_def) else False
+                    opp_str_def = row.get(f"{opp_prefix}_pro_str_def_corrected", None)
+                    is_durable = (opp_fights >= 10 and opp_str_def > 0.52) if pd.notna(opp_str_def) else False
 
                     # Classify opponent as finisher using PRE-COMPUTED rates
-                    opp_ko_rate = row.get(f"{opp_prefix}_ko_rate_corrected", 0)
-                    opp_sub_rate = row.get(f"{opp_prefix}_sub_rate_corrected", 0)
+                    # More inclusive: 50%+ finish rate (top ~40%)
+                    opp_ko_rate = row.get(f"{opp_prefix}_ko_rate_corrected", None)
+                    opp_sub_rate = row.get(f"{opp_prefix}_sub_rate_corrected", None)
                     opp_finish_rate = opp_ko_rate + opp_sub_rate if pd.notna(opp_ko_rate) and pd.notna(opp_sub_rate) else 0
-                    is_finisher = opp_finish_rate > 0.65
+                    is_finisher = opp_finish_rate > 0.50
 
                     # Determine if fighter won this fight
                     winner = row.get("winner")
