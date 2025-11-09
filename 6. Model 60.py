@@ -2516,8 +2516,6 @@ class ImprovedUFCPredictor:
         df["finish_x_momentum"] = df["finish_rate_diff"] * df["momentum_swing"]
 
         # height_x_reach: Product of two differentials
-        # This is a 2-factor product, which stays same under swap when both factors flip
-        # Antisymmetrization will extract the directional component correctly
         df["height_x_reach"] = df["height_diff"] * df["reach_diff"]
 
         df["physical_x_striking"] = (df["height_diff"] + df["reach_diff"]) * df["pro_SLpM_diff_corrected"]
@@ -3367,7 +3365,6 @@ class ImprovedUFCPredictor:
         print(f"\n{'='*80}")
         print(f"OPTIMIZING HYPERPARAMETERS WITH OPTUNA ({n_trials} trials)")
         print(f"{'='*80}")
-        print("Using CPU for hyperparameter optimization (faster for small fold sizes)")
         print()
 
         def objective(trial):
@@ -3826,40 +3823,26 @@ class ImprovedUFCPredictor:
         # Invariant columns already copied, no need to modify
         y_train_flipped = 1 - y_train
 
-        X_val_flipped = X_val.copy()
-        X_val_flipped[directional_cols] = -X_val[directional_cols]
-        # Invariant columns already copied, no need to modify
-        y_val_flipped = 1 - y_val
-
-        # Augment train and val sets with flipped versions
+        # Augment ONLY training set (NOT validation - validation must remain independent)
         X_train_aug = pd.concat([X_train, X_train_flipped], axis=0, ignore_index=True)
         y_train_aug = pd.concat([y_train, y_train_flipped], axis=0, ignore_index=True)
-
-        X_val_aug = pd.concat([X_val, X_val_flipped], axis=0, ignore_index=True)
-        y_val_aug = pd.concat([y_val, y_val_flipped], axis=0, ignore_index=True)
 
         # Shuffle the augmented training data to mix original and flipped examples
         train_indices = np.random.permutation(len(X_train_aug))
         X_train_aug = X_train_aug.iloc[train_indices].reset_index(drop=True)
         y_train_aug = y_train_aug.iloc[train_indices].reset_index(drop=True)
 
-        val_indices = np.random.permutation(len(X_val_aug))
-        X_val_aug = X_val_aug.iloc[val_indices].reset_index(drop=True)
-        y_val_aug = y_val_aug.iloc[val_indices].reset_index(drop=True)
-
-        # Replace original sets with augmented sets
+        # Replace training set with augmented version
         original_train_size = len(X_train)
-
         X_train = X_train_aug
         y_train = y_train_aug
 
-        X_val = X_val_aug
-        y_val = y_val_aug
+        # Validation and test sets remain original (no augmentation)
 
         print("\n2. Augmentation complete:")
         print(f"   ✓ Train set: {original_train_size} → {len(X_train)} samples (2x augmentation)")
-        print(f"   ✓ Val set: {len(X_val_aug)//2} → {len(X_val)} samples (2x augmentation)")
-        print(f"   ✓ Test set: {len(X_test)} samples (no augmentation - used for parity test)")
+        print(f"   ✓ Val set: {len(X_val)} samples (no augmentation - independent evaluation)")
+        print(f"   ✓ Test set: {len(X_test)} samples (no augmentation - held out)")
         print(f"   ✓ Class balance: {(y_train == 1).sum()}/{len(y_train)} Red wins ({(y_train==1).mean()*100:.1f}%)")
         print(f"{'='*80}\n")
 
@@ -4162,8 +4145,8 @@ class ImprovedUFCPredictor:
         X_test_balanced = X_test.iloc[:n_test].copy()
         X_test_flipped = X_test_balanced.copy()
 
-        # Flip directional features
-        directional_cols = [c for c in X_test_balanced.columns if c in D.columns]
+        # Flip directional features (match training method: use _inv suffix)
+        directional_cols = [c for c in X_test_balanced.columns if not c.endswith('_inv')]
         X_test_flipped[directional_cols] = -X_test_balanced[directional_cols]
 
         # Predict on original vs flipped
