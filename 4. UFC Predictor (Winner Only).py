@@ -420,6 +420,84 @@ class ImprovedUFCPredictor:
             "recent_vs_career_striking_diff",
             "striking_consistency_ratio_diff",
             "improvement_trajectory_ratio_diff",
+
+            # ========== PHASE 2: ADVANCED CAREER & MOMENTUM FEATURES (53 features) ==========
+            # Base differentials for new tracked stats (12 features)
+            "total_rounds_fought_diff_corrected",
+            "total_fights_fought_diff_corrected",
+            "title_fights_diff_corrected",
+            "five_round_fights_diff_corrected",
+            "last_fight_was_finish_diff_corrected",
+            "last_fight_was_win_diff_corrected",
+            "last_fight_dominance_diff_corrected",
+            "early_finish_rate_diff_corrected",
+            "late_finish_rate_diff_corrected",
+            "first_round_ko_rate_diff_corrected",
+            "fights_last_24_months_diff_corrected",
+            "chin_deterioration_diff_corrected",
+
+            # Career stage features (4 features)
+            "prime_years_advantage",
+            "declining_phase_diff",
+            "rising_prospect_advantage",
+            "age_experience_ratio_diff",
+
+            # Last fight momentum features (3 features)
+            "last_fight_finish_momentum",
+            "last_fight_dominance",
+            "last_fight_complete_momentum",
+
+            # Damage trends (1 feature)
+            "chin_deterioration",
+
+            # Fight context features (3 features)
+            "title_fight_experience",
+            "five_round_experience",
+            "five_round_cardio_advantage",
+
+            # Activity & ring rust features (3 features)
+            "activity_level_diff",
+            "layoff_severity_diff",
+            "optimal_activity_advantage",
+
+            # Finish timing specialization (4 features)
+            "early_finisher_advantage",
+            "late_finisher_advantage",
+            "first_round_killer_advantage",
+            "finish_timing_rounds_matchup",
+
+            # Advanced momentum features (1 feature)
+            "finish_momentum_acceleration",
+
+            # Grappling efficiency (1 feature)
+            "ctrl_time_per_td_diff",
+
+            # Pace & pressure features (2 features)
+            "total_output_pace_diff",
+            "pressure_differential",
+
+            # Physical interactions (1 feature)
+            "reach_height_interaction_diff",
+
+            # Polynomial features for PHASE 2 stats (18 features)
+            "total_rounds_fought_diff_squared",
+            "total_fights_fought_diff_squared",
+            "title_fights_diff_squared",
+            "five_round_fights_diff_squared",
+            "last_fight_dominance_squared",
+            "last_fight_complete_momentum_squared",
+            "early_finish_rate_diff_squared",
+            "late_finish_rate_diff_squared",
+            "first_round_ko_rate_diff_squared",
+            "fights_last_24_months_diff_squared",
+            "prime_years_advantage_squared",
+            "age_experience_ratio_diff_squared",
+            "chin_deterioration_squared",
+            "layoff_severity_diff_squared",
+            "finish_momentum_acceleration_squared",
+            "ctrl_time_per_td_diff_squared",
+            "total_output_pace_diff_squared",
+            "pressure_differential_squared",
         ]
 
     def calculate_streak(self, recent_wins, count_wins=True):
@@ -827,7 +905,17 @@ class ImprovedUFCPredictor:
             # CRITICAL FIX: 2-factor product interactions
             "skill_momentum",
             # CRITICAL FIX: Scalar × differential products (stored values don't auto-update)
-            "rounds_x_cardio", "rounds_x_finish_rate", "rounds_x_durability"
+            "rounds_x_cardio", "rounds_x_finish_rate", "rounds_x_durability",
+            # PHASE 2: Advanced features without _diff/_advantage/_gap keywords
+            "last_fight_finish_momentum",  # Differential feature
+            "last_fight_dominance",  # Differential feature
+            "last_fight_complete_momentum",  # Differential feature
+            "chin_deterioration",  # Differential feature (recent vs career damage)
+            "title_fight_experience",  # Differential feature
+            "five_round_experience",  # Differential feature
+            "finish_timing_rounds_matchup",  # Interaction of differentials
+            "finish_momentum_acceleration",  # Differential feature (recent vs career)
+            "pressure_differential",  # Differential feature (offense - defense)
         ]
         for col in interaction_features:
             if col in df_swapped.columns:
@@ -1033,43 +1121,68 @@ class ImprovedUFCPredictor:
             "finish_vs_elite": {"finishes": 0, "fights": 0},  # Finish rate vs elite
             "recent_opponent_elos": [],  # Last 5 opponent ELOs
             "recent_opponent_styles": [],  # Last 5 opponent styles (striker=1, grappler=-1, balanced=0)
+            # PHASE 2: Advanced career tracking
+            "total_rounds_fought": 0,  # Cumulative rounds across all fights
+            "total_fights_fought": 0,  # Total MMA fights (wins + losses + draws)
+            "title_fights": 0,  # Number of title fights
+            "five_round_fights": 0,  # Total 5-round fights (title + main events)
+            # Last fight tracking for momentum
+            "last_fight_method": None,  # Last fight finish method (KO/TKO, Submission, Decision)
+            "last_fight_finish_round": None,  # Round fight ended (1-5)
+            "last_fight_was_finish": False,  # Boolean: was it a finish?
+            "last_fight_was_win": False,  # Boolean: did they win?
+            "last_fight_time_seconds": 0,  # Time to finish (if finish)
+            # Finish timing patterns
+            "early_finishes": 0,  # Finishes in rounds 1-2
+            "late_finishes": 0,  # Finishes in rounds 3-5
+            "first_round_kos": 0,  # First round KO/TKOs specifically
+            # Activity tracking
+            "fight_dates": [],  # List of fight dates for activity calculation
+            # Recent finish history (last 5 fights)
+            "recent_finish_methods": [],  # List of last 5 finish methods
+            "recent_finish_rounds": [],  # List of last 5 rounds fights ended
         }
 
         # Initialize corrected columns
         for prefix in ["r", "b"]:
             for stat in ["wins", "losses", "win_loss_ratio", "pro_SLpM", "pro_SApM",
-                         "pro_sig_str_acc", "pro_str_def", "pro_td_avg", "pro_td_acc",
-                         "pro_td_def", "pro_sub_avg", "ko_rate", "sub_rate", "dec_rate",
-                         "recent_form", "win_streak", "loss_streak", "last_5_wins",
-                         "days_since_last_fight", "recent_finish_rate", "durability",
-                         # NEW: Career-based positional/target/control metrics
-                         "distance_pct", "clinch_pct", "ground_pct",
-                         "head_pct", "body_pct", "leg_pct",
-                         "avg_ctrl_sec", "avg_rev",
-                         # NEW: Opponent quality
-                         "avg_opponent_elo",
-                         # NEW: Recent momentum vs career
-                         "distance_pct_momentum", "slpm_momentum", "ctrl_sec_momentum",
-                         # NEW: Main event experience
-                         "main_event_fights",
-                         # PHASE 1B: Rolling statistics (averages over last 3/5/10 fights)
-                         "rolling_slpm_3", "rolling_slpm_5", "rolling_slpm_10",
-                         "rolling_sapm_3", "rolling_sapm_5", "rolling_sapm_10",
-                         "rolling_td_acc_3", "rolling_td_acc_5", "rolling_td_acc_10",
-                         "rolling_td_def_3", "rolling_td_def_5", "rolling_td_def_10",
-                         "rolling_ctrl_3", "rolling_ctrl_5", "rolling_ctrl_10",
-                         "rolling_finish_rate_3", "rolling_finish_rate_5", "rolling_finish_rate_10",
-                         "rolling_strike_acc_3", "rolling_strike_acc_5", "rolling_strike_acc_10",
-                         "rolling_damage_3", "rolling_damage_5", "rolling_damage_10",
-                         # Variance/consistency metrics
-                         "slpm_variance_5", "sapm_variance_5",
-                         "performance_consistency_5",
-                         # Trend features (improving/declining)
-                         "slpm_trend_5", "td_acc_trend_5", "finish_rate_trend_5",
-                         # PHASE 1C: Opponent-adjusted metrics
-                         "win_rate_vs_elite", "win_rate_vs_strikers", "win_rate_vs_grapplers",
-                         "win_rate_vs_durable", "win_rate_vs_finishers", "finish_rate_vs_elite",
-                         "recent_opponent_quality_5", "style_versatility", "step_up_performance"]:
+                        "pro_sig_str_acc", "pro_str_def", "pro_td_avg", "pro_td_acc",
+                        "pro_td_def", "pro_sub_avg", "ko_rate", "sub_rate", "dec_rate",
+                        "recent_form", "win_streak", "loss_streak", "last_5_wins",
+                        "days_since_last_fight", "recent_finish_rate", "durability",
+                        # NEW: Career-based positional/target/control metrics
+                        "distance_pct", "clinch_pct", "ground_pct",
+                        "head_pct", "body_pct", "leg_pct",
+                        "avg_ctrl_sec", "avg_rev",
+                        # NEW: Opponent quality
+                        "avg_opponent_elo",
+                        # NEW: Recent momentum vs career
+                        "distance_pct_momentum", "slpm_momentum", "ctrl_sec_momentum",
+                        # NEW: Main event experience
+                        "main_event_fights",
+                        # PHASE 1B: Rolling statistics (averages over last 3/5/10 fights)
+                        "rolling_slpm_3", "rolling_slpm_5", "rolling_slpm_10",
+                        "rolling_sapm_3", "rolling_sapm_5", "rolling_sapm_10",
+                        "rolling_td_acc_3", "rolling_td_acc_5", "rolling_td_acc_10",
+                        "rolling_td_def_3", "rolling_td_def_5", "rolling_td_def_10",
+                        "rolling_ctrl_3", "rolling_ctrl_5", "rolling_ctrl_10",
+                        "rolling_finish_rate_3", "rolling_finish_rate_5", "rolling_finish_rate_10",
+                        "rolling_strike_acc_3", "rolling_strike_acc_5", "rolling_strike_acc_10",
+                        "rolling_damage_3", "rolling_damage_5", "rolling_damage_10",
+                        # Variance/consistency metrics
+                        "slpm_variance_5", "sapm_variance_5",
+                        "performance_consistency_5",
+                        # Trend features (improving/declining)
+                        "slpm_trend_5", "td_acc_trend_5", "finish_rate_trend_5",
+                        # PHASE 1C: Opponent-adjusted metrics
+                        "win_rate_vs_elite", "win_rate_vs_strikers", "win_rate_vs_grapplers",
+                        "win_rate_vs_durable", "win_rate_vs_finishers", "finish_rate_vs_elite",
+                        "recent_opponent_quality_5", "style_versatility", "step_up_performance",
+                        # PHASE 2: Advanced career metrics
+                        "total_rounds_fought", "total_fights_fought", "title_fights", "five_round_fights",
+                        "last_fight_was_finish", "last_fight_was_win", "last_fight_dominance",
+                        "early_finish_rate", "late_finish_rate", "first_round_ko_rate",
+                        "fights_last_24_months", "avg_finish_time_last_3", "chin_deterioration"]:
                 df[f"{prefix}_{stat}_corrected"] = 0.0
 
         df["h2h_advantage"] = 0.0
@@ -1197,14 +1310,62 @@ class ImprovedUFCPredictor:
                 # NEW: Main event experience (5-round fights)
                 df.at[idx, f"{prefix}_main_event_fights_corrected"] = stats["main_event_fights"]
 
-                # PHASE 1B: Rolling statistics (last 3/5/10 fights averages)
-                # Helper function to calculate rolling average
+                # PHASE 1B: Helper function to calculate rolling average (defined early for use below)
                 def rolling_avg(values, window):
                     if len(values) >= window:
                         return sum(values[-window:]) / window
                     elif len(values) > 0:
                         return sum(values) / len(values)
                     return 0
+
+                # PHASE 2: Advanced career tracking
+                df.at[idx, f"{prefix}_total_rounds_fought_corrected"] = stats["total_rounds_fought"]
+                df.at[idx, f"{prefix}_total_fights_fought_corrected"] = stats["total_fights_fought"]
+                df.at[idx, f"{prefix}_title_fights_corrected"] = stats["title_fights"]
+                df.at[idx, f"{prefix}_five_round_fights_corrected"] = stats["five_round_fights"]
+
+                # Last fight momentum indicators
+                df.at[idx, f"{prefix}_last_fight_was_finish_corrected"] = 1.0 if stats["last_fight_was_finish"] else 0.0
+                df.at[idx, f"{prefix}_last_fight_was_win_corrected"] = 1.0 if stats["last_fight_was_win"] else 0.0
+
+                # Last fight dominance score (5 = round 1 finish, 1 = round 5 finish/decision)
+                if stats["last_fight_was_finish"] and stats["last_fight_finish_round"]:
+                    dominance = 6 - stats["last_fight_finish_round"]  # R1=5, R2=4, R3=3, R4=2, R5=1
+                else:
+                    dominance = 0  # Decision or no previous fight
+                df.at[idx, f"{prefix}_last_fight_dominance_corrected"] = dominance
+
+                # Finish timing rates
+                total_fights = stats["wins"] + stats["losses"]
+                if total_fights > 0:
+                    df.at[idx, f"{prefix}_early_finish_rate_corrected"] = stats["early_finishes"] / total_fights
+                    df.at[idx, f"{prefix}_late_finish_rate_corrected"] = stats["late_finishes"] / total_fights
+                    df.at[idx, f"{prefix}_first_round_ko_rate_corrected"] = stats["first_round_kos"] / total_fights
+
+                # Activity level (fights in last 24 months)
+                fight_dates_24mo = [d for d in stats["fight_dates"] if (row["event_date"] - d).days <= 730]
+                df.at[idx, f"{prefix}_fights_last_24_months_corrected"] = len(fight_dates_24mo)
+
+                # Average finish time for last 3 finishes
+                finish_times = []
+                for i, method in enumerate(stats["recent_finish_methods"][-3:]):
+                    if method in ["KO/TKO", "Submission"] and i < len(stats["recent_finish_rounds"]):
+                        round_num = stats["recent_finish_rounds"][i]
+                        # Estimate time: (round - 1) * 300 + 150 (assume mid-round)
+                        if round_num:
+                            finish_times.append((round_num - 1) * 300 + 150)
+                if finish_times:
+                    df.at[idx, f"{prefix}_avg_finish_time_last_3_corrected"] = sum(finish_times) / len(finish_times)
+
+                # Chin deterioration (recent damage vs career damage)
+                career_sapm = stats["sig_str_absorbed_total"] / stats["fight_time_minutes"] if stats["fight_time_minutes"] > 0 else 0
+                recent_sapm = rolling_avg(stats["rolling_sapm"], 3)
+                if career_sapm > 0:
+                    df.at[idx, f"{prefix}_chin_deterioration_corrected"] = (recent_sapm - career_sapm) / career_sapm
+                else:
+                    df.at[idx, f"{prefix}_chin_deterioration_corrected"] = 0
+
+                # PHASE 1B: Rolling statistics (last 3/5/10 fights averages)
 
                 # SLpM rolling averages
                 df.at[idx, f"{prefix}_rolling_slpm_3_corrected"] = rolling_avg(stats["rolling_slpm"], 3)
@@ -1430,6 +1591,69 @@ class ImprovedUFCPredictor:
                 if row.get("total_rounds", 3) == 5:
                     fighter_stats[r_fighter]["main_event_fights"] += 1
                     fighter_stats[b_fighter]["main_event_fights"] += 1
+
+                # PHASE 2: Track new advanced stats
+                finish_round = row.get("finish_round", row.get("total_rounds", 3))
+                fight_method = str(row.get("method", "Decision"))
+
+                # Track rounds fought for both fighters
+                for fighter in [r_fighter, b_fighter]:
+                    fighter_stats[fighter]["total_rounds_fought"] += finish_round if pd.notna(finish_round) else 3
+                    fighter_stats[fighter]["total_fights_fought"] += 1
+
+                    # Title fight tracking
+                    if row.get("is_title_bout", 0) == 1:
+                        fighter_stats[fighter]["title_fights"] += 1
+
+                    # Five round fights
+                    if row.get("total_rounds", 3) == 5:
+                        fighter_stats[fighter]["five_round_fights"] += 1
+
+                    # Fight dates for activity tracking
+                    fighter_stats[fighter]["fight_dates"].append(row["event_date"])
+                    if len(fighter_stats[fighter]["fight_dates"]) > 24:  # Keep last 24 fights
+                        fighter_stats[fighter]["fight_dates"] = fighter_stats[fighter]["fight_dates"][-24:]
+
+                # Track last fight details for winner
+                winner_fighter = r_fighter if row["winner"] == "Red" else b_fighter if row["winner"] == "Blue" else None
+                loser_fighter = b_fighter if row["winner"] == "Red" else r_fighter if row["winner"] == "Blue" else None
+
+                if winner_fighter:
+                    fighter_stats[winner_fighter]["last_fight_method"] = fight_method
+                    fighter_stats[winner_fighter]["last_fight_finish_round"] = finish_round
+                    fighter_stats[winner_fighter]["last_fight_was_finish"] = is_finish
+                    fighter_stats[winner_fighter]["last_fight_was_win"] = True
+
+                    # Track finish timing (early vs late)
+                    if is_finish and pd.notna(finish_round):
+                        if finish_round <= 2:
+                            fighter_stats[winner_fighter]["early_finishes"] += 1
+                        elif finish_round >= 3:
+                            fighter_stats[winner_fighter]["late_finishes"] += 1
+
+                        # First round KO tracking
+                        if finish_round == 1 and method_cat == "ko":
+                            fighter_stats[winner_fighter]["first_round_kos"] += 1
+
+                    # Track recent finish methods
+                    fighter_stats[winner_fighter]["recent_finish_methods"].append(fight_method)
+                    fighter_stats[winner_fighter]["recent_finish_rounds"].append(finish_round)
+                    if len(fighter_stats[winner_fighter]["recent_finish_methods"]) > 5:
+                        fighter_stats[winner_fighter]["recent_finish_methods"] = fighter_stats[winner_fighter]["recent_finish_methods"][-5:]
+                        fighter_stats[winner_fighter]["recent_finish_rounds"] = fighter_stats[winner_fighter]["recent_finish_rounds"][-5:]
+
+                if loser_fighter:
+                    fighter_stats[loser_fighter]["last_fight_method"] = fight_method
+                    fighter_stats[loser_fighter]["last_fight_finish_round"] = finish_round
+                    fighter_stats[loser_fighter]["last_fight_was_finish"] = is_finish
+                    fighter_stats[loser_fighter]["last_fight_was_win"] = False
+
+                    # Track recent finish methods (even for losses)
+                    fighter_stats[loser_fighter]["recent_finish_methods"].append(fight_method)
+                    fighter_stats[loser_fighter]["recent_finish_rounds"].append(finish_round)
+                    if len(fighter_stats[loser_fighter]["recent_finish_methods"]) > 5:
+                        fighter_stats[loser_fighter]["recent_finish_methods"] = fighter_stats[loser_fighter]["recent_finish_methods"][-5:]
+                        fighter_stats[loser_fighter]["recent_finish_rounds"] = fighter_stats[loser_fighter]["recent_finish_rounds"][-5:]
 
                 # NEW: Track recent stats for momentum (last 3 fights)
                 for fighter, f_prefix in [(r_fighter, "r"), (b_fighter, "b")]:
@@ -1657,7 +1881,12 @@ class ImprovedUFCPredictor:
                      # NEW: Opponent quality and momentum
                      "avg_opponent_elo", "distance_pct_momentum", "slpm_momentum", "ctrl_sec_momentum",
                      # NEW: Main event experience
-                     "main_event_fights"]:
+                     "main_event_fights",
+                     # PHASE 2: Advanced career metrics
+                     "total_rounds_fought", "total_fights_fought", "title_fights", "five_round_fights",
+                     "last_fight_was_finish", "last_fight_was_win", "last_fight_dominance",
+                     "early_finish_rate", "late_finish_rate", "first_round_ko_rate",
+                     "fights_last_24_months", "avg_finish_time_last_3", "chin_deterioration"]:
             df[f"{stat}_diff_corrected"] = df[f"r_{stat}_corrected"] - df[f"b_{stat}_corrected"]
 
         # Physical differentials
@@ -1879,6 +2108,123 @@ class ImprovedUFCPredictor:
         df["r_adversity_experience"] = df["r_win_loss_ratio_corrected"] * (df["r_losses"] + 1)
         df["b_adversity_experience"] = df["b_win_loss_ratio_corrected"] * (df["b_losses"] + 1)
         df["adversity_experience_diff"] = df["r_adversity_experience"] - df["b_adversity_experience"]
+
+        # ========== PHASE 2: ADVANCED FEATURES (Career Stage, Fight Context, Momentum) ==========
+
+        # TIER S: Career Stage Features
+        # Prime performance window (research shows 26-33 is peak)
+        df["r_in_prime"] = ((df["r_age_at_event"] >= 26) & (df["r_age_at_event"] <= 33)).astype(float)
+        df["b_in_prime"] = ((df["b_age_at_event"] >= 26) & (df["b_age_at_event"] <= 33)).astype(float)
+        df["prime_years_advantage"] = df["r_in_prime"] - df["b_in_prime"]
+
+        # Declining phase (past prime, particularly important 35+)
+        df["r_declining_penalty"] = np.maximum(0, df["r_age_at_event"] - 35) * 0.1
+        df["b_declining_penalty"] = np.maximum(0, df["b_age_at_event"] - 35) * 0.1
+        df["declining_phase_diff"] = df["r_declining_penalty"] - df["b_declining_penalty"]
+
+        # Rising prospect (under 26, still developing)
+        df["r_rising_prospect"] = (df["r_age_at_event"] < 26).astype(float)
+        df["b_rising_prospect"] = (df["b_age_at_event"] < 26).astype(float)
+        df["rising_prospect_advantage"] = df["r_rising_prospect"] - df["b_rising_prospect"]
+
+        # Age × Experience quality (older with low fights = late bloomer, less reliable)
+        df["r_age_experience_ratio"] = df["r_age_at_event"] / np.maximum(df["r_total_fights_fought_corrected"], 1)
+        df["b_age_experience_ratio"] = df["b_age_at_event"] / np.maximum(df["b_total_fights_fought_corrected"], 1)
+        df["age_experience_ratio_diff"] = df["r_age_experience_ratio"] - df["b_age_experience_ratio"]
+
+        # TIER S: Last Fight Impact Features
+        # Finish momentum (coming off a finish vs decision)
+        df["last_fight_finish_momentum"] = df["last_fight_was_finish_diff_corrected"]
+
+        # Last fight dominance differential (already calculated in corrected stats)
+        df["last_fight_dominance"] = df["last_fight_dominance_diff_corrected"]
+
+        # Combined last fight momentum (win + finish + dominance)
+        df["last_fight_complete_momentum"] = (
+            df["last_fight_was_win_diff_corrected"] +
+            df["last_fight_was_finish_diff_corrected"] +
+            df["last_fight_dominance_diff_corrected"] * 0.2
+        )
+
+        # TIER S: Damage Absorption Trends
+        # Chin deterioration (recent damage vs career damage)
+        df["chin_deterioration"] = df["chin_deterioration_diff_corrected"]
+
+        # TIER S: Fight Context Features
+        # Title fight experience advantage
+        df["title_fight_experience"] = df["title_fights_diff_corrected"]
+
+        # Five-round experience advantage
+        df["five_round_experience"] = df["five_round_fights_diff_corrected"]
+
+        # Five-round cardio advantage (if 5 rounds, favor better cardio)
+        df["five_round_cardio_advantage"] = df["total_rounds"] * df["dec_rate_diff_corrected"]
+
+        # TIER A: Activity & Ring Rust Features
+        # Activity level (fights in last 24 months)
+        df["activity_level_diff"] = df["fights_last_24_months_diff_corrected"]
+
+        # Layoff severity (non-linear penalty for long layoffs > 365 days)
+        df["r_layoff_severity"] = np.maximum(0, (df["r_days_since_last_fight_corrected"] - 365) / 30)
+        df["b_layoff_severity"] = np.maximum(0, (df["b_days_since_last_fight_corrected"] - 365) / 30)
+        df["layoff_severity_diff"] = df["r_layoff_severity"] - df["b_layoff_severity"]
+
+        # Optimal activity window (90-180 days is ideal)
+        df["r_optimal_activity"] = ((df["r_days_since_last_fight_corrected"] >= 90) &
+                                     (df["r_days_since_last_fight_corrected"] <= 180)).astype(float)
+        df["b_optimal_activity"] = ((df["b_days_since_last_fight_corrected"] >= 90) &
+                                     (df["b_days_since_last_fight_corrected"] <= 180)).astype(float)
+        df["optimal_activity_advantage"] = df["r_optimal_activity"] - df["b_optimal_activity"]
+
+        # Overactivity penalty (fighting too frequently, < 60 days)
+        df["r_overactivity"] = (df["r_days_since_last_fight_corrected"] < 60).astype(float)
+        df["b_overactivity"] = (df["b_days_since_last_fight_corrected"] < 60).astype(float)
+        df["overactivity_diff"] = df["r_overactivity"] - df["b_overactivity"]
+
+        # TIER A: Finish Timing Specialization
+        # Early finisher advantage (rounds 1-2)
+        df["early_finisher_advantage"] = df["early_finish_rate_diff_corrected"]
+
+        # Late finisher advantage (rounds 3-5)
+        df["late_finisher_advantage"] = df["late_finish_rate_diff_corrected"]
+
+        # First round killer advantage
+        df["first_round_killer_advantage"] = df["first_round_ko_rate_diff_corrected"]
+
+        # Finish timing × rounds matchup (early finishers better in 3-rounders)
+        df["finish_timing_rounds_matchup"] = (
+            df["early_finish_rate_diff_corrected"] * (5 - df["total_rounds"]) +
+            df["late_finish_rate_diff_corrected"] * (df["total_rounds"] - 3)
+        )
+
+        # TIER A: Advanced Momentum Features
+        # Finish momentum acceleration (recent finishes vs career average)
+        df["finish_momentum_acceleration"] = (
+            (df["r_rolling_finish_rate_3_corrected"] - df["r_finish_rate"]) -
+            (df["b_rolling_finish_rate_3_corrected"] - df["b_finish_rate"])
+        )
+
+        # TIER B: Grappling Control Efficiency
+        # Control time per takedown (quality of control) - avoid division by zero
+        df["r_ctrl_per_td"] = df["r_avg_ctrl_sec_corrected"] / np.maximum(df["r_pro_td_avg_corrected"], 0.1)
+        df["b_ctrl_per_td"] = df["b_avg_ctrl_sec_corrected"] / np.maximum(df["b_pro_td_avg_corrected"], 0.1)
+        df["ctrl_time_per_td_diff"] = df["r_ctrl_per_td"] - df["b_ctrl_per_td"]
+
+        # TIER B: Total output pace (strikes + TDs per minute)
+        df["r_total_output_pace"] = (df["r_pro_SLpM_corrected"] + df["r_pro_td_avg_corrected"]) / 15
+        df["b_total_output_pace"] = (df["b_pro_SLpM_corrected"] + df["b_pro_td_avg_corrected"]) / 15
+        df["total_output_pace_diff"] = df["r_total_output_pace"] - df["b_total_output_pace"]
+
+        # TIER B: Pressure differential (offense - defense)
+        df["r_pressure_score"] = (df["r_pro_SLpM_corrected"] - df["r_pro_SApM_corrected"]) + (df["r_pro_td_avg_corrected"] * 0.5)
+        df["b_pressure_score"] = (df["b_pro_SLpM_corrected"] - df["b_pro_SApM_corrected"]) + (df["b_pro_td_avg_corrected"] * 0.5)
+        df["pressure_differential"] = df["r_pressure_score"] - df["b_pressure_score"]
+
+        # TIER B: Physical Attribute Interactions
+        # Reach × Height interaction
+        df["r_reach_height_product"] = df["r_reach"] * df["r_height"]
+        df["b_reach_height_product"] = df["b_reach"] * df["b_height"]
+        df["reach_height_interaction_diff"] = df["r_reach_height_product"] - df["b_reach_height_product"]
 
         # ========== RESEARCH-BACKED FEATURES (RF/GBDT/SVM Analysis) ==========
 
@@ -2150,6 +2496,52 @@ class ImprovedUFCPredictor:
 
         # 42. Experience Gap Cubic (veterans vs debuters)
         df["experience_gap_cubic"] = df["experience_gap"] ** 3
+
+        # PHASE 2: POLYNOMIAL FEATURES FOR ADVANCED STATS
+
+        # Total rounds/fights fought (experience accumulation compounds)
+        df["total_rounds_fought_diff_squared"] = df["total_rounds_fought_diff_corrected"] ** 2
+        df["total_fights_fought_diff_squared"] = df["total_fights_fought_diff_corrected"] ** 2
+
+        # Title/5-round experience (championship experience compounds)
+        df["title_fights_diff_squared"] = df["title_fights_diff_corrected"] ** 2
+        df["five_round_fights_diff_squared"] = df["five_round_fights_diff_corrected"] ** 2
+
+        # Last fight momentum (recent performance compounds)
+        df["last_fight_dominance_squared"] = df["last_fight_dominance_diff_corrected"] ** 2
+        df["last_fight_complete_momentum_squared"] = df["last_fight_complete_momentum"] ** 2
+
+        # Finish timing rates (specialist advantages compound)
+        df["early_finish_rate_diff_squared"] = df["early_finish_rate_diff_corrected"] ** 2
+        df["late_finish_rate_diff_squared"] = df["late_finish_rate_diff_corrected"] ** 2
+        df["first_round_ko_rate_diff_squared"] = df["first_round_ko_rate_diff_corrected"] ** 2
+
+        # Activity level (fighting frequency matters)
+        df["fights_last_24_months_diff_squared"] = df["fights_last_24_months_diff_corrected"] ** 2
+
+        # Prime years advantage (being in prime is critical)
+        df["prime_years_advantage_squared"] = df["prime_years_advantage"] ** 2
+
+        # Age experience ratio (late bloomers vs prodigies)
+        df["age_experience_ratio_diff_squared"] = df["age_experience_ratio_diff"] ** 2
+
+        # Chin deterioration (damage accumulation is exponential)
+        df["chin_deterioration_squared"] = df["chin_deterioration"] ** 2
+
+        # Layoff severity (extreme layoffs have outsized impact)
+        df["layoff_severity_diff_squared"] = df["layoff_severity_diff"] ** 2
+
+        # Finish momentum acceleration (improving finishers)
+        df["finish_momentum_acceleration_squared"] = df["finish_momentum_acceleration"] ** 2
+
+        # Control efficiency (grappling mastery compounds)
+        df["ctrl_time_per_td_diff_squared"] = df["ctrl_time_per_td_diff"] ** 2
+
+        # Total output pace (high pace compounds fatigue)
+        df["total_output_pace_diff_squared"] = df["total_output_pace_diff"] ** 2
+
+        # Pressure differential (relentless pressure breaks opponents)
+        df["pressure_differential_squared"] = df["pressure_differential"] ** 2
 
         # ========== PHASE 1B: ROLLING STATISTICS DIFFERENTIALS ==========
 
