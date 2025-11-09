@@ -3385,10 +3385,12 @@ class ImprovedUFCPredictor:
                 'random_state': 42,
             }
 
-            # Force CPU for Optuna - small folds don't benefit from GPU
-            # GPU transfer overhead > speedup for datasets with <10k rows per fold
-            params['device'] = 'cpu'
-            params['n_jobs'] = -1
+            # Use GPU if available - hyperparameters optimized on GPU work better for GPU training
+            if GPU_AVAILABLE['xgboost']:
+                params['device'] = 'cuda'
+            else:
+                params['device'] = 'cpu'
+                params['n_jobs'] = -1
 
             model = XGBClassifier(**params)
 
@@ -4130,6 +4132,25 @@ class ImprovedUFCPredictor:
         self.calibrated_model.fit(X_train_val_np, y_train_val_np)
 
         self.winner_model = self.calibrated_model
+
+        # DEBUG: Verify feature negation consistency
+        directional_by_suffix = [c for c in X_test.columns if not c.endswith('_inv')]
+        directional_by_D = [c for c in X_test.columns if c in D.columns]
+
+        print("\n=== FEATURE NEGATION DEBUG ===")
+        print(f"Directional by suffix: {len(directional_by_suffix)}")
+        print(f"Directional by D.columns: {len(directional_by_D)}")
+
+        if set(directional_by_suffix) != set(directional_by_D):
+            print("⚠️ MISMATCH DETECTED!")
+            only_suffix = set(directional_by_suffix) - set(directional_by_D)
+            only_D = set(directional_by_D) - set(directional_by_suffix)
+            if only_suffix:
+                print(f"  In suffix but not D: {only_suffix}")
+            if only_D:
+                print(f"  In D but not suffix: {only_D}")
+        else:
+            print("✅ Both methods identify same directional features")
 
         # ========== RED CORNER BIAS DIAGNOSTIC ==========
         print("\n" + "="*80)
