@@ -418,13 +418,11 @@ class ImprovedUFCPredictor:
             "td_acc_trend_5_diff",
             "finish_rate_trend_5_diff",
 
-            # ========== PHASE 1C: OPPONENT-ADJUSTED FEATURES (17 features) ==========
-            # Base opponent-adjusted metrics (9 features)
+            # ========== PHASE 1C: OPPONENT-ADJUSTED FEATURES (15 features) ==========
+            # Base opponent-adjusted metrics (7 features)
             "win_rate_vs_elite_diff",
             "win_rate_vs_strikers_diff",
             "win_rate_vs_grapplers_diff",
-            "win_rate_vs_durable_diff",
-            "win_rate_vs_finishers_diff",
             "finish_rate_vs_elite_diff",
             "recent_opponent_quality_5_diff",
             "style_versatility_diff",
@@ -3110,8 +3108,8 @@ class ImprovedUFCPredictor:
         # Core opponent-adjusted metrics (base differentials)
         opponent_features = [
             "win_rate_vs_elite", "win_rate_vs_strikers", "win_rate_vs_grapplers",
-            "win_rate_vs_durable", "win_rate_vs_finishers", "finish_rate_vs_elite",
-            "recent_opponent_quality_5", "style_versatility", "step_up_performance"
+            "finish_rate_vs_elite", "recent_opponent_quality_5", "style_versatility",
+            "step_up_performance"
         ]
 
         for feature in opponent_features:
