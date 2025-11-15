@@ -2746,8 +2746,8 @@ class ImprovedUFCPredictor:
         df["experience_gap"] = df["r_total_fights"] - df["b_total_fights"]
 
         # Finish rates
-        df["r_finish_rate"] = df["r_ko_rate_corrected"] + df["r_sub_rate_corrected"]
-        df["b_finish_rate"] = df["b_ko_rate_corrected"] + df["b_sub_rate_corrected"]
+        df["r_finish_rate"] = (df["r_ko_rate_corrected"] + df["r_sub_rate_corrected"]) / 2
+        df["b_finish_rate"] = (df["b_ko_rate_corrected"] + df["b_sub_rate_corrected"]) / 2
         df["finish_rate_diff"] = df["r_finish_rate"] - df["b_finish_rate"]
 
         # Style features
@@ -3416,14 +3416,14 @@ class ImprovedUFCPredictor:
 
         # 1. Offensive striking vs defensive gap
         # Red's striking output × Blue's defensive weakness
-        df["r_strike_exploit"] = df["r_pro_SLpM_corrected"] * (1 - df["b_pro_str_def_corrected"])
-        df["b_strike_exploit"] = df["b_pro_SLpM_corrected"] * (1 - df["r_pro_str_def_corrected"])
+        df["r_strike_exploit"] = df["r_pro_SLpM_corrected"] * (1 - df["b_pro_str_def_corrected"] / 100)
+        df["b_strike_exploit"] = df["b_pro_SLpM_corrected"] * (1 - df["r_pro_str_def_corrected"] / 100)
         df["offensive_striking_vs_defensive_gap_diff"] = df["r_strike_exploit"] - df["b_strike_exploit"]
 
         # 2. Takedown offense vs defense gap
         # Expected TD success based on offense vs defense matchup
-        df["r_td_exploit"] = df["r_pro_td_avg_corrected"] * (1 - df["b_pro_td_def_corrected"])
-        df["b_td_exploit"] = df["b_pro_td_avg_corrected"] * (1 - df["r_pro_td_def_corrected"])
+        df["r_td_exploit"] = df["r_pro_td_avg_corrected"] * (1 - df["b_pro_td_def_corrected"] / 100)
+        df["b_td_exploit"] = df["b_pro_td_avg_corrected"] * (1 - df["r_pro_td_def_corrected"] / 100)
         df["takedown_offense_vs_defense_gap_diff"] = df["r_td_exploit"] - df["b_td_exploit"]
 
         # 3. Absorption vulnerability index
@@ -3434,20 +3434,20 @@ class ImprovedUFCPredictor:
 
         # 4. Combined defensive hole
         # Weakness in BOTH striking and grappling defense (amplified by multiplication)
-        df["r_def_hole"] = (1 - df["r_pro_str_def_corrected"]) * (1 - df["r_pro_td_def_corrected"])
-        df["b_def_hole"] = (1 - df["b_pro_str_def_corrected"]) * (1 - df["b_pro_td_def_corrected"])
+        df["r_def_hole"] = (1 - df["r_pro_str_def_corrected"] / 100) * (1 - df["r_pro_td_def_corrected"] / 100)
+        df["b_def_hole"] = (1 - df["b_pro_str_def_corrected"] / 100) * (1 - df["b_pro_td_def_corrected"] / 100)
         df["combined_defensive_hole_diff"] = df["r_def_hole"] - df["b_def_hole"]
 
         # 5. TD vulnerability under pressure
         # Context-specific: TD defense weakness × opponent's TD volume
-        df["r_td_pressure"] = (1 - df["r_pro_td_def_corrected"]) * df["b_pro_td_avg_corrected"]
-        df["b_td_pressure"] = (1 - df["b_pro_td_def_corrected"]) * df["r_pro_td_avg_corrected"]
+        df["r_td_pressure"] = (1 - df["r_pro_td_def_corrected"] / 100) * df["b_pro_td_avg_corrected"]
+        df["b_td_pressure"] = (1 - df["b_pro_td_def_corrected"] / 100) * df["r_pro_td_avg_corrected"]
         df["td_vulnerability_under_pressure_diff"] = df["r_td_pressure"] - df["b_td_pressure"]
 
         # 6. Strike defense under volume
         # Expected strikes absorbed based on defense vs opponent's volume
-        df["r_strike_pressure"] = (1 - df["r_pro_str_def_corrected"]) * df["b_pro_SLpM_corrected"]
-        df["b_strike_pressure"] = (1 - df["b_pro_str_def_corrected"]) * df["r_pro_SLpM_corrected"]
+        df["r_strike_pressure"] = (1 - df["r_pro_str_def_corrected"] / 100) * df["b_pro_SLpM_corrected"]
+        df["b_strike_pressure"] = (1 - df["b_pro_str_def_corrected"] / 100) * df["r_pro_SLpM_corrected"]
         df["strike_defense_under_volume_diff"] = df["r_strike_pressure"] - df["b_strike_pressure"]
 
 
@@ -3462,8 +3462,8 @@ class ImprovedUFCPredictor:
 
         # 8. Submission threat vs TD defense
         # Sub threat considering opponent's ability to prevent TDs
-        df["r_sub_threat_context"] = df["r_pro_sub_avg_corrected"] * (1 - df["b_pro_td_def_corrected"])
-        df["b_sub_threat_context"] = df["b_pro_sub_avg_corrected"] * (1 - df["r_pro_td_def_corrected"])
+        df["r_sub_threat_context"] = df["r_pro_sub_avg_corrected"] * (1 - df["b_pro_td_def_corrected"] / 100)
+        df["b_sub_threat_context"] = df["b_pro_sub_avg_corrected"] * (1 - df["r_pro_td_def_corrected"] / 100)
         df["submission_threat_vs_td_defense_diff"] = df["r_sub_threat_context"] - df["b_sub_threat_context"]
 
         # 9. Grappling control vs submission ratio
@@ -3474,8 +3474,8 @@ class ImprovedUFCPredictor:
 
         # 10. Submission defense necessity
         # How much does fighter need sub defense given opponent's threat?
-        df["r_sub_defense_need"] = df["b_pro_sub_avg_corrected"] / (df["r_pro_td_def_corrected"] + 0.01)
-        df["b_sub_defense_need"] = df["r_pro_sub_avg_corrected"] / (df["b_pro_td_def_corrected"] + 0.01)
+        df["r_sub_defense_need"] = df["b_pro_sub_avg_corrected"] / (df["r_pro_td_def_corrected"] / 100 + 0.01)
+        df["b_sub_defense_need"] = df["r_pro_sub_avg_corrected"] / (df["b_pro_td_def_corrected"] / 100 + 0.01)
         df["submission_defense_necessity_diff"] = df["r_sub_defense_need"] - df["b_sub_defense_need"]
 
 
@@ -3484,8 +3484,8 @@ class ImprovedUFCPredictor:
 
         # 11. Striking volume-accuracy synergy
         # Geometric mean rewards both high volume AND accuracy
-        df["r_strike_synergy"] = (df["r_pro_SLpM_corrected"] * df["r_pro_sig_str_acc_corrected"]) ** 0.5
-        df["b_strike_synergy"] = (df["b_pro_SLpM_corrected"] * df["b_pro_sig_str_acc_corrected"]) ** 0.5
+        df["r_strike_synergy"] = (df["r_pro_SLpM_corrected"] * df["r_pro_sig_str_acc_corrected"] / 100) ** 0.5
+        df["b_strike_synergy"] = (df["b_pro_SLpM_corrected"] * df["b_pro_sig_str_acc_corrected"] / 100) ** 0.5
         df["striking_volume_accuracy_synergy_diff"] = df["r_strike_synergy"] - df["b_strike_synergy"]
 
         # 12. Accuracy under return fire
@@ -3496,19 +3496,19 @@ class ImprovedUFCPredictor:
 
         # 13. Takedown efficiency paradox
         # High accuracy with low volume = selective/smart wrestling
-        df["r_td_paradox"] = df["r_pro_td_acc_corrected"] / (df["r_pro_td_avg_corrected"] + 0.5)
-        df["b_td_paradox"] = df["b_pro_td_acc_corrected"] / (df["b_pro_td_avg_corrected"] + 0.5)
+        df["r_td_paradox"] = (df["r_pro_td_acc_corrected"] / 100) / (df["r_pro_td_avg_corrected"] + 0.5)
+        df["b_td_paradox"] = (df["b_pro_td_acc_corrected"] / 100) / (df["b_pro_td_avg_corrected"] + 0.5)
         df["takedown_efficiency_paradox_diff"] = df["r_td_paradox"] - df["b_td_paradox"]
 
         # 14. Total offensive efficiency index
         # Combined striking + grappling efficiency
         df["r_total_off_eff"] = (
-            (df["r_pro_SLpM_corrected"] * df["r_pro_sig_str_acc_corrected"]) ** 0.5 +
-            (df["r_pro_td_avg_corrected"] * df["r_pro_td_acc_corrected"]) ** 0.5
+            (df["r_pro_SLpM_corrected"] * df["r_pro_sig_str_acc_corrected"] / 100) ** 0.5 +
+            (df["r_pro_td_avg_corrected"] * df["r_pro_td_acc_corrected"] / 100) ** 0.5
         )
         df["b_total_off_eff"] = (
-            (df["b_pro_SLpM_corrected"] * df["b_pro_sig_str_acc_corrected"]) ** 0.5 +
-            (df["b_pro_td_avg_corrected"] * df["b_pro_td_acc_corrected"]) ** 0.5
+            (df["b_pro_SLpM_corrected"] * df["b_pro_sig_str_acc_corrected"] / 100) ** 0.5 +
+            (df["b_pro_td_avg_corrected"] * df["b_pro_td_acc_corrected"] / 100) ** 0.5
         )
         df["total_offensive_efficiency_index_diff"] = df["r_total_off_eff"] - df["b_total_off_eff"]
 
@@ -3518,12 +3518,12 @@ class ImprovedUFCPredictor:
 
         # 15. Striking-grappling efficiency correlation
         # Ratio identifies primary weapon
-        df["r_strike_eff_ratio"] = df["r_pro_SLpM_corrected"] * df["r_pro_sig_str_acc_corrected"]
-        df["r_grapple_eff_ratio"] = df["r_pro_td_avg_corrected"] * df["r_pro_td_acc_corrected"]
+        df["r_strike_eff_ratio"] = df["r_pro_SLpM_corrected"] * df["r_pro_sig_str_acc_corrected"] / 100
+        df["r_grapple_eff_ratio"] = df["r_pro_td_avg_corrected"] * df["r_pro_td_acc_corrected"] / 100
         df["r_sg_corr"] = df["r_strike_eff_ratio"] / (df["r_grapple_eff_ratio"] + 0.1)
 
-        df["b_strike_eff_ratio"] = df["b_pro_SLpM_corrected"] * df["b_pro_sig_str_acc_corrected"]
-        df["b_grapple_eff_ratio"] = df["b_pro_td_avg_corrected"] * df["b_pro_td_acc_corrected"]
+        df["b_strike_eff_ratio"] = df["b_pro_SLpM_corrected"] * df["b_pro_sig_str_acc_corrected"] / 100
+        df["b_grapple_eff_ratio"] = df["b_pro_td_avg_corrected"] * df["b_pro_td_acc_corrected"] / 100
         df["b_sg_corr"] = df["b_strike_eff_ratio"] / (df["b_grapple_eff_ratio"] + 0.1)
 
         df["striking_grappling_efficiency_correlation_diff"] = df["r_sg_corr"] - df["b_sg_corr"]
@@ -3550,23 +3550,23 @@ class ImprovedUFCPredictor:
         # Geometric mean of all 8 core stats (identifies complete fighters)
         df["r_combat_eff"] = (
             (df["r_pro_SLpM_corrected"] / 10 + 0.01) *
-            (df["r_pro_sig_str_acc_corrected"] + 0.01) *
+            (df["r_pro_sig_str_acc_corrected"] / 100 + 0.01) *
             (10 / (df["r_pro_SApM_corrected"] + 0.01)) *
-            (df["r_pro_str_def_corrected"] + 0.01) *
+            (df["r_pro_str_def_corrected"] / 100 + 0.01) *
             (df["r_pro_td_avg_corrected"] / 5 + 0.01) *
-            (df["r_pro_td_acc_corrected"] + 0.01) *
-            (df["r_pro_td_def_corrected"] + 0.01) *
+            (df["r_pro_td_acc_corrected"] / 100 + 0.01) *
+            (df["r_pro_td_def_corrected"] / 100 + 0.01) *
             (df["r_pro_sub_avg_corrected"] / 2 + 0.01)
         ) ** (1/8)
 
         df["b_combat_eff"] = (
             (df["b_pro_SLpM_corrected"] / 10 + 0.01) *
-            (df["b_pro_sig_str_acc_corrected"] + 0.01) *
+            (df["b_pro_sig_str_acc_corrected"] / 100 + 0.01) *
             (10 / (df["b_pro_SApM_corrected"] + 0.01)) *
-            (df["b_pro_str_def_corrected"] + 0.01) *
+            (df["b_pro_str_def_corrected"] / 100 + 0.01) *
             (df["b_pro_td_avg_corrected"] / 5 + 0.01) *
-            (df["b_pro_td_acc_corrected"] + 0.01) *
-            (df["b_pro_td_def_corrected"] + 0.01) *
+            (df["b_pro_td_acc_corrected"] / 100 + 0.01) *
+            (df["b_pro_td_def_corrected"] / 100 + 0.01) *
             (df["b_pro_sub_avg_corrected"] / 2 + 0.01)
         ) ** (1/8)
 
@@ -3680,11 +3680,11 @@ class ImprovedUFCPredictor:
         # Weighted finish probability considering both rate and volume
         df["r_strike_finish"] = df["r_ko_rate_corrected"] * (df["r_pro_SLpM_corrected"] / 4.0)
         df["r_sub_finish"] = df["r_sub_rate_corrected"] * (df["r_pro_sub_avg_corrected"] / 0.5)
-        df["r_finish_prob"] = df["r_strike_finish"] + df["r_sub_finish"]
+        df["r_finish_prob"] = (df["r_strike_finish"] + df["r_sub_finish"]) / 2
 
         df["b_strike_finish"] = df["b_ko_rate_corrected"] * (df["b_pro_SLpM_corrected"] / 4.0)
         df["b_sub_finish"] = df["b_sub_rate_corrected"] * (df["b_pro_sub_avg_corrected"] / 0.5)
-        df["b_finish_prob"] = df["b_strike_finish"] + df["b_sub_finish"]
+        df["b_finish_prob"] = (df["b_strike_finish"] + df["b_sub_finish"]) / 2
 
         df["finish_probability_composite_diff"] = df["r_finish_prob"] - df["b_finish_prob"]
 
