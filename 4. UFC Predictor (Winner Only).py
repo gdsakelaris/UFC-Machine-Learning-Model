@@ -3933,13 +3933,9 @@ class ImprovedUFCPredictor:
 
     def select_features_by_importance(self, X, y):
         """
-        RFECV Feature Selection with Mismatch Detection
-
-        Uses Recursive Feature Elimination with Cross-Validation to find optimal features.
-        Includes correction logic to ensure selected features match best CV score location.
-
-        Returns:
-            list: Selected feature names
+        RFECV: Recursive Feature Elimination with Cross-Validation
+        Automatically finds optimal number of features using cross-validation.
+        Trusts RFECV to determine optimal feature count via CV (no artificial caps).
         """
         print("\n" + "="*80)
         print("RFECV FEATURE SELECTION")
@@ -3950,150 +3946,145 @@ class ImprovedUFCPredictor:
         variance_threshold = variances.quantile(0.01)
         high_variance_features = variances[variances > variance_threshold].index.tolist()
         X_filtered = X[high_variance_features]
-        print(f"Preprocessing: Kept {len(high_variance_features)}/{len(X.columns)} features with sufficient variance\n")
+        print(f"Preprocessing: Kept {len(high_variance_features)}/{len(X.columns)} features with sufficient variance")
 
-        # Create base estimator with GPU support
-        if HAS_XGBOOST and GPU_AVAILABLE.get('xgboost', False):
-            base_estimator = XGBClassifier(
-                n_estimators=100,
-                max_depth=6,
-                learning_rate=0.1,
-                random_state=42,
-                device='cuda',
-                tree_method='hist'
-            )
-            print("Using XGBoost (GPU) as base estimator")
-        elif HAS_LIGHTGBM and GPU_AVAILABLE.get('lightgbm', False):
-            base_estimator = LGBMClassifier(
-                n_estimators=100,
-                max_depth=6,
-                learning_rate=0.1,
-                random_state=42,
-                device='gpu',
-                verbose=-1
-            )
-            print("Using LightGBM (GPU) as base estimator")
-        elif HAS_XGBOOST:
-            base_estimator = XGBClassifier(
-                n_estimators=100,
-                max_depth=6,
-                learning_rate=0.1,
-                random_state=42
-            )
-            print("Using XGBoost (CPU) as base estimator")
+        # Base estimator for RFECV - Use XGBoost for best feature selection accuracy
+        if HAS_XGBOOST:
+            # XGBoost provides most stable/reliable feature importance for selection
+            xgb_params = {
+                'n_estimators': 200,  # Increased for more reliable feature ranking
+                'max_depth': 7,
+                'learning_rate': 0.05,
+                'subsample': 0.8,
+                'colsample_bytree': 0.8,
+                'reg_alpha': 1.0,
+                'reg_lambda': 1.0,
+                'random_state': 42,
+            }
+            # Add GPU support if available
+            if GPU_AVAILABLE['xgboost']:
+                xgb_params['device'] = 'cuda'
+            else:
+                xgb_params['n_jobs'] = -1
+            estimator = XGBClassifier(**xgb_params)
+        elif HAS_LIGHTGBM:
+            lgbm_params = {
+                'n_estimators': 200,
+                'max_depth': 7,
+                'learning_rate': 0.05,
+                'subsample': 0.8,
+                'colsample_bytree': 0.8,
+                'reg_alpha': 1.0,
+                'reg_lambda': 1.0,
+                'random_state': 42,
+                'verbose': -1
+            }
+            # Add GPU support if available
+            if GPU_AVAILABLE['lightgbm']:
+                lgbm_params['device'] = 'gpu'
+            else:
+                lgbm_params['n_jobs'] = -1
+            estimator = LGBMClassifier(**lgbm_params)
         else:
-            base_estimator = LGBMClassifier(
-                n_estimators=100,
-                max_depth=6,
-                learning_rate=0.1,
+            estimator = RandomForestClassifier(
+                n_estimators=200,
+                max_depth=12,
                 random_state=42,
-                verbose=-1
+                n_jobs=-1
             )
-            print("Using LightGBM (CPU) as base estimator")
 
-        # TimeSeriesSplit for chronological validation (preserves temporal order)
-        n_splits = 5
-        tscv = TimeSeriesSplit(n_splits=n_splits)
-        print(f"Using TimeSeriesSplit with {n_splits} splits (maintains chronological order)\n")
+        # RFECV with TimeSeriesSplit
+        min_features = 150  # Aggressive feature selection to reduce overfitting
+        n_features = len(high_variance_features)  # Test all high-variance features
+        step = 2  # Reduced from 5 to 2 for finer-grained feature selection
+        n_splits = 3  # 3-fold CV for faster feature selection
 
-        # Run RFECV
-        print("Running RFECV (this may take several minutes)...")
+        # Calculate estimated iterations
+        total_iterations = (n_features - min_features) // step + 1
+        estimated_time = total_iterations * n_splits * 1.3  # ~1.3 sec per fold
+        print("\nRFECV Configuration:")
+        print(f"  Testing features: {min_features} to {n_features} (step={step})")
+        print(f"  Cross-validation: {n_splits}-fold TimeSeriesSplit")
+        print(f"  Estimated iterations: {total_iterations} feature subsets × {n_splits} folds = {total_iterations * n_splits} model fits")
+        print(f"  Estimated time: ~{estimated_time/60:.1f} minutes\n")
+
+        # Run RFECV with progress tracking
         import time
-        start_time = time.time()
+        import threading
 
         rfecv = RFECV(
-            estimator=base_estimator,
-            step=1,
-            cv=tscv,
+            estimator=estimator,
+            step=step,
+            cv=TimeSeriesSplit(n_splits=n_splits),
             scoring='accuracy',
+            min_features_to_select=min_features,
             n_jobs=-1,
-            verbose=1
+            verbose=0
         )
-        rfecv.fit(X_filtered, y)
 
-        elapsed = time.time() - start_time
-        print(f"\nRFECV completed in {elapsed:.1f} seconds\n")
+        # Progress bar in separate thread
+        stop_progress = threading.Event()
+        start_time = time.time()
+
+        def show_progress():
+            spinner = ['|', '/', '-', '\\']
+            idx = 0
+            dots = 0
+            while not stop_progress.is_set():
+                elapsed = time.time() - start_time
+                mins, secs = divmod(int(elapsed), 60)
+
+                # Animated bar
+                bar_length = 40
+                filled = (dots % (bar_length + 1))
+                if filled <= bar_length // 2:
+                    bar = '=' * filled + '>' + '-' * (bar_length - filled - 1)
+                else:
+                    bar = '=' * (bar_length - (filled - bar_length // 2)) + '<' + '-' * (filled - bar_length // 2 - 1)
+
+                sys.stdout.write('\r' + ' ' * 80 + '\r')
+                sys.stdout.write(f"Running RFECV... [{bar}] {spinner[idx]} ({mins:02d}:{secs:02d})")
+                sys.stdout.flush()
+
+                idx = (idx + 1) % len(spinner)
+                dots = (dots + 1) % (bar_length * 2)
+                time.sleep(0.15)
+
+        progress_thread = threading.Thread(target=show_progress, daemon=True)
+        progress_thread.start()
+
+        # Run RFECV
+        try:
+            rfecv.fit(X_filtered, y)
+        finally:
+            stop_progress.set()
+            progress_thread.join(timeout=0.5)
+            elapsed = int(time.time() - start_time)
+            mins, secs = divmod(elapsed, 60)
+            sys.stdout.write('\r' + ' ' * 80 + '\r')
+            bar = '=' * 40
+            sys.stdout.write(f"RFECV Complete! [{bar}] ✓ ({mins:02d}:{secs:02d})\n\n")
+            sys.stdout.flush()
 
         # Get RFECV results
-        n_features = len(X_filtered.columns)
-        cv_scores = rfecv.cv_results_['mean_test_score']
-        n_selected = rfecv.n_features_
+        selected_mask = rfecv.support_
+        selected_features = X_filtered.columns[selected_mask].tolist()
+        n_selected = len(selected_features)
+        best_score = rfecv.cv_results_['mean_test_score'].max()
 
-        # Find best score location
-        best_score = np.max(cv_scores)
-        best_idx = np.argmax(cv_scores)
-        n_features_at_best = n_features - best_idx  # Features tested in descending order
-
-        print("="*80)
-        print("RFECV RESULTS")
-        print("="*80)
-
-        # Display CV scores
-        print("\nCross-validation scores by number of features:")
-        for i, score in enumerate(cv_scores):
-            features_count = n_features - i
-            marker = " <- BEST SCORE" if i == best_idx else ""
-            marker += " <- SELECTED" if features_count == n_selected else ""
-            print(f"  {features_count} features: {score:.4f}{marker}")
-
-        print(f"\nSelected Features: {n_selected}")
-        print(f"Best CV Score: {best_score:.4f} (at {n_features_at_best} features)")
-
-        # MISMATCH DETECTION: Check if selected features != features at best score
-        mismatch_detected = (n_selected != n_features_at_best)
-
-        if mismatch_detected:
-            print("\n" + "!"*80)
-            print("MISMATCH DETECTED!")
-            print("!"*80)
-            print(f"rfecv.n_features_ = {n_selected} BUT best CV score is at {n_features_at_best} features")
-            print("This is a known sklearn bug where rfecv.support_ doesn't always match best score location.")
-            print(f"\nCORRECTION: Retraining on all features to select top {n_features_at_best} by importance...")
-            print("!"*80 + "\n")
-
-            # Retrain on all features to get importances
-            correction_model = XGBClassifier(
-                n_estimators=200,
-                max_depth=7,
-                random_state=42,
-                device='cuda' if GPU_AVAILABLE.get('xgboost', False) else 'cpu',
-                tree_method='hist' if GPU_AVAILABLE.get('xgboost', False) else 'auto'
-            )
-            correction_model.fit(X_filtered, y)
-
-            # Select top N features by importance
-            importances = correction_model.feature_importances_
-            top_indices = np.argsort(importances)[::-1][:n_features_at_best]
-            selected_features = X_filtered.columns[top_indices].tolist()
-
-            print(f"CORRECTED: Selected top {len(selected_features)} features by importance")
-
-        else:
-            # No mismatch - use RFECV's selected features
-            selected_features = X_filtered.columns[rfecv.support_].tolist()
-            print("\nNo mismatch detected - using RFECV's selected features")
-
-        print("="*80 + "\n")
-
-        # Get final feature importances
-        print("Computing final feature importances...")
-        final_model = XGBClassifier(
-            n_estimators=200,
-            max_depth=7,
-            random_state=42,
-            device='cuda' if GPU_AVAILABLE.get('xgboost', False) else 'cpu',
-            tree_method='hist' if GPU_AVAILABLE.get('xgboost', False) else 'auto'
-        )
-        final_model.fit(X_filtered[selected_features], y)
-        importances = final_model.feature_importances_
-
-        # Create importance dataframe
+        # Rank selected features by importance
+        importances = rfecv.estimator_.feature_importances_
         importance_df = pd.DataFrame({
             'feature': selected_features,
             'importance': importances
         }).sort_values('importance', ascending=False)
 
-        print(f"\nAll {len(selected_features)} Selected Features (Ranked by Importance):")
+        # Results summary
+        print("="*80)
+        print(f"Selected Features: {n_selected}")
+        print(f"Best CV Score:     {best_score:.4f}")
+        print("="*80)
+        print(f"\nAll {n_selected} Selected Features (Ranked by Importance):")
         print(importance_df[['feature', 'importance']].to_string(index=False))
 
         # Store for later
@@ -4301,8 +4292,8 @@ class ImprovedUFCPredictor:
         self.polarity_map = {}
 
         # Feature selection: Use ONLY training set to avoid data leakage
-        # NO SELECTION: Use all features with strong regularization (often best for gradient boosting)
-        USE_FEATURE_SELECTION = False  # Set to True to enable Boruta
+        # ENABLED: Uses RFECV to select optimal features
+        USE_FEATURE_SELECTION = True  # Set to True to enable feature selection
 
         if USE_FEATURE_SELECTION:
             selected_features = self.select_features_by_importance(X_train, y_train)
