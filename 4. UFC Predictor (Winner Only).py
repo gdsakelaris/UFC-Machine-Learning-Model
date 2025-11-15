@@ -144,11 +144,11 @@ print("\n" + "="*80)
 print("GPU ACCELERATION STATUS")
 print("="*80)
 if HAS_XGBOOST:
-    print(f"  XGBoost GPU:  {'✓ ENABLED' if GPU_AVAILABLE['xgboost'] else '✗ DISABLED (using CPU)'}")
+    print(f"  XGBoost GPU:  {'ENABLED' if GPU_AVAILABLE['xgboost'] else 'DISABLED (using CPU)'}")
 if HAS_LIGHTGBM:
-    print(f"  LightGBM GPU: {'✓ ENABLED' if GPU_AVAILABLE['lightgbm'] else '✗ DISABLED (using CPU)'}")
+    print(f"  LightGBM GPU: {'ENABLED' if GPU_AVAILABLE['lightgbm'] else 'DISABLED (using CPU)'}")
 if HAS_CATBOOST:
-    print(f"  CatBoost GPU: {'✓ ENABLED' if GPU_AVAILABLE['catboost'] else '✗ DISABLED (using CPU)'}")
+    print(f"  CatBoost GPU: {'ENABLED' if GPU_AVAILABLE['catboost'] else 'DISABLED (using CPU)'}")
 if not any(GPU_AVAILABLE.values()):
     print("  No GPU acceleration available. Install CUDA and GPU-enabled libraries for speedup.")
     print("  XGBoost: pip install xgboost (requires CUDA)")
@@ -586,6 +586,58 @@ class ImprovedUFCPredictor:
             "layoff_veteran_interaction_diff_squared",
             "performance_volatility_l10_diff_squared",
             "finish_rate_acceleration_diff_squared",
+
+            # ========== PHASE 4: MATCHUP-SPECIFIC FEATURES (35 features) ==========
+            # GROUP 1: Defensive Exploitation (6 features)
+            "offensive_striking_vs_defensive_gap_diff",
+            "takedown_offense_vs_defense_gap_diff",
+            "absorption_vulnerability_index_diff",
+            "combined_defensive_hole_diff",
+            "td_vulnerability_under_pressure_diff",
+            "strike_defense_under_volume_diff",
+
+            # GROUP 2: Submission Threat Matrix (4 features)
+            "submission_setup_efficiency_diff",
+            "submission_threat_vs_td_defense_diff",
+            "grappling_control_vs_submission_ratio_diff",
+            "submission_defense_necessity_diff",
+
+            # GROUP 3: Accuracy vs Volume Paradox (4 features)
+            "striking_volume_accuracy_synergy_diff",
+            "accuracy_under_return_fire_diff",
+            "takedown_efficiency_paradox_diff",
+            "total_offensive_efficiency_index_diff",
+
+            # GROUP 4: Multi-Domain Correlation (4 features)
+            "striking_grappling_efficiency_correlation_diff",
+            "defense_allocation_balance_diff",
+            "cross_domain_compensation_index_diff",
+            "total_combat_efficiency_index_diff",
+
+            # GROUP 5: Statistical Confidence & Variance (4 features)
+            "striking_consistency_confidence_diff",
+            "sample_size_weighted_performance_diff",
+            "performance_deviation_from_baseline_diff",
+            "performance_ceiling_floor_gap_diff",
+
+            # GROUP 6: Tempo & Pace Mismatch (3 features)
+            "pace_mismatch_squared_diff",
+            "output_sustainability_index_diff",
+            "defensive_tempo_advantage_diff",
+
+            # GROUP 7: Advanced Finishing Mechanics (3 features)
+            "finish_probability_composite_diff",
+            "dual_threat_finishing_index_diff",
+            "defensive_finish_prevention_index_diff",
+
+            # Polynomial features for Phase 4 (7 features)
+            "offensive_striking_vs_defensive_gap_diff_squared",
+            "takedown_offense_vs_defense_gap_diff_squared",
+            "striking_volume_accuracy_synergy_diff_squared",
+            "total_combat_efficiency_index_diff_squared",
+            "finish_probability_composite_diff_squared",
+            "output_sustainability_index_diff_squared",
+            "combined_defensive_hole_diff_squared",
         ]
 
     def calculate_streak(self, recent_wins, count_wins=True):
@@ -3076,6 +3128,339 @@ class ImprovedUFCPredictor:
         df["performance_volatility_l10_diff_squared"] = np.sign(df["performance_volatility_l10_diff"]) * (df["performance_volatility_l10_diff"] ** 2)
         df["finish_rate_acceleration_diff_squared"] = np.sign(df["finish_rate_acceleration_diff"]) * (df["finish_rate_acceleration_diff"] ** 2)
 
+        # ========== PHASE 4: ADVANCED MATCHUP-SPECIFIC FEATURES (28 features) ==========
+
+        # GROUP 1: DEFENSIVE EXPLOITATION FEATURES (6 features)
+        # These features identify and exploit specific defensive weaknesses
+
+        # 1. Offensive striking vs defensive gap
+        # Red's striking output × Blue's defensive weakness
+        df["r_strike_exploit"] = df["r_pro_SLpM_corrected"] * (1 - df["b_pro_str_def_corrected"] / 100)
+        df["b_strike_exploit"] = df["b_pro_SLpM_corrected"] * (1 - df["r_pro_str_def_corrected"] / 100)
+        df["offensive_striking_vs_defensive_gap_diff"] = df["r_strike_exploit"] - df["b_strike_exploit"]
+
+        # 2. Takedown offense vs defense gap
+        # Expected TD success based on offense vs defense matchup
+        df["r_td_exploit"] = df["r_pro_td_avg_corrected"] * (1 - df["b_pro_td_def_corrected"] / 100)
+        df["b_td_exploit"] = df["b_pro_td_avg_corrected"] * (1 - df["r_pro_td_def_corrected"] / 100)
+        df["takedown_offense_vs_defense_gap_diff"] = df["r_td_exploit"] - df["b_td_exploit"]
+
+        # 3. Absorption vulnerability index
+        # How vulnerable is fighter to opponent's specific output?
+        df["r_absorption_vuln"] = df["r_pro_SApM_corrected"] / (df["b_pro_SLpM_corrected"] + 0.1)
+        df["b_absorption_vuln"] = df["b_pro_SApM_corrected"] / (df["r_pro_SLpM_corrected"] + 0.1)
+        df["absorption_vulnerability_index_diff"] = df["r_absorption_vuln"] - df["b_absorption_vuln"]
+
+        # 4. Combined defensive hole
+        # Weakness in BOTH striking and grappling defense (amplified by multiplication)
+        df["r_def_hole"] = (1 - df["r_pro_str_def_corrected"] / 100) * (1 - df["r_pro_td_def_corrected"] / 100)
+        df["b_def_hole"] = (1 - df["b_pro_str_def_corrected"] / 100) * (1 - df["b_pro_td_def_corrected"] / 100)
+        df["combined_defensive_hole_diff"] = df["r_def_hole"] - df["b_def_hole"]
+
+        # 5. TD vulnerability under pressure
+        # Context-specific: TD defense weakness × opponent's TD volume
+        df["r_td_pressure"] = (1 - df["r_pro_td_def_corrected"] / 100) * df["b_pro_td_avg_corrected"]
+        df["b_td_pressure"] = (1 - df["b_pro_td_def_corrected"] / 100) * df["r_pro_td_avg_corrected"]
+        df["td_vulnerability_under_pressure_diff"] = df["r_td_pressure"] - df["b_td_pressure"]
+
+        # 6. Strike defense under volume
+        # Expected strikes absorbed based on defense vs opponent's volume
+        df["r_strike_pressure"] = (1 - df["r_pro_str_def_corrected"] / 100) * df["b_pro_SLpM_corrected"]
+        df["b_strike_pressure"] = (1 - df["b_pro_str_def_corrected"] / 100) * df["r_pro_SLpM_corrected"]
+        df["strike_defense_under_volume_diff"] = df["r_strike_pressure"] - df["b_strike_pressure"]
+
+
+        # GROUP 2: SUBMISSION THREAT MATRIX (4 features)
+        # Enhanced submission analysis beyond simple averages
+
+        # 7. Submission setup efficiency
+        # Sub attempts relative to TD success (identifies sub specialists)
+        df["r_sub_setup"] = df["r_pro_sub_avg_corrected"] / (df["r_pro_td_avg_corrected"] + 0.1)
+        df["b_sub_setup"] = df["b_pro_sub_avg_corrected"] / (df["b_pro_td_avg_corrected"] + 0.1)
+        df["submission_setup_efficiency_diff"] = df["r_sub_setup"] - df["b_sub_setup"]
+
+        # 8. Submission threat vs TD defense
+        # Sub threat considering opponent's ability to prevent TDs
+        df["r_sub_threat_context"] = df["r_pro_sub_avg_corrected"] * (1 - df["b_pro_td_def_corrected"] / 100)
+        df["b_sub_threat_context"] = df["b_pro_sub_avg_corrected"] * (1 - df["r_pro_td_def_corrected"] / 100)
+        df["submission_threat_vs_td_defense_diff"] = df["r_sub_threat_context"] - df["b_sub_threat_context"]
+
+        # 9. Grappling control vs submission ratio
+        # Control time per sub attempt (control grappler vs submission hunter)
+        df["r_ctrl_sub_ratio"] = (df["r_avg_ctrl_sec_corrected"] / 60) / (df["r_pro_sub_avg_corrected"] + 0.1)
+        df["b_ctrl_sub_ratio"] = (df["b_avg_ctrl_sec_corrected"] / 60) / (df["b_pro_sub_avg_corrected"] + 0.1)
+        df["grappling_control_vs_submission_ratio_diff"] = df["r_ctrl_sub_ratio"] - df["b_ctrl_sub_ratio"]
+
+        # 10. Submission defense necessity
+        # How much does fighter need sub defense given opponent's threat?
+        df["r_sub_defense_need"] = df["b_pro_sub_avg_corrected"] / (df["r_pro_td_def_corrected"] / 100 + 0.01)
+        df["b_sub_defense_need"] = df["r_pro_sub_avg_corrected"] / (df["b_pro_td_def_corrected"] / 100 + 0.01)
+        df["submission_defense_necessity_diff"] = df["r_sub_defense_need"] - df["b_sub_defense_need"]
+
+
+        # GROUP 3: ACCURACY VS VOLUME PARADOX (4 features)
+        # Sophisticated efficiency metrics balancing output and precision
+
+        # 11. Striking volume-accuracy synergy
+        # Geometric mean rewards both high volume AND accuracy
+        df["r_strike_synergy"] = (df["r_pro_SLpM_corrected"] * df["r_pro_sig_str_acc_corrected"] / 100) ** 0.5
+        df["b_strike_synergy"] = (df["b_pro_SLpM_corrected"] * df["b_pro_sig_str_acc_corrected"] / 100) ** 0.5
+        df["striking_volume_accuracy_synergy_diff"] = df["r_strike_synergy"] - df["b_strike_synergy"]
+
+        # 12. Accuracy under return fire
+        # Can fighter maintain accuracy when opponent is firing back?
+        df["r_acc_under_fire"] = df["r_pro_sig_str_acc_corrected"] / (df["b_pro_SLpM_corrected"] + 1)
+        df["b_acc_under_fire"] = df["b_pro_sig_str_acc_corrected"] / (df["r_pro_SLpM_corrected"] + 1)
+        df["accuracy_under_return_fire_diff"] = df["r_acc_under_fire"] - df["b_acc_under_fire"]
+
+        # 13. Takedown efficiency paradox
+        # High accuracy with low volume = selective/smart wrestling
+        df["r_td_paradox"] = (df["r_pro_td_acc_corrected"] / 100) / (df["r_pro_td_avg_corrected"] + 0.5)
+        df["b_td_paradox"] = (df["b_pro_td_acc_corrected"] / 100) / (df["b_pro_td_avg_corrected"] + 0.5)
+        df["takedown_efficiency_paradox_diff"] = df["r_td_paradox"] - df["b_td_paradox"]
+
+        # 14. Total offensive efficiency index
+        # Combined striking + grappling efficiency
+        df["r_total_off_eff"] = (
+            (df["r_pro_SLpM_corrected"] * df["r_pro_sig_str_acc_corrected"] / 100) ** 0.5 +
+            (df["r_pro_td_avg_corrected"] * df["r_pro_td_acc_corrected"] / 100) ** 0.5
+        )
+        df["b_total_off_eff"] = (
+            (df["b_pro_SLpM_corrected"] * df["b_pro_sig_str_acc_corrected"] / 100) ** 0.5 +
+            (df["b_pro_td_avg_corrected"] * df["b_pro_td_acc_corrected"] / 100) ** 0.5
+        )
+        df["total_offensive_efficiency_index_diff"] = df["r_total_off_eff"] - df["b_total_off_eff"]
+
+
+        # GROUP 4: MULTI-DOMAIN CORRELATION (4 features)
+        # Features combining striking and grappling in complex ways
+
+        # 15. Striking-grappling efficiency correlation
+        # Ratio identifies primary weapon
+        df["r_strike_eff_ratio"] = df["r_pro_SLpM_corrected"] * df["r_pro_sig_str_acc_corrected"] / 100
+        df["r_grapple_eff_ratio"] = df["r_pro_td_avg_corrected"] * df["r_pro_td_acc_corrected"] / 100
+        df["r_sg_corr"] = df["r_strike_eff_ratio"] / (df["r_grapple_eff_ratio"] + 0.1)
+
+        df["b_strike_eff_ratio"] = df["b_pro_SLpM_corrected"] * df["b_pro_sig_str_acc_corrected"] / 100
+        df["b_grapple_eff_ratio"] = df["b_pro_td_avg_corrected"] * df["b_pro_td_acc_corrected"] / 100
+        df["b_sg_corr"] = df["b_strike_eff_ratio"] / (df["b_grapple_eff_ratio"] + 0.1)
+
+        df["striking_grappling_efficiency_correlation_diff"] = df["r_sg_corr"] - df["b_sg_corr"]
+
+        # 16. Defense allocation balance
+        # How evenly distributed is defense between striking and grappling?
+        df["r_def_balance"] = np.abs(df["r_pro_str_def_corrected"] - df["r_pro_td_def_corrected"])
+        df["b_def_balance"] = np.abs(df["b_pro_str_def_corrected"] - df["b_pro_td_def_corrected"])
+        df["defense_allocation_balance_diff"] = df["r_def_balance"] - df["b_def_balance"]
+
+        # 17. Cross-domain compensation index
+        # Can strong grappling compensate for weak striking?
+        df["r_strike_weakness"] = np.maximum(0, 4.0 - df["r_pro_SLpM_corrected"])  # 4.0 = avg SLpM
+        df["r_grapple_strength"] = np.maximum(0, df["r_pro_td_avg_corrected"] - 1.5)  # 1.5 = avg TD
+        df["r_compensation"] = df["r_grapple_strength"] - df["r_strike_weakness"]
+
+        df["b_strike_weakness"] = np.maximum(0, 4.0 - df["b_pro_SLpM_corrected"])
+        df["b_grapple_strength"] = np.maximum(0, df["b_pro_td_avg_corrected"] - 1.5)
+        df["b_compensation"] = df["b_grapple_strength"] - df["b_strike_weakness"]
+
+        df["cross_domain_compensation_index_diff"] = df["r_compensation"] - df["b_compensation"]
+
+        # 18. Total combat efficiency index
+        # Geometric mean of all 8 core stats (identifies complete fighters)
+        df["r_combat_eff"] = (
+            (df["r_pro_SLpM_corrected"] / 10 + 0.01) *
+            (df["r_pro_sig_str_acc_corrected"] / 100 + 0.01) *
+            (10 / (df["r_pro_SApM_corrected"] + 0.01)) *
+            (df["r_pro_str_def_corrected"] / 100 + 0.01) *
+            (df["r_pro_td_avg_corrected"] / 5 + 0.01) *
+            (df["r_pro_td_acc_corrected"] / 100 + 0.01) *
+            (df["r_pro_td_def_corrected"] / 100 + 0.01) *
+            (df["r_pro_sub_avg_corrected"] / 2 + 0.01)
+        ) ** (1/8)
+
+        df["b_combat_eff"] = (
+            (df["b_pro_SLpM_corrected"] / 10 + 0.01) *
+            (df["b_pro_sig_str_acc_corrected"] / 100 + 0.01) *
+            (10 / (df["b_pro_SApM_corrected"] + 0.01)) *
+            (df["b_pro_str_def_corrected"] / 100 + 0.01) *
+            (df["b_pro_td_avg_corrected"] / 5 + 0.01) *
+            (df["b_pro_td_acc_corrected"] / 100 + 0.01) *
+            (df["b_pro_td_def_corrected"] / 100 + 0.01) *
+            (df["b_pro_sub_avg_corrected"] / 2 + 0.01)
+        ) ** (1/8)
+
+        df["total_combat_efficiency_index_diff"] = df["r_combat_eff"] - df["b_combat_eff"]
+
+
+        # GROUP 5: STATISTICAL CONFIDENCE & VARIANCE (4 features)
+        # Account for performance stability and sample size
+
+        # 19. Striking consistency confidence
+        # High output with low variance = reliable
+        df["r_slpm_conf"] = df["r_pro_SLpM_corrected"] / (df["r_slpm_variance_5_corrected"] + 0.1)
+        df["b_slpm_conf"] = df["b_pro_SLpM_corrected"] / (df["b_slpm_variance_5_corrected"] + 0.1)
+        df["striking_consistency_confidence_diff"] = df["r_slpm_conf"] - df["b_slpm_conf"]
+
+        # 20. Sample size weighted performance
+        # Bayesian adjustment: pull stats toward mean with low sample size
+        df["r_sample_weight"] = np.minimum(1.0, df["r_total_fights"] / 15)
+        df["r_weighted_slpm"] = (
+            df["r_pro_SLpM_corrected"] * df["r_sample_weight"] +
+            4.0 * (1 - df["r_sample_weight"])  # 4.0 = division average
+        )
+
+        df["b_sample_weight"] = np.minimum(1.0, df["b_total_fights"] / 15)
+        df["b_weighted_slpm"] = (
+            df["b_pro_SLpM_corrected"] * df["b_sample_weight"] +
+            4.0 * (1 - df["b_sample_weight"])
+        )
+
+        df["sample_size_weighted_performance_diff"] = df["r_weighted_slpm"] - df["b_weighted_slpm"]
+
+        # 21. Performance deviation from baseline
+        # How much better/worse than division average across all stats
+        df["r_baseline_dev"] = (
+            (df["r_pro_SLpM_corrected"] - 4.0) +
+            (df["r_pro_sig_str_acc_corrected"] - 45) / 10 +
+            (45 - df["r_pro_SApM_corrected"]) +
+            (df["r_pro_str_def_corrected"] - 52) / 10 +
+            (df["r_pro_td_avg_corrected"] - 1.5) +
+            (df["r_pro_td_acc_corrected"] - 40) / 10 +
+            (df["r_pro_td_def_corrected"] - 60) / 10 +
+            (df["r_pro_sub_avg_corrected"] - 0.5)
+        ) / 8
+
+        df["b_baseline_dev"] = (
+            (df["b_pro_SLpM_corrected"] - 4.0) +
+            (df["b_pro_sig_str_acc_corrected"] - 45) / 10 +
+            (45 - df["b_pro_SApM_corrected"]) +
+            (df["b_pro_str_def_corrected"] - 52) / 10 +
+            (df["b_pro_td_avg_corrected"] - 1.5) +
+            (df["b_pro_td_acc_corrected"] - 40) / 10 +
+            (df["b_pro_td_def_corrected"] - 60) / 10 +
+            (df["b_pro_sub_avg_corrected"] - 0.5)
+        ) / 8
+
+        df["performance_deviation_from_baseline_diff"] = df["r_baseline_dev"] - df["b_baseline_dev"]
+
+        # 22. Performance ceiling-floor gap
+        # Range between best and worst recent performances
+        df["r_ceiling"] = df[["r_rolling_slpm_3_corrected", "r_rolling_slpm_5_corrected", "r_rolling_slpm_10_corrected"]].max(axis=1)
+        df["r_floor"] = df[["r_rolling_slpm_3_corrected", "r_rolling_slpm_5_corrected", "r_rolling_slpm_10_corrected"]].min(axis=1)
+        df["r_perf_gap"] = df["r_ceiling"] - df["r_floor"]
+
+        df["b_ceiling"] = df[["b_rolling_slpm_3_corrected", "b_rolling_slpm_5_corrected", "b_rolling_slpm_10_corrected"]].max(axis=1)
+        df["b_floor"] = df[["b_rolling_slpm_3_corrected", "b_rolling_slpm_5_corrected", "b_rolling_slpm_10_corrected"]].min(axis=1)
+        df["b_perf_gap"] = df["b_ceiling"] - df["b_floor"]
+
+        df["performance_ceiling_floor_gap_diff"] = df["r_perf_gap"] - df["b_perf_gap"]
+
+
+        # GROUP 6: TEMPO & PACE MISMATCH (3 features)
+        # Advanced pace analysis beyond simple output
+
+        # 23. Pace mismatch squared
+        # Non-linear pace advantage (extreme mismatches matter more)
+        df["pace_diff_temp"] = (
+            (df["r_pro_SLpM_corrected"] + df["r_pro_td_avg_corrected"]) -
+            (df["b_pro_SLpM_corrected"] + df["b_pro_td_avg_corrected"])
+        )
+        df["pace_mismatch_squared_diff"] = np.sign(df["pace_diff_temp"]) * (df["pace_diff_temp"] ** 2)
+
+        # 24. Output sustainability index
+        # High output while absorbing little damage
+        df["r_sustain"] = (
+            (df["r_pro_SLpM_corrected"] + df["r_pro_td_avg_corrected"]) /
+            (df["r_pro_SApM_corrected"] + 1)
+        )
+        df["b_sustain"] = (
+            (df["b_pro_SLpM_corrected"] + df["b_pro_td_avg_corrected"]) /
+            (df["b_pro_SApM_corrected"] + 1)
+        )
+        df["output_sustainability_index_diff"] = df["r_sustain"] - df["b_sustain"]
+
+        # 25. Defensive tempo advantage
+        # Defense quality relative to opponent's offensive pace
+        df["r_def_tempo"] = (
+            (df["r_pro_str_def_corrected"] + df["r_pro_td_def_corrected"]) /
+            (df["b_pro_SLpM_corrected"] + df["b_pro_td_avg_corrected"] + 1)
+        )
+        df["b_def_tempo"] = (
+            (df["b_pro_str_def_corrected"] + df["b_pro_td_def_corrected"]) /
+            (df["r_pro_SLpM_corrected"] + df["r_pro_td_avg_corrected"] + 1)
+        )
+        df["defensive_tempo_advantage_diff"] = df["r_def_tempo"] - df["b_def_tempo"]
+
+
+        # GROUP 7: ADVANCED FINISHING MECHANICS (3 features)
+        # Sophisticated finishing threat analysis
+
+        # 26. Finish probability composite
+        # Weighted finish probability considering both rate and volume
+        df["r_strike_finish"] = df["r_ko_rate_corrected"] * (df["r_pro_SLpM_corrected"] / 4.0)
+        df["r_sub_finish"] = df["r_sub_rate_corrected"] * (df["r_pro_sub_avg_corrected"] / 0.5)
+        df["r_finish_prob"] = (df["r_strike_finish"] + df["r_sub_finish"]) / 2
+
+        df["b_strike_finish"] = df["b_ko_rate_corrected"] * (df["b_pro_SLpM_corrected"] / 4.0)
+        df["b_sub_finish"] = df["b_sub_rate_corrected"] * (df["b_pro_sub_avg_corrected"] / 0.5)
+        df["b_finish_prob"] = (df["b_strike_finish"] + df["b_sub_finish"]) / 2
+
+        df["finish_probability_composite_diff"] = df["r_finish_prob"] - df["b_finish_prob"]
+
+        # 27. Dual threat finishing index
+        # Can finish BOTH striking and grappling (minimum of both)
+        df["r_dual_threat"] = np.minimum(df["r_ko_rate_corrected"], df["r_sub_rate_corrected"]) * 2
+        df["b_dual_threat"] = np.minimum(df["b_ko_rate_corrected"], df["b_sub_rate_corrected"]) * 2
+        df["dual_threat_finishing_index_diff"] = df["r_dual_threat"] - df["b_dual_threat"]
+
+        # 28. Defensive finish prevention index
+        # Defense quality vs opponent's finishing threat
+        df["r_finish_prevention"] = (
+            (df["r_pro_str_def_corrected"] + df["r_pro_td_def_corrected"]) /
+            (df["b_ko_rate_corrected"] * df["b_pro_SLpM_corrected"] +
+             df["b_sub_rate_corrected"] * df["b_pro_sub_avg_corrected"] + 0.1)
+        )
+
+        df["b_finish_prevention"] = (
+            (df["b_pro_str_def_corrected"] + df["b_pro_td_def_corrected"]) /
+            (df["r_ko_rate_corrected"] * df["r_pro_SLpM_corrected"] +
+             df["r_sub_rate_corrected"] * df["r_pro_sub_avg_corrected"] + 0.1)
+        )
+
+        df["defensive_finish_prevention_index_diff"] = df["r_finish_prevention"] - df["b_finish_prevention"]
+
+
+        # ========== POLYNOMIAL FEATURES FOR PHASE 4 (7 features) ==========
+        # Add squared terms for most impactful new features
+
+        df["offensive_striking_vs_defensive_gap_diff_squared"] = np.sign(
+            df["offensive_striking_vs_defensive_gap_diff"]
+        ) * (df["offensive_striking_vs_defensive_gap_diff"] ** 2)
+
+        df["takedown_offense_vs_defense_gap_diff_squared"] = np.sign(
+            df["takedown_offense_vs_defense_gap_diff"]
+        ) * (df["takedown_offense_vs_defense_gap_diff"] ** 2)
+
+        df["striking_volume_accuracy_synergy_diff_squared"] = np.sign(
+            df["striking_volume_accuracy_synergy_diff"]
+        ) * (df["striking_volume_accuracy_synergy_diff"] ** 2)
+
+        df["total_combat_efficiency_index_diff_squared"] = np.sign(
+            df["total_combat_efficiency_index_diff"]
+        ) * (df["total_combat_efficiency_index_diff"] ** 2)
+
+        df["finish_probability_composite_diff_squared"] = np.sign(
+            df["finish_probability_composite_diff"]
+        ) * (df["finish_probability_composite_diff"] ** 2)
+
+        df["output_sustainability_index_diff_squared"] = np.sign(
+            df["output_sustainability_index_diff"]
+        ) * (df["output_sustainability_index_diff"] ** 2)
+
+        df["combined_defensive_hole_diff_squared"] = np.sign(
+            df["combined_defensive_hole_diff"]
+        ) * (df["combined_defensive_hole_diff"] ** 2)
+
         # ========== PHASE 1B: ROLLING STATISTICS DIFFERENTIALS ==========
 
         # Rolling averages (recent performance trends)
@@ -3373,8 +3758,12 @@ class ImprovedUFCPredictor:
 
     # ===== HYPERPARAMETER OPTIMIZATION WITH OPTUNA =====
 
-    def optimize_hyperparameters(self, X, y, n_trials=100):
-        """Optimize hyperparameters using Optuna Bayesian optimization"""
+    def optimize_hyperparameters(self, X, y, n_trials=100, use_all_features=False):
+        """Optimize hyperparameters using Optuna Bayesian optimization
+
+        Args:
+            use_all_features: If True, use stronger regularization ranges (for no feature selection)
+        """
         if not HAS_OPTUNA or not HAS_XGBOOST:
             print("Optuna or XGBoost not available, using default parameters")
             return {
@@ -3392,27 +3781,51 @@ class ImprovedUFCPredictor:
 
         print(f"\n{'='*80}")
         print(f"OPTIMIZING HYPERPARAMETERS WITH OPTUNA ({n_trials} trials)")
+        if use_all_features:
+            print("MODE: Using ALL features (strong regularization ranges)")
+        else:
+            print("MODE: Using selected features (normal regularization ranges)")
         print(f"{'='*80}")
         print()
 
         def objective(trial):
-            params = {
-                'n_estimators': trial.suggest_int('n_estimators', 300, 2000),  # Wider range for more trees
-                'max_depth': trial.suggest_int('max_depth', 3, 12),  # Much deeper trees allowed
-                'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.1, log=True),  # Wider learning rate range
-                'subsample': trial.suggest_float('subsample', 0.5, 1.0),  # Full range of row sampling
-                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),  # Full range of column sampling
-                'colsample_bynode': trial.suggest_float('colsample_bynode', 0.5, 1.0),  # Full range of node sampling
-                'reg_alpha': trial.suggest_float('reg_alpha', 0.001, 50, log=True),  # Much wider L1 regularization
-                'reg_lambda': trial.suggest_float('reg_lambda', 0.001, 50, log=True),  # Much wider L2 regularization
-                'min_child_weight': trial.suggest_int('min_child_weight', 1, 20),  # Wider child weight range
-                'gamma': trial.suggest_float('gamma', 0, 10),  # Wider gamma range for split control
-                'random_state': 42,
-            }
+            if use_all_features:
+                # Stronger regularization ranges for all features
+                params = {
+                    'n_estimators': trial.suggest_int('n_estimators', 500, 2000),
+                    'max_depth': trial.suggest_int('max_depth', 3, 7),  # Shallower trees
+                    'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.05, log=True),
+                    'subsample': trial.suggest_float('subsample', 0.6, 0.9),
+                    'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 0.8),  # More aggressive sampling
+                    'colsample_bynode': trial.suggest_float('colsample_bynode', 0.5, 0.8),
+                    'reg_alpha': trial.suggest_float('reg_alpha', 0.5, 10, log=True),  # Stronger L1
+                    'reg_lambda': trial.suggest_float('reg_lambda', 1.0, 20, log=True),  # Stronger L2
+                    'min_child_weight': trial.suggest_int('min_child_weight', 5, 30),  # Higher minimum
+                    'gamma': trial.suggest_float('gamma', 0.5, 5),  # More conservative splitting
+                    'random_state': 42,
+                }
+            else:
+                # Normal ranges for selected features
+                params = {
+                    'n_estimators': trial.suggest_int('n_estimators', 300, 2000),
+                    'max_depth': trial.suggest_int('max_depth', 3, 12),
+                    'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.1, log=True),
+                    'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+                    'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+                    'colsample_bynode': trial.suggest_float('colsample_bynode', 0.5, 1.0),
+                    'reg_alpha': trial.suggest_float('reg_alpha', 0.001, 50, log=True),
+                    'reg_lambda': trial.suggest_float('reg_lambda', 0.001, 50, log=True),
+                    'min_child_weight': trial.suggest_int('min_child_weight', 1, 20),
+                    'gamma': trial.suggest_float('gamma', 0, 10),
+                    'random_state': 42,
+                }
 
             # Use GPU if available - hyperparameters optimized on GPU work better for GPU training
             if GPU_AVAILABLE['xgboost']:
                 params['device'] = 'cuda'
+                params['tree_method'] = 'hist'
+                # CRITICAL: Enable deterministic GPU operations
+                params['deterministic_histogram'] = True
             else:
                 params['device'] = 'cpu'
                 params['n_jobs'] = -1
@@ -3520,9 +3933,13 @@ class ImprovedUFCPredictor:
 
     def select_features_by_importance(self, X, y):
         """
-        RFECV: Recursive Feature Elimination with Cross-Validation
-        Automatically finds optimal number of features using cross-validation.
-        Trusts RFECV to determine optimal feature count via CV (no artificial caps).
+        RFECV Feature Selection with Mismatch Detection
+
+        Uses Recursive Feature Elimination with Cross-Validation to find optimal features.
+        Includes correction logic to ensure selected features match best CV score location.
+
+        Returns:
+            list: Selected feature names
         """
         print("\n" + "="*80)
         print("RFECV FEATURE SELECTION")
@@ -3533,148 +3950,154 @@ class ImprovedUFCPredictor:
         variance_threshold = variances.quantile(0.01)
         high_variance_features = variances[variances > variance_threshold].index.tolist()
         X_filtered = X[high_variance_features]
-        print(f"Preprocessing: Kept {len(high_variance_features)}/{len(X.columns)} features with sufficient variance")
+        print(f"Preprocessing: Kept {len(high_variance_features)}/{len(X.columns)} features with sufficient variance\n")
 
-        # Base estimator for RFECV - Use XGBoost for best feature selection accuracy
-        if HAS_XGBOOST:
-            # XGBoost provides most stable/reliable feature importance for selection
-            xgb_params = {
-                'n_estimators': 200,  # Increased for more reliable feature ranking (was 100)
-                'max_depth': 7,
-                'learning_rate': 0.05,
-                'subsample': 0.8,
-                'colsample_bytree': 0.8,
-                'reg_alpha': 1.0,
-                'reg_lambda': 1.0,
-                'random_state': 42,
-            }
-            # Add GPU support if available
-            if GPU_AVAILABLE['xgboost']:
-                xgb_params['device'] = 'cuda'
-            else:
-                xgb_params['n_jobs'] = -1
-            estimator = XGBClassifier(**xgb_params)
-        elif HAS_LIGHTGBM:
-            lgbm_params = {
-                'n_estimators': 200,
-                'max_depth': 7,
-                'learning_rate': 0.05,
-                'subsample': 0.8,
-                'colsample_bytree': 0.8,
-                'reg_alpha': 1.0,
-                'reg_lambda': 1.0,
-                'random_state': 42,
-                'verbose': -1
-            }
-            # Add GPU support if available
-            if GPU_AVAILABLE['lightgbm']:
-                lgbm_params['device'] = 'gpu'
-            else:
-                lgbm_params['n_jobs'] = -1
-            estimator = LGBMClassifier(**lgbm_params)
-        else:
-            estimator = RandomForestClassifier(
-                n_estimators=200,
-                max_depth=12,
+        # Create base estimator with GPU support
+        if HAS_XGBOOST and GPU_AVAILABLE.get('xgboost', False):
+            base_estimator = XGBClassifier(
+                n_estimators=100,
+                max_depth=6,
+                learning_rate=0.1,
                 random_state=42,
-                n_jobs=-1
+                device='cuda',
+                tree_method='hist'
             )
+            print("Using XGBoost (GPU) as base estimator")
+        elif HAS_LIGHTGBM and GPU_AVAILABLE.get('lightgbm', False):
+            base_estimator = LGBMClassifier(
+                n_estimators=100,
+                max_depth=6,
+                learning_rate=0.1,
+                random_state=42,
+                device='gpu',
+                verbose=-1
+            )
+            print("Using LightGBM (GPU) as base estimator")
+        elif HAS_XGBOOST:
+            base_estimator = XGBClassifier(
+                n_estimators=100,
+                max_depth=6,
+                learning_rate=0.1,
+                random_state=42
+            )
+            print("Using XGBoost (CPU) as base estimator")
+        else:
+            base_estimator = LGBMClassifier(
+                n_estimators=100,
+                max_depth=6,
+                learning_rate=0.1,
+                random_state=42,
+                verbose=-1
+            )
+            print("Using LightGBM (CPU) as base estimator")
 
-        # RFECV with TimeSeriesSplit
-        min_features = 200  # Aggressive feature selection to reduce overfitting
-        n_features = len(high_variance_features)  # Test all high-variance features
-        step = 2  # Reduced from 5 to 2 for finer-grained feature selection
+        # TimeSeriesSplit for chronological validation (preserves temporal order)
+        n_splits = 5
+        tscv = TimeSeriesSplit(n_splits=n_splits)
+        print(f"Using TimeSeriesSplit with {n_splits} splits (maintains chronological order)\n")
 
-        print(f"\nRunning RFECV (testing {min_features}-{n_features} features with 3-fold CV)...")
-
-        rfecv = RFECV(
-            estimator=estimator,
-            step=step,
-            cv=TimeSeriesSplit(n_splits=3),  # 3-fold CV for faster feature selection
-            scoring='accuracy',
-            min_features_to_select=min_features,
-            n_jobs=-1,
-            verbose=0  # Suppress verbose output
-        )
-
-        # Fit RFECV with animated progress indicator
-        import threading
+        # Run RFECV
+        print("Running RFECV (this may take several minutes)...")
         import time
-
-        # Calculate estimated iterations (for user info)
-        total_iterations = (n_features - min_features) // step + 1
-        estimated_time = total_iterations * 3 * 1.3  # ~1.3 sec per fold (XGBoost 200 trees, ~209 features, 3-fold CV)
-        print(f"Estimated iterations: {total_iterations} feature subsets × 3 folds = {total_iterations * 3} model fits")
-        print(f"Estimated time: ~{estimated_time/60:.1f} minutes (XGBoost + 3-fold CV)\n")
-
-        # Start timer
         start_time = time.time()
 
-        # Animated progress indicator
-        stop_progress = threading.Event()
-        def show_progress():
-            spinner = ['|', '/', '-', '\\']
-            idx = 0
-            dots = 0
-            while not stop_progress.is_set():
-                elapsed = int(time.time() - start_time)
-                mins, secs = divmod(elapsed, 60)
+        rfecv = RFECV(
+            estimator=base_estimator,
+            step=1,
+            cv=tscv,
+            scoring='accuracy',
+            n_jobs=-1,
+            verbose=1
+        )
+        rfecv.fit(X_filtered, y)
 
-                # Animated bar
-                bar_length = 40
-                filled = (dots % (bar_length + 1))
-                if filled <= bar_length // 2:
-                    bar = '=' * filled + '>' + '-' * (bar_length - filled - 1)
-                else:
-                    bar = '=' * (bar_length - (filled - bar_length // 2)) + '<' + '-' * (filled - bar_length // 2 - 1)
-
-                sys.stdout.write('\r' + ' ' * 80 + '\r')
-                sys.stdout.write(f"Running RFECV... [{bar}] {spinner[idx]} ({mins:02d}:{secs:02d})")
-                sys.stdout.flush()
-
-                idx = (idx + 1) % len(spinner)
-                dots = (dots + 1) % (bar_length * 2)
-                time.sleep(0.15)
-
-        progress_thread = threading.Thread(target=show_progress, daemon=True)
-        progress_thread.start()
-
-        try:
-            rfecv.fit(X_filtered, y)
-        finally:
-            stop_progress.set()
-            progress_thread.join(timeout=0.5)
-            elapsed = int(time.time() - start_time)
-            mins, secs = divmod(elapsed, 60)
-            sys.stdout.write('\r' + ' ' * 80 + '\r')
-            bar = '=' * 40
-            sys.stdout.write(f"RFECV Complete! [{bar}] ✓ ({mins:02d}:{secs:02d})\n\n")
-            sys.stdout.flush()
+        elapsed = time.time() - start_time
+        print(f"\nRFECV completed in {elapsed:.1f} seconds\n")
 
         # Get RFECV results
-        selected_mask = rfecv.support_
-        selected_features = X_filtered.columns[selected_mask].tolist()
-        n_selected = len(selected_features)
-        best_score = rfecv.cv_results_['mean_test_score'].max()
+        n_features = len(X_filtered.columns)
+        cv_scores = rfecv.cv_results_['mean_test_score']
+        n_selected = rfecv.n_features_
 
-        # Rank selected features by importance
-        importances = rfecv.estimator_.feature_importances_
+        # Find best score location
+        best_score = np.max(cv_scores)
+        best_idx = np.argmax(cv_scores)
+        n_features_at_best = n_features - best_idx  # Features tested in descending order
+
+        print("="*80)
+        print("RFECV RESULTS")
+        print("="*80)
+
+        # Display CV scores
+        print("\nCross-validation scores by number of features:")
+        for i, score in enumerate(cv_scores):
+            features_count = n_features - i
+            marker = " <- BEST SCORE" if i == best_idx else ""
+            marker += " <- SELECTED" if features_count == n_selected else ""
+            print(f"  {features_count} features: {score:.4f}{marker}")
+
+        print(f"\nSelected Features: {n_selected}")
+        print(f"Best CV Score: {best_score:.4f} (at {n_features_at_best} features)")
+
+        # MISMATCH DETECTION: Check if selected features != features at best score
+        mismatch_detected = (n_selected != n_features_at_best)
+
+        if mismatch_detected:
+            print("\n" + "!"*80)
+            print("MISMATCH DETECTED!")
+            print("!"*80)
+            print(f"rfecv.n_features_ = {n_selected} BUT best CV score is at {n_features_at_best} features")
+            print("This is a known sklearn bug where rfecv.support_ doesn't always match best score location.")
+            print(f"\nCORRECTION: Retraining on all features to select top {n_features_at_best} by importance...")
+            print("!"*80 + "\n")
+
+            # Retrain on all features to get importances
+            correction_model = XGBClassifier(
+                n_estimators=200,
+                max_depth=7,
+                random_state=42,
+                device='cuda' if GPU_AVAILABLE.get('xgboost', False) else 'cpu',
+                tree_method='hist' if GPU_AVAILABLE.get('xgboost', False) else 'auto'
+            )
+            correction_model.fit(X_filtered, y)
+
+            # Select top N features by importance
+            importances = correction_model.feature_importances_
+            top_indices = np.argsort(importances)[::-1][:n_features_at_best]
+            selected_features = X_filtered.columns[top_indices].tolist()
+
+            print(f"CORRECTED: Selected top {len(selected_features)} features by importance")
+
+        else:
+            # No mismatch - use RFECV's selected features
+            selected_features = X_filtered.columns[rfecv.support_].tolist()
+            print("\nNo mismatch detected - using RFECV's selected features")
+
+        print("="*80 + "\n")
+
+        # Get final feature importances
+        print("Computing final feature importances...")
+        final_model = XGBClassifier(
+            n_estimators=200,
+            max_depth=7,
+            random_state=42,
+            device='cuda' if GPU_AVAILABLE.get('xgboost', False) else 'cpu',
+            tree_method='hist' if GPU_AVAILABLE.get('xgboost', False) else 'auto'
+        )
+        final_model.fit(X_filtered[selected_features], y)
+        importances = final_model.feature_importances_
+
+        # Create importance dataframe
         importance_df = pd.DataFrame({
             'feature': selected_features,
             'importance': importances
         }).sort_values('importance', ascending=False)
 
-        # Results summary
-        print("="*80)
-        print(f"Selected Features: {n_selected}")
-        print(f"Best CV Score:     {best_score:.4f}")
-        print("="*80)
-        print(f"\nAll {n_selected} Selected Features (Ranked by Importance):")
+        print(f"\nAll {len(selected_features)} Selected Features (Ranked by Importance):")
         print(importance_df[['feature', 'importance']].to_string(index=False))
 
         # Store for later
         self.feature_importance = importance_df
-        self.rfecv = rfecv
 
         return selected_features
 
@@ -3878,8 +4301,30 @@ class ImprovedUFCPredictor:
         self.polarity_map = {}
 
         # Feature selection: Use ONLY training set to avoid data leakage
-        # RFECV will find optimal number of features automatically via cross-validation
-        selected_features = self.select_features_by_importance(X_train, y_train)
+        # NO SELECTION: Use all features with strong regularization (often best for gradient boosting)
+        USE_FEATURE_SELECTION = False  # Set to True to enable Boruta
+
+        if USE_FEATURE_SELECTION:
+            selected_features = self.select_features_by_importance(X_train, y_train)
+        else:
+            # Use all features with variance filter
+            print("\n" + "="*80)
+            print("NO FEATURE SELECTION (Using ALL features + Strong Regularization)")
+            print("="*80 + "\n")
+
+            variances = X_train.var()
+            variance_threshold = variances.quantile(0.01)
+            high_variance_features = variances[variances > variance_threshold].index.tolist()
+            selected_features = high_variance_features
+
+            print(f"Variance Filter: Kept {len(selected_features)}/{len(X_train.columns)} features")
+            print(f"Removed {len(X_train.columns) - len(selected_features)} near-constant features")
+            print("\nUsing strong regularization in models to prevent overfitting:")
+            print("  - L1 regularization (reg_alpha) for automatic feature weighting")
+            print("  - L2 regularization (reg_lambda) for complexity penalty")
+            print("  - Shallow trees (max_depth) for less overfitting")
+            print("  - Feature sampling (colsample_bytree) for diversity")
+            print("="*80 + "\n")
 
         # Check if all selected features exist in X_train
         missing_features = [f for f in selected_features if f not in X_train.columns]
@@ -3945,20 +4390,37 @@ class ImprovedUFCPredictor:
 
         # Hyperparameter optimization: Use ONLY training set with time-series CV
         if HAS_OPTUNA and HAS_XGBOOST:
-            self.best_params = self.optimize_hyperparameters(X_train, y_train, n_trials=25) ### OPTUNA TRIALS ###
+            self.best_params = self.optimize_hyperparameters(X_train, y_train, n_trials=25, use_all_features=not USE_FEATURE_SELECTION) ### OPTUNA TRIALS ###
         else:
-            self.best_params = {
-                'n_estimators': 800,
-                'max_depth': 7,
-                'learning_rate': 0.02,
-                'subsample': 0.8,
-                'colsample_bytree': 0.8,
-                'colsample_bynode': 0.8,
-                'reg_alpha': 1.0,
-                'reg_lambda': 1.0,
-                'min_child_weight': 5,
-                'gamma': 0.5,
-            }
+            # Default parameters with strong regularization for no feature selection
+            if USE_FEATURE_SELECTION:
+                # Lighter regularization when features are pre-selected
+                self.best_params = {
+                    'n_estimators': 800,
+                    'max_depth': 7,
+                    'learning_rate': 0.02,
+                    'subsample': 0.8,
+                    'colsample_bytree': 0.8,
+                    'colsample_bynode': 0.8,
+                    'reg_alpha': 1.0,
+                    'reg_lambda': 1.0,
+                    'min_child_weight': 5,
+                    'gamma': 0.5,
+                }
+            else:
+                # STRONG regularization when using all features
+                self.best_params = {
+                    'n_estimators': 1000,
+                    'max_depth': 5,              # Shallower trees
+                    'learning_rate': 0.02,
+                    'subsample': 0.8,
+                    'colsample_bytree': 0.7,     # More aggressive feature sampling
+                    'colsample_bynode': 0.7,
+                    'reg_alpha': 1.5,            # Stronger L1 (feature selection)
+                    'reg_lambda': 2.5,           # Stronger L2 (weight shrinkage)
+                    'min_child_weight': 10,      # Require more evidence to split
+                    'gamma': 1.0,                # More conservative splitting
+                }
 
         # Train final model
         print("\n" + "="*80)
@@ -3977,9 +4439,11 @@ class ImprovedUFCPredictor:
                 'scale_pos_weight': scale_weight,
                 'random_state': 42,
             }
-            # Add GPU support if available
+            # Add GPU support if available (with determinism)
             if GPU_AVAILABLE['xgboost']:
                 xgb_params['device'] = 'cuda'
+                xgb_params['tree_method'] = 'hist'
+                xgb_params['deterministic_histogram'] = True  # Ensures reproducible GPU results
             else:
                 xgb_params['device'] = 'cpu'
                 xgb_params['n_jobs'] = -1
@@ -4008,9 +4472,10 @@ class ImprovedUFCPredictor:
                     'random_state': 42,
                     'verbose': -1
                 }
-                # Add GPU support if available
+                # Add GPU support if available (with determinism)
                 if GPU_AVAILABLE['lightgbm']:
                     lgbm_params['device'] = 'gpu'
+                    lgbm_params['deterministic'] = True  # Ensures reproducible GPU results
                 else:
                     lgbm_params['n_jobs'] = -1
 
