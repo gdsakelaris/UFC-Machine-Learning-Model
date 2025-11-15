@@ -638,6 +638,30 @@ class ImprovedUFCPredictor:
             "finish_probability_composite_diff_squared",
             "output_sustainability_index_diff_squared",
             "combined_defensive_hole_diff_squared",
+
+            # ========== NEW FEATURES: ALL REMOVED ==========
+            # All proposed features removed - they decreased accuracy from 65.79% to 64.31%
+            # Only modification kept: reach_efficiency_diff (SLpM per inch of reach)
+            #
+            # REMOVED (added noise instead of signal):
+            # - finishing_method_matchup_advantage
+            # - damage_per_strike_diff_corrected
+            # - ground_control_efficiency
+            # - submission_threat_per_control_time
+            # - td_chain_success_rate_diff_corrected
+            # - late_round_performance_ratio_diff_corrected
+            # - cardio_adjusted_output
+            # - weight_cut_severity_impact
+            # - championship_round_experience_diff_corrected
+            # - pressure_fight_performance_diff_corrected
+            # - underdog_overperformance_diff_corrected
+            # - peak_performance_distance_diff_corrected
+            # - damage_accumulation_factor_diff_corrected
+            # - career_trajectory_velocity_diff_corrected
+            # - prime_age_multiplier
+            # - clinch_control_grappling_synergy
+            # - volume_vs_precision_style_clash
+            # - finish_threat_vs_durability_matchup
         ]
 
     def calculate_streak(self, recent_wins, count_wins=True):
@@ -1265,6 +1289,35 @@ class ImprovedUFCPredictor:
             "current_losing_streak": 0,  # Current consecutive losses
             # CLUSTER 6: Interaction Terms (uses existing data, no new tracking needed)
             # CLUSTER 7: Bayesian Tracking (uses existing data, no new tracking needed)
+
+            # NEW FEATURES: Advanced matchup and performance tracking
+            # Category 1: H2H & Matchup History
+            "h2h_fight_history": {},  # Dict: {opponent: [(result, method, round, dominance_score), ...]}
+            "vs_striker_performance_history": [],  # [(result, damage_ratio), ...]
+            "vs_grappler_performance_history": [],  # [(result, damage_ratio), ...]
+            "comeback_wins": 0,  # Wins after losing early rounds
+            "total_adversity_situations": 0,  # Times fighter was losing but had chance to come back
+
+            # Category 2: Grappling details
+            "td_chain_attempts": 0,  # Multiple TD attempts in sequence
+            "td_chain_successes": 0,  # Eventually got TD after initial failure
+
+            # Category 3: Cardio & Pace
+            "early_round_slpm": [],  # SLpM in rounds 1-2
+            "late_round_slpm": [],  # SLpM in rounds 3-5
+            "round_dominance_scores": [],  # Per-round damage differential
+
+            # Category 4: Experience & Pressure
+            "championship_rounds_fought": 0,  # Rounds 4 and 5 specifically
+            "high_pressure_wins": 0,  # Wins in title fights + top-5 opponent fights
+            "high_pressure_fights": 0,  # Total high-pressure situations
+            "fights_as_underdog": [],  # [(elo_diff, result), ...] when opponent_elo > own_elo
+
+            # Category 5: Age & Career Arc
+            "career_elo_history": [],  # All ELO ratings with dates
+            "peak_elo": 1500,  # Highest ELO ever achieved
+            "peak_elo_date": None,  # Date of peak ELO
+            "ko_loss_dates": [],  # Dates of KO/TKO losses
         }
 
         # Initialize corrected columns
@@ -1317,7 +1370,14 @@ class ImprovedUFCPredictor:
                         "finish_method_diversity", "aging_power_striker_penalty",
                         "elo_volatility_interaction", "layoff_veteran_interaction",
                         "bayesian_finish_rate", "confidence_weighted_damage_ratio",
-                        "distance_from_career_peak", "elite_performance_frequency_l10"]:
+                        "distance_from_career_peak", "elite_performance_frequency_l10",
+                        # NEW FEATURES: 20 additional advanced features
+                        "h2h_dominance_score", "style_adaptation_striker", "style_adaptation_grappler",
+                        "comeback_factor", "damage_per_strike", "td_chain_success_rate",
+                        "late_round_performance_ratio", "pace_dictation_score",
+                        "championship_round_experience", "pressure_fight_performance",
+                        "underdog_overperformance", "peak_performance_distance",
+                        "damage_accumulation_factor", "career_trajectory_velocity"]:
                 df[f"{prefix}_{stat}_corrected"] = 0.0
 
         df["h2h_advantage"] = 0.0
@@ -1874,6 +1934,48 @@ class ImprovedUFCPredictor:
                 elite_rate = stats["vs_elite_record"]["wins"] / stats["vs_elite_record"]["fights"] if stats["vs_elite_record"]["fights"] > 0 else overall_rate
                 df.at[idx, f"{prefix}_step_up_performance_corrected"] = elite_rate - overall_rate
 
+                # ========== NEW FEATURES: ALL CALCULATION LOGIC REMOVED ==========
+                # Features decreased accuracy from 65.79% to 64.31% - removing all
+
+                # REMOVED: 1. H2H Dominance Score (too sparse - only rematches)
+                # opponent = b_fighter if prefix == "r" else r_fighter
+                # if opponent in stats["h2h_fight_history"]:
+                #     h2h_history = stats["h2h_fight_history"][opponent]
+                #     if len(h2h_history) > 0:
+                #         avg_dominance = sum([h[3] for h in h2h_history]) / len(h2h_history)
+                #         df.at[idx, f"{prefix}_h2h_dominance_score_corrected"] = avg_dominance
+                #     else:
+                #         df.at[idx, f"{prefix}_h2h_dominance_score_corrected"] = 0.0
+                # else:
+                #     df.at[idx, f"{prefix}_h2h_dominance_score_corrected"] = 0.0
+
+                # REMOVED: 2 & 3. Style Adaptation (too sparse - needs 5+ fights vs specific style)
+                # if len(stats["vs_striker_performance_history"]) >= 5:
+                #     early_vs_strikers = np.mean([h[1] for h in stats["vs_striker_performance_history"][:3]])
+                #     recent_vs_strikers = np.mean([h[1] for h in stats["vs_striker_performance_history"][-3:]])
+                #     df.at[idx, f"{prefix}_style_adaptation_striker_corrected"] = recent_vs_strikers - early_vs_strikers
+                # else:
+                #     df.at[idx, f"{prefix}_style_adaptation_striker_corrected"] = 0.0
+
+                # if len(stats["vs_grappler_performance_history"]) >= 5:
+                #     early_vs_grapplers = np.mean([h[1] for h in stats["vs_grappler_performance_history"][:3]])
+                #     recent_vs_grapplers = np.mean([h[1] for h in stats["vs_grappler_performance_history"][-3:]])
+                #     df.at[idx, f"{prefix}_style_adaptation_grappler_corrected"] = recent_vs_grapplers - early_vs_grapplers
+                # else:
+                #     df.at[idx, f"{prefix}_style_adaptation_grappler_corrected"] = 0.0
+
+                # REMOVED: 4. Comeback Factor (tracking logic never implemented)
+                # if stats["total_adversity_situations"] > 0:
+                #     df.at[idx, f"{prefix}_comeback_factor_corrected"] = stats["comeback_wins"] / stats["total_adversity_situations"]
+                # else:
+                #     df.at[idx, f"{prefix}_comeback_factor_corrected"] = 0.0
+
+                # REMOVED: 5-14. All remaining feature calculations (decreased accuracy)
+                # if stats["sig_str_total"] > 0:
+                #     damage_per_strike = (stats["kd_total"] * 100) / stats["sig_str_total"]
+                #     df.at[idx, f"{prefix}_damage_per_strike_corrected"] = damage_per_strike
+                # ...all other calculations removed...
+
             # Calculate opponent quality differential
             r_opp_elo = df.at[idx, "r_avg_opponent_elo_corrected"]
             b_opp_elo = df.at[idx, "b_avg_opponent_elo_corrected"]
@@ -2365,6 +2467,179 @@ class ImprovedUFCPredictor:
                     else:
                         fighter_stats[fighter]["current_losing_streak"] = 0
 
+                # ========== NEW FEATURES: Track advanced matchup and performance metrics ==========
+
+                # Category 1: H2H & Matchup History
+                # Track H2H fight history with dominance scores
+                if row["winner"] == "Red":
+                    finish_round = row.get("finish_round", row.get("total_rounds", 3))
+                    if is_finish:
+                        dominance = 6 - finish_round  # R1=5, R2=4, R3=3, R4=2, R5=1
+                    else:
+                        dominance = 1  # Decision win
+
+                    # Add to red fighter's H2H history
+                    if b_fighter not in fighter_stats[r_fighter]["h2h_fight_history"]:
+                        fighter_stats[r_fighter]["h2h_fight_history"][b_fighter] = []
+                    fighter_stats[r_fighter]["h2h_fight_history"][b_fighter].append((1, method_cat, finish_round, dominance))
+
+                    # Add to blue fighter's H2H history (negative dominance)
+                    if r_fighter not in fighter_stats[b_fighter]["h2h_fight_history"]:
+                        fighter_stats[b_fighter]["h2h_fight_history"][r_fighter] = []
+                    fighter_stats[b_fighter]["h2h_fight_history"][r_fighter].append((0, method_cat, finish_round, -dominance))
+
+                elif row["winner"] == "Blue":
+                    finish_round = row.get("finish_round", row.get("total_rounds", 3))
+                    if is_finish:
+                        dominance = 6 - finish_round
+                    else:
+                        dominance = 1
+
+                    if r_fighter not in fighter_stats[b_fighter]["h2h_fight_history"]:
+                        fighter_stats[b_fighter]["h2h_fight_history"][r_fighter] = []
+                    fighter_stats[b_fighter]["h2h_fight_history"][r_fighter].append((1, method_cat, finish_round, dominance))
+
+                    if b_fighter not in fighter_stats[r_fighter]["h2h_fight_history"]:
+                        fighter_stats[r_fighter]["h2h_fight_history"][b_fighter] = []
+                    fighter_stats[r_fighter]["h2h_fight_history"][b_fighter].append((0, method_cat, finish_round, -dominance))
+
+                # Track style adaptation (performance vs striker/grappler types)
+                for fighter, f_prefix, opp_prefix in [(r_fighter, "r", "b"), (b_fighter, "b", "r")]:
+                    # Determine opponent style
+                    opp_slpm = df.at[idx, f"{opp_prefix}_pro_SLpM_corrected"]
+                    opp_td_avg = df.at[idx, f"{opp_prefix}_pro_td_avg_corrected"]
+
+                    # Calculate damage ratio for this fight
+                    my_sig_str = row.get(f"{f_prefix}_sig_str", 0)
+                    opp_sig_str = row.get(f"{opp_prefix}_sig_str", 0)
+                    damage_ratio = my_sig_str / max(opp_sig_str, 1) if opp_sig_str > 0 else 1.0
+
+                    # Determine if won
+                    if (row["winner"] == "Red" and f_prefix == "r") or (row["winner"] == "Blue" and f_prefix == "b"):
+                        result = 1.0
+                    else:
+                        result = 0.0
+
+                    # Classify opponent and track performance
+                    if opp_slpm > opp_td_avg * 2:  # Striker
+                        fighter_stats[fighter]["vs_striker_performance_history"].append((result, damage_ratio))
+                        if len(fighter_stats[fighter]["vs_striker_performance_history"]) > 10:
+                            fighter_stats[fighter]["vs_striker_performance_history"] = fighter_stats[fighter]["vs_striker_performance_history"][-10:]
+                    elif opp_td_avg > opp_slpm / 2:  # Grappler
+                        fighter_stats[fighter]["vs_grappler_performance_history"].append((result, damage_ratio))
+                        if len(fighter_stats[fighter]["vs_grappler_performance_history"]) > 10:
+                            fighter_stats[fighter]["vs_grappler_performance_history"] = fighter_stats[fighter]["vs_grappler_performance_history"][-10:]
+
+                # Track TD chain attempts/successes (simplified: if TD att > 3, consider it chain wrestling)
+                for fighter, f_prefix in [(r_fighter, "r"), (b_fighter, "b")]:
+                    td_att = row.get(f"{f_prefix}_td_att", 0)
+                    td_landed = row.get(f"{f_prefix}_td", 0)
+
+                    if pd.notna(td_att) and td_att >= 3:
+                        fighter_stats[fighter]["td_chain_attempts"] += 1
+                        if pd.notna(td_landed) and td_landed > 0:
+                            fighter_stats[fighter]["td_chain_successes"] += 1
+
+                # Category 3: Cardio & Pace tracking
+                # Track early vs late round performance (rounds 1-2 vs 3-5)
+                finish_round = row.get("finish_round", row.get("total_rounds", 3))
+                for fighter, f_prefix in [(r_fighter, "r"), (b_fighter, "b")]:
+                    if fight_time > 0:
+                        sig_str = row.get(f"{f_prefix}_sig_str", 0)
+
+                        # Estimate strikes by round (simplified: assume even distribution if no round-by-round data)
+                        if pd.notna(sig_str) and pd.notna(finish_round):
+                            strikes_per_round = sig_str / finish_round
+
+                            # Early rounds (1-2)
+                            early_rounds = min(2, finish_round)
+                            early_strikes = strikes_per_round * early_rounds
+                            early_slpm = early_strikes / (early_rounds * 5) if early_rounds > 0 else 0
+                            fighter_stats[fighter]["early_round_slpm"].append(early_slpm)
+
+                            # Late rounds (3-5)
+                            if finish_round >= 3:
+                                late_rounds = finish_round - 2
+                                late_strikes = strikes_per_round * late_rounds
+                                late_slpm = late_strikes / (late_rounds * 5) if late_rounds > 0 else 0
+                                fighter_stats[fighter]["late_round_slpm"].append(late_slpm)
+
+                            # Keep last 10
+                            if len(fighter_stats[fighter]["early_round_slpm"]) > 10:
+                                fighter_stats[fighter]["early_round_slpm"] = fighter_stats[fighter]["early_round_slpm"][-10:]
+                            if len(fighter_stats[fighter]["late_round_slpm"]) > 10:
+                                fighter_stats[fighter]["late_round_slpm"] = fighter_stats[fighter]["late_round_slpm"][-10:]
+
+                # Category 4: Experience & Pressure tracking
+                # Championship rounds (rounds 4 and 5)
+                for fighter in [r_fighter, b_fighter]:
+                    if row.get("total_rounds", 3) == 5:
+                        finish_round = row.get("finish_round", 5)
+                        if pd.notna(finish_round):
+                            if finish_round >= 4:
+                                # Fight went to round 4 or 5
+                                champ_rounds = finish_round - 3
+                                fighter_stats[fighter]["championship_rounds_fought"] += champ_rounds
+
+                # High pressure fight tracking (title fights or vs highly ranked opponents)
+                for fighter, f_prefix, opp_prefix in [(r_fighter, "r", "b"), (b_fighter, "b", "r")]:
+                    is_high_pressure = False
+
+                    # Check if title fight
+                    if row.get("is_title_bout", 0) == 1:
+                        is_high_pressure = True
+
+                    # Check if opponent is elite (ELO > 1600)
+                    opp_elo = self.fighter_elos.get(r_fighter if f_prefix == "b" else b_fighter, 1500)
+                    if opp_elo > 1600:
+                        is_high_pressure = True
+
+                    if is_high_pressure:
+                        fighter_stats[fighter]["high_pressure_fights"] += 1
+
+                        # Check if won
+                        if (row["winner"] == "Red" and f_prefix == "r") or (row["winner"] == "Blue" and f_prefix == "b"):
+                            fighter_stats[fighter]["high_pressure_wins"] += 1
+
+                # Underdog tracking (fights where opponent had higher ELO)
+                r_elo = self.fighter_elos.get(r_fighter, 1500)
+                b_elo = self.fighter_elos.get(b_fighter, 1500)
+
+                if b_elo > r_elo + 50:  # Red is underdog
+                    result = 1.0 if row["winner"] == "Red" else 0.0
+                    fighter_stats[r_fighter]["fights_as_underdog"].append((r_elo - b_elo, result))
+                    if len(fighter_stats[r_fighter]["fights_as_underdog"]) > 10:
+                        fighter_stats[r_fighter]["fights_as_underdog"] = fighter_stats[r_fighter]["fights_as_underdog"][-10:]
+
+                if r_elo > b_elo + 50:  # Blue is underdog
+                    result = 1.0 if row["winner"] == "Blue" else 0.0
+                    fighter_stats[b_fighter]["fights_as_underdog"].append((b_elo - r_elo, result))
+                    if len(fighter_stats[b_fighter]["fights_as_underdog"]) > 10:
+                        fighter_stats[b_fighter]["fights_as_underdog"] = fighter_stats[b_fighter]["fights_as_underdog"][-10:]
+
+                # Category 5: Career arc tracking
+                # Track ELO history and peak
+                event_date = row["event_date"]
+                for fighter in [r_fighter, b_fighter]:
+                    current_elo = self.fighter_elos.get(fighter, 1500)
+                    fighter_stats[fighter]["career_elo_history"].append((event_date, current_elo))
+
+                    # Update peak ELO
+                    if current_elo > fighter_stats[fighter]["peak_elo"]:
+                        fighter_stats[fighter]["peak_elo"] = current_elo
+                        fighter_stats[fighter]["peak_elo_date"] = event_date
+
+                    # Keep last 24 months of ELO history
+                    if len(fighter_stats[fighter]["career_elo_history"]) > 24:
+                        fighter_stats[fighter]["career_elo_history"] = fighter_stats[fighter]["career_elo_history"][-24:]
+
+                # Track KO loss dates
+                if is_finish and method_cat == "ko":
+                    if row["winner"] == "Red":
+                        fighter_stats[b_fighter]["ko_loss_dates"].append(event_date)
+                    elif row["winner"] == "Blue":
+                        fighter_stats[r_fighter]["ko_loss_dates"].append(event_date)
+
                 # ========== CRITICAL: NOW SYNC POST-FIGHT ELO FOR NEXT FIGHT ==========
                 # All opponent classification is complete - safe to update tracked ELO now
                 # This ensures next fight sees correct pre-fight ELO for these fighters
@@ -2429,6 +2704,12 @@ class ImprovedUFCPredictor:
                     "last_fight_was_finish", "last_fight_was_win", "last_fight_dominance",
                     "early_finish_rate", "late_finish_rate", "first_round_ko_rate",
                     "fights_last_24_months", "avg_finish_time_last_3", "chin_deterioration"]:
+                    # NEW FEATURES: ALL REMOVED (decreased accuracy)
+                    # "damage_per_strike", "td_chain_success_rate",
+                    # "late_round_performance_ratio",
+                    # "championship_round_experience", "pressure_fight_performance",
+                    # "underdog_overperformance", "peak_performance_distance",
+                    # "damage_accumulation_factor", "career_trajectory_velocity"]:
             # Check if columns exist before computing diff
             r_col = f"r_{stat}_corrected"
             b_col = f"b_{stat}_corrected"
@@ -3413,6 +3694,14 @@ class ImprovedUFCPredictor:
         df["b_dual_threat"] = np.minimum(df["b_ko_rate_corrected"], df["b_sub_rate_corrected"]) * 2
         df["dual_threat_finishing_index_diff"] = df["r_dual_threat"] - df["b_dual_threat"]
 
+        # ========== NEW FEATURES: ALL REMOVED (decreased accuracy) ==========
+        # All feature calculations commented out - they decreased accuracy from 65.79% to 64.31%
+
+        # REMOVED: finishing_method_matchup_advantage, ground_control_efficiency,
+        # submission_threat_per_control_time, cardio_adjusted_output,
+        # weight_cut_severity_impact, prime_age_multiplier, clinch_control_grappling_synergy,
+        # volume_vs_precision_style_clash, finish_threat_vs_durability_matchup
+
         # 28. Defensive finish prevention index
         # Defense quality vs opponent's finishing threat
         df["r_finish_prevention"] = (
@@ -3642,10 +3931,10 @@ class ImprovedUFCPredictor:
         df["momentum_quality_diff"] = r_momentum_quality - b_momentum_quality
 
         # TIER 7: Physical Efficiency Ratios
-        # 21. Reach efficiency (reach relative to height)
-        # Ape index already captures this, but ratio form emphasizes it
-        r_reach_efficiency = (df["r_reach"] + 1) / (df["r_height"] + 1)
-        b_reach_efficiency = (df["b_reach"] + 1) / (df["b_height"] + 1)
+        # 21. Reach efficiency (striking output per inch of reach)
+        # Measures how efficiently fighters convert reach advantage into strikes
+        r_reach_efficiency = df["r_pro_SLpM_corrected"] / (df["r_reach"] + 1)
+        b_reach_efficiency = df["b_pro_SLpM_corrected"] / (df["b_reach"] + 1)
         df["reach_efficiency_diff"] = r_reach_efficiency - b_reach_efficiency
 
         # 22. Size-adjusted striking (SLpM relative to weight class)
