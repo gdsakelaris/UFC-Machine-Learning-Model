@@ -6186,6 +6186,11 @@ class AdvancedUFCPredictor:
             fight_features["stance_diff"] = 0
             fight_features["orthodox_southpaw_matchup"] = 0
 
+        # Fix NaN values by replacing them with 0
+        for key in fight_features:
+            if isinstance(fight_features[key], (int, float)) and pd.isna(fight_features[key]):
+                fight_features[key] = 0
+
         return fight_features, r_stats, b_stats
 
     def get_dynamic_method_weights(self, fight_data, ml_probs, rule_probs, method_type):
@@ -6629,6 +6634,9 @@ class AdvancedUFCPredictor:
         self.set_random_seeds()
 
         X = fight_data[feature_columns]
+
+        # Safety check: Fill any remaining NaN values with 0
+        X = X.fillna(0)
 
         # Get winner prediction
         winner_proba = self.winner_model.predict_proba(X)[0]
