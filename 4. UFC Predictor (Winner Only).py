@@ -357,6 +357,56 @@ class ImprovedUFCPredictor:
             # NEW FEATURE: Main event experience
             "main_event_experience_diff",  # Count of 5-round fights (championship experience)
 
+            # ========== NEW FEATURES: Advanced Performance Metrics (35 features) ==========
+            # HIGH PRIORITY - Grappling Efficiency (4 features)
+            "control_time_per_takedown_ratio_diff_corrected",
+            "takedown_to_ground_strike_ratio_diff_corrected",
+            "submission_attempt_per_control_minute_diff_corrected",
+            "reversal_rate_per_minute_bottom_diff_corrected",
+
+            # HIGH PRIORITY - Striking Efficiency (4 features)
+            "knockdown_per_100_sig_strikes_diff_corrected",
+            "knockdown_to_finish_conversion_rate_diff_corrected",
+            "significant_strike_differential_per_minute_diff_corrected",
+            "strike_accuracy_under_pressure_diff_corrected",
+
+            # HIGH PRIORITY - Cardio & Pace (4 features)
+            "championship_round_output_maintenance_diff_corrected",
+            "finish_round_average_diff_corrected",
+            "late_fight_finish_rate_diff_corrected",
+            "pace_differential_sustainability_diff_corrected",
+
+            # HIGH PRIORITY - Damage & Durability (6 features)
+            "career_knockdowns_absorbed_total_diff_corrected",
+            "recent_knockdowns_absorbed_L5_diff_corrected",
+            "cumulative_damage_index_diff_corrected",
+            "performance_after_knockout_loss_diff_corrected",
+            "performance_after_submission_loss_diff_corrected",
+            "performance_after_damage_heavy_fight_diff_corrected",
+
+            # MEDIUM PRIORITY - Career Patterns (7 features)
+            "quick_turnaround_performance_diff_corrected",
+            "long_layoff_performance_diff_corrected",
+            "weight_class_tenure_diff_corrected",
+            "weight_class_debut_performance_diff_corrected",
+            "rematch_performance_diff_corrected",
+            "decision_win_rate_diff_corrected",
+            "comeback_fight_performance_diff_corrected",
+
+            # MEDIUM PRIORITY - Opponent Quality Context (6 features)
+            "performance_vs_high_win_rate_opponents_diff_corrected",
+            "performance_vs_long_reach_opponents_diff_corrected",
+            "performance_vs_orthodox_diff_corrected",
+            "performance_vs_southpaw_diff_corrected",
+            "performance_vs_grapplers_enhanced_diff_corrected",
+            "performance_vs_strikers_enhanced_diff_corrected",
+
+            # LOWER PRIORITY - Advanced Ratios (4 features)
+            "ground_control_percentage_diff_corrected",
+            "clinch_strike_volume_diff_corrected",
+            "leg_kick_specialization_diff_corrected",
+            "body_shot_specialization_diff_corrected",
+
             # ========== PHASE 1A: POLYNOMIAL FEATURES (42 features) ==========
             # Squared terms for non-linear effects
             "elo_diff_squared",
@@ -1497,6 +1547,62 @@ class ImprovedUFCPredictor:
             "peak_elo": 1500,  # Highest ELO ever achieved
             "peak_elo_date": None,  # Date of peak ELO
             "ko_loss_dates": [],  # Dates of KO/TKO losses
+
+            # NEW STATS: Advanced Performance Metrics (for 35 new features)
+            # Grappling Efficiency
+            "ctrl_sec_per_td": [],  # Control time per takedown for each fight
+            "ground_strikes_per_td": [],  # Ground strikes per takedown for each fight
+            "sub_att_per_ctrl_minute": [],  # Submission attempts per control minute
+            "reversals_bottom_time": [],  # Reversals per minute of bottom time
+
+            # Striking Efficiency
+            "kd_per_100_sig_str": [],  # Knockdowns per 100 sig strikes
+            "kd_to_ko_finish": {"kd_fights": 0, "ko_finishes": 0},  # Tracking KD->finish conversion
+            "sig_str_diff_per_minute": [],  # Net striking advantage per minute
+            "acc_under_pressure": [],  # Accuracy when opponent has high output
+
+            # Cardio & Pace
+            "champ_round_output": [],  # Output in rounds 4-5 vs rounds 1-2 (5-round fights only)
+            "finish_rounds": [],  # Finish round for each finished fight
+            "late_fight_finishes": {"round3plus": 0, "total_round3plus": 0},  # Finishes in round 3+
+            "strikes_per_minute_history": [],  # Total strikes per minute for pace consistency
+
+            # Damage & Durability
+            "total_kd_absorbed": 0,  # Career total knockdowns absorbed
+            "kd_absorbed_L5": [],  # Knockdowns absorbed in last 5 fights
+            "damage_exposure": [],  # (sig_str_absorbed * fight_time) for each fight
+            "after_ko_loss_record": {"wins": 0, "fights": 0},  # Record after being KO'd
+            "after_sub_loss_record": {"wins": 0, "fights": 0},  # Record after being submitted
+            "after_damage_record": {"wins": 0, "fights": 0},  # Record after damage-heavy fight
+
+            # Career Patterns
+            "quick_turnaround_record": {"wins": 0, "fights": 0},  # Record with <90 days rest
+            "long_layoff_record": {"wins": 0, "fights": 0},  # Record with >365 days rest
+            "weight_class_streak": 0,  # Consecutive fights in current weight class
+            "weight_class_debuts": {"wins": 0, "debuts": 0},  # Performance in weight class debuts
+            "rematches": {"wins": 0, "rematches": 0},  # Rematch performance
+            "decisions": {"wins": 0, "decisions": 0},  # Decision win rate
+            "comeback_record": {"wins": 0, "attempts": 0},  # Wins in fight after loss
+
+            # Opponent Quality Context
+            "vs_high_win_rate": {"wins": 0, "fights": 0},  # vs opponents with >2.0 win/loss ratio
+            "vs_long_reach": {"wins": 0, "fights": 0},  # vs opponents with +3" reach advantage
+            "vs_orthodox": {"wins": 0, "fights": 0},  # vs orthodox stance
+            "vs_southpaw": {"wins": 0, "fights": 0},  # vs southpaw stance
+            "vs_grapplers_enhanced": {"wins": 0, "fights": 0},  # vs grapplers (td_avg > 2.5)
+            "vs_strikers_enhanced": {"wins": 0, "fights": 0},  # vs strikers (SLpM > 4.5)
+
+            # Advanced Ratios
+            "ground_control_pct": [],  # ctrl_sec / total_fight_time for each fight
+            "clinch_strike_volumes": [],  # sig_str * clinch_pct for each fight
+            "leg_kick_volumes": [],  # sig_str * leg_pct for each fight
+            "body_shot_volumes": [],  # sig_str * body_pct for each fight
+
+            # Tracking for previous fight (for "after damage/loss" features)
+            "previous_fight_kd_absorbed": 0,
+            "previous_fight_sig_str_absorbed": 0,
+            "previous_fight_result": None,  # "win", "loss", or "draw"
+            "previous_fight_method": None,  # "KO/TKO", "Submission", "Decision", etc.
         }
 
         # Initialize corrected columns
@@ -1556,7 +1662,25 @@ class ImprovedUFCPredictor:
                         "late_round_performance_ratio", "pace_dictation_score",
                         "championship_round_experience", "pressure_fight_performance",
                         "underdog_overperformance", "peak_performance_distance",
-                        "damage_accumulation_factor", "career_trajectory_velocity"]:
+                        "damage_accumulation_factor", "career_trajectory_velocity",
+                        # NEW STATS: Advanced Performance Metrics (35 features)
+                        "control_time_per_takedown_ratio", "takedown_to_ground_strike_ratio",
+                        "submission_attempt_per_control_minute", "reversal_rate_per_minute_bottom",
+                        "knockdown_per_100_sig_strikes", "knockdown_to_finish_conversion_rate",
+                        "significant_strike_differential_per_minute", "strike_accuracy_under_pressure",
+                        "championship_round_output_maintenance", "finish_round_average",
+                        "late_fight_finish_rate", "pace_differential_sustainability",
+                        "career_knockdowns_absorbed_total", "recent_knockdowns_absorbed_L5",
+                        "cumulative_damage_index", "performance_after_knockout_loss",
+                        "performance_after_submission_loss", "performance_after_damage_heavy_fight",
+                        "quick_turnaround_performance", "long_layoff_performance",
+                        "weight_class_tenure", "weight_class_debut_performance",
+                        "rematch_performance", "decision_win_rate", "comeback_fight_performance",
+                        "performance_vs_high_win_rate_opponents", "performance_vs_long_reach_opponents",
+                        "performance_vs_orthodox", "performance_vs_southpaw",
+                        "performance_vs_grapplers_enhanced", "performance_vs_strikers_enhanced",
+                        "ground_control_percentage", "clinch_strike_volume",
+                        "leg_kick_specialization", "body_shot_specialization"]:
                 df[f"{prefix}_{stat}_corrected"] = 0.0
 
         df["h2h_advantage"] = 0.0
@@ -2113,47 +2237,217 @@ class ImprovedUFCPredictor:
                 elite_rate = stats["vs_elite_record"]["wins"] / stats["vs_elite_record"]["fights"] if stats["vs_elite_record"]["fights"] > 0 else overall_rate
                 df.at[idx, f"{prefix}_step_up_performance_corrected"] = elite_rate - overall_rate
 
-                # ========== NEW FEATURES: ALL CALCULATION LOGIC REMOVED ==========
-                # Features decreased accuracy from 65.79% to 64.31% - removing all
 
-                # REMOVED: 1. H2H Dominance Score (too sparse - only rematches)
-                # opponent = b_fighter if prefix == "r" else r_fighter
-                # if opponent in stats["h2h_fight_history"]:
-                #     h2h_history = stats["h2h_fight_history"][opponent]
-                #     if len(h2h_history) > 0:
-                #         avg_dominance = sum([h[3] for h in h2h_history]) / len(h2h_history)
-                #         df.at[idx, f"{prefix}_h2h_dominance_score_corrected"] = avg_dominance
-                #     else:
-                #         df.at[idx, f"{prefix}_h2h_dominance_score_corrected"] = 0.0
-                # else:
-                #     df.at[idx, f"{prefix}_h2h_dominance_score_corrected"] = 0.0
+                # === GRAPPLING EFFICIENCY ===
+                # 1. Control time per takedown ratio
+                if len(stats["ctrl_sec_per_td"]) > 0:
+                    df.at[idx, f"{prefix}_control_time_per_takedown_ratio_corrected"] = np.mean(stats["ctrl_sec_per_td"])
+                else:
+                    df.at[idx, f"{prefix}_control_time_per_takedown_ratio_corrected"] = 0.0
 
-                # REMOVED: 2 & 3. Style Adaptation (too sparse - needs 5+ fights vs specific style)
-                # if len(stats["vs_striker_performance_history"]) >= 5:
-                #     early_vs_strikers = np.mean([h[1] for h in stats["vs_striker_performance_history"][:3]])
-                #     recent_vs_strikers = np.mean([h[1] for h in stats["vs_striker_performance_history"][-3:]])
-                #     df.at[idx, f"{prefix}_style_adaptation_striker_corrected"] = recent_vs_strikers - early_vs_strikers
-                # else:
-                #     df.at[idx, f"{prefix}_style_adaptation_striker_corrected"] = 0.0
+                # 2. Takedown to ground strike ratio
+                if len(stats["ground_strikes_per_td"]) > 0:
+                    df.at[idx, f"{prefix}_takedown_to_ground_strike_ratio_corrected"] = np.mean(stats["ground_strikes_per_td"])
+                else:
+                    df.at[idx, f"{prefix}_takedown_to_ground_strike_ratio_corrected"] = 0.0
 
-                # if len(stats["vs_grappler_performance_history"]) >= 5:
-                #     early_vs_grapplers = np.mean([h[1] for h in stats["vs_grappler_performance_history"][:3]])
-                #     recent_vs_grapplers = np.mean([h[1] for h in stats["vs_grappler_performance_history"][-3:]])
-                #     df.at[idx, f"{prefix}_style_adaptation_grappler_corrected"] = recent_vs_grapplers - early_vs_grapplers
-                # else:
-                #     df.at[idx, f"{prefix}_style_adaptation_grappler_corrected"] = 0.0
+                # 3. Submission attempt per control minute
+                if len(stats["sub_att_per_ctrl_minute"]) > 0:
+                    df.at[idx, f"{prefix}_submission_attempt_per_control_minute_corrected"] = np.mean(stats["sub_att_per_ctrl_minute"])
+                else:
+                    df.at[idx, f"{prefix}_submission_attempt_per_control_minute_corrected"] = 0.0
 
-                # REMOVED: 4. Comeback Factor (tracking logic never implemented)
-                # if stats["total_adversity_situations"] > 0:
-                #     df.at[idx, f"{prefix}_comeback_factor_corrected"] = stats["comeback_wins"] / stats["total_adversity_situations"]
-                # else:
-                #     df.at[idx, f"{prefix}_comeback_factor_corrected"] = 0.0
+                # 4. Reversal rate per minute bottom
+                if len(stats["reversals_bottom_time"]) > 0:
+                    df.at[idx, f"{prefix}_reversal_rate_per_minute_bottom_corrected"] = np.mean(stats["reversals_bottom_time"])
+                else:
+                    df.at[idx, f"{prefix}_reversal_rate_per_minute_bottom_corrected"] = 0.0
 
-                # REMOVED: 5-14. All remaining feature calculations (decreased accuracy)
-                # if stats["sig_str_total"] > 0:
-                #     damage_per_strike = (stats["kd_total"] * 100) / stats["sig_str_total"]
-                #     df.at[idx, f"{prefix}_damage_per_strike_corrected"] = damage_per_strike
-                # ...all other calculations removed...
+                # === STRIKING EFFICIENCY ===
+                # 5. Knockdowns per 100 sig strikes
+                if len(stats["kd_per_100_sig_str"]) > 0:
+                    df.at[idx, f"{prefix}_knockdown_per_100_sig_strikes_corrected"] = np.mean(stats["kd_per_100_sig_str"])
+                else:
+                    df.at[idx, f"{prefix}_knockdown_per_100_sig_strikes_corrected"] = 0.0
+
+                # 6. Knockdown to finish conversion rate
+                if stats["kd_to_ko_finish"]["kd_fights"] > 0:
+                    df.at[idx, f"{prefix}_knockdown_to_finish_conversion_rate_corrected"] = stats["kd_to_ko_finish"]["ko_finishes"] / stats["kd_to_ko_finish"]["kd_fights"]
+                else:
+                    df.at[idx, f"{prefix}_knockdown_to_finish_conversion_rate_corrected"] = 0.0
+
+                # 7. Significant strike differential per minute
+                if len(stats["sig_str_diff_per_minute"]) > 0:
+                    df.at[idx, f"{prefix}_significant_strike_differential_per_minute_corrected"] = np.mean(stats["sig_str_diff_per_minute"])
+                else:
+                    df.at[idx, f"{prefix}_significant_strike_differential_per_minute_corrected"] = 0.0
+
+                # 8. Strike accuracy under pressure
+                if len(stats["acc_under_pressure"]) > 0:
+                    df.at[idx, f"{prefix}_strike_accuracy_under_pressure_corrected"] = np.mean(stats["acc_under_pressure"])
+                else:
+                    df.at[idx, f"{prefix}_strike_accuracy_under_pressure_corrected"] = 0.0
+
+                # === CARDIO & PACE ===
+                # 9. Championship round output maintenance
+                if len(stats["champ_round_output"]) > 0:
+                    df.at[idx, f"{prefix}_championship_round_output_maintenance_corrected"] = np.mean(stats["champ_round_output"])
+                else:
+                    df.at[idx, f"{prefix}_championship_round_output_maintenance_corrected"] = 1.0  # Neutral default
+
+                # 10. Finish round average
+                if len(stats["finish_rounds"]) > 0:
+                    df.at[idx, f"{prefix}_finish_round_average_corrected"] = np.mean(stats["finish_rounds"])
+                else:
+                    df.at[idx, f"{prefix}_finish_round_average_corrected"] = 3.0  # Default mid-fight
+
+                # 11. Late fight finish rate
+                if stats["late_fight_finishes"]["total_round3plus"] > 0:
+                    df.at[idx, f"{prefix}_late_fight_finish_rate_corrected"] = stats["late_fight_finishes"]["round3plus"] / stats["late_fight_finishes"]["total_round3plus"]
+                else:
+                    df.at[idx, f"{prefix}_late_fight_finish_rate_corrected"] = 0.0
+
+                # 12. Pace differential sustainability (std dev of strikes per minute)
+                if len(stats["strikes_per_minute_history"]) > 1:
+                    df.at[idx, f"{prefix}_pace_differential_sustainability_corrected"] = np.std(stats["strikes_per_minute_history"])
+                else:
+                    df.at[idx, f"{prefix}_pace_differential_sustainability_corrected"] = 0.0
+
+                # === DAMAGE & DURABILITY ===
+                # 13. Career knockdowns absorbed total
+                df.at[idx, f"{prefix}_career_knockdowns_absorbed_total_corrected"] = stats["total_kd_absorbed"]
+
+                # 14. Recent knockdowns absorbed (last 5)
+                if len(stats["kd_absorbed_L5"]) > 0:
+                    df.at[idx, f"{prefix}_recent_knockdowns_absorbed_L5_corrected"] = sum(stats["kd_absorbed_L5"])
+                else:
+                    df.at[idx, f"{prefix}_recent_knockdowns_absorbed_L5_corrected"] = 0.0
+
+                # 15. Cumulative damage index
+                if len(stats["damage_exposure"]) > 0:
+                    df.at[idx, f"{prefix}_cumulative_damage_index_corrected"] = sum(stats["damage_exposure"])
+                else:
+                    df.at[idx, f"{prefix}_cumulative_damage_index_corrected"] = 0.0
+
+                # 16. Performance after knockout loss
+                if stats["after_ko_loss_record"]["fights"] > 0:
+                    df.at[idx, f"{prefix}_performance_after_knockout_loss_corrected"] = stats["after_ko_loss_record"]["wins"] / stats["after_ko_loss_record"]["fights"]
+                else:
+                    df.at[idx, f"{prefix}_performance_after_knockout_loss_corrected"] = 0.5  # Neutral default
+
+                # 17. Performance after submission loss
+                if stats["after_sub_loss_record"]["fights"] > 0:
+                    df.at[idx, f"{prefix}_performance_after_submission_loss_corrected"] = stats["after_sub_loss_record"]["wins"] / stats["after_sub_loss_record"]["fights"]
+                else:
+                    df.at[idx, f"{prefix}_performance_after_submission_loss_corrected"] = 0.5  # Neutral default
+
+                # 18. Performance after damage heavy fight
+                if stats["after_damage_record"]["fights"] > 0:
+                    df.at[idx, f"{prefix}_performance_after_damage_heavy_fight_corrected"] = stats["after_damage_record"]["wins"] / stats["after_damage_record"]["fights"]
+                else:
+                    df.at[idx, f"{prefix}_performance_after_damage_heavy_fight_corrected"] = 0.5  # Neutral default
+
+                # === CAREER PATTERNS ===
+                # 19. Quick turnaround performance
+                if stats["quick_turnaround_record"]["fights"] > 0:
+                    df.at[idx, f"{prefix}_quick_turnaround_performance_corrected"] = stats["quick_turnaround_record"]["wins"] / stats["quick_turnaround_record"]["fights"]
+                else:
+                    df.at[idx, f"{prefix}_quick_turnaround_performance_corrected"] = 0.5  # Neutral default
+
+                # 20. Long layoff performance
+                if stats["long_layoff_record"]["fights"] > 0:
+                    df.at[idx, f"{prefix}_long_layoff_performance_corrected"] = stats["long_layoff_record"]["wins"] / stats["long_layoff_record"]["fights"]
+                else:
+                    df.at[idx, f"{prefix}_long_layoff_performance_corrected"] = 0.5  # Neutral default
+
+                # 21. Weight class tenure
+                df.at[idx, f"{prefix}_weight_class_tenure_corrected"] = stats["weight_class_streak"]
+
+                # 22. Weight class debut performance
+                if stats["weight_class_debuts"]["debuts"] > 0:
+                    df.at[idx, f"{prefix}_weight_class_debut_performance_corrected"] = stats["weight_class_debuts"]["wins"] / stats["weight_class_debuts"]["debuts"]
+                else:
+                    df.at[idx, f"{prefix}_weight_class_debut_performance_corrected"] = 0.5  # Neutral default
+
+                # 23. Rematch performance
+                if stats["rematches"]["rematches"] > 0:
+                    df.at[idx, f"{prefix}_rematch_performance_corrected"] = stats["rematches"]["wins"] / stats["rematches"]["rematches"]
+                else:
+                    df.at[idx, f"{prefix}_rematch_performance_corrected"] = 0.5  # Neutral default
+
+                # 24. Decision win rate
+                if stats["decisions"]["decisions"] > 0:
+                    df.at[idx, f"{prefix}_decision_win_rate_corrected"] = stats["decisions"]["wins"] / stats["decisions"]["decisions"]
+                else:
+                    df.at[idx, f"{prefix}_decision_win_rate_corrected"] = 0.5  # Neutral default
+
+                # 25. Comeback fight performance
+                if stats["comeback_record"]["attempts"] > 0:
+                    df.at[idx, f"{prefix}_comeback_fight_performance_corrected"] = stats["comeback_record"]["wins"] / stats["comeback_record"]["attempts"]
+                else:
+                    df.at[idx, f"{prefix}_comeback_fight_performance_corrected"] = 0.5  # Neutral default
+
+                # === OPPONENT QUALITY CONTEXT ===
+                # 26. Performance vs high win rate opponents
+                if stats["vs_high_win_rate"]["fights"] > 0:
+                    df.at[idx, f"{prefix}_performance_vs_high_win_rate_opponents_corrected"] = stats["vs_high_win_rate"]["wins"] / stats["vs_high_win_rate"]["fights"]
+                else:
+                    df.at[idx, f"{prefix}_performance_vs_high_win_rate_opponents_corrected"] = 0.5  # Neutral default
+
+                # 27. Performance vs long reach opponents
+                if stats["vs_long_reach"]["fights"] > 0:
+                    df.at[idx, f"{prefix}_performance_vs_long_reach_opponents_corrected"] = stats["vs_long_reach"]["wins"] / stats["vs_long_reach"]["fights"]
+                else:
+                    df.at[idx, f"{prefix}_performance_vs_long_reach_opponents_corrected"] = 0.5  # Neutral default
+
+                # 28. Performance vs orthodox
+                if stats["vs_orthodox"]["fights"] > 0:
+                    df.at[idx, f"{prefix}_performance_vs_orthodox_corrected"] = stats["vs_orthodox"]["wins"] / stats["vs_orthodox"]["fights"]
+                else:
+                    df.at[idx, f"{prefix}_performance_vs_orthodox_corrected"] = 0.5  # Neutral default
+
+                # 29. Performance vs southpaw
+                if stats["vs_southpaw"]["fights"] > 0:
+                    df.at[idx, f"{prefix}_performance_vs_southpaw_corrected"] = stats["vs_southpaw"]["wins"] / stats["vs_southpaw"]["fights"]
+                else:
+                    df.at[idx, f"{prefix}_performance_vs_southpaw_corrected"] = 0.5  # Neutral default
+
+                # 30. Performance vs grapplers (enhanced)
+                if stats["vs_grapplers_enhanced"]["fights"] > 0:
+                    df.at[idx, f"{prefix}_performance_vs_grapplers_enhanced_corrected"] = stats["vs_grapplers_enhanced"]["wins"] / stats["vs_grapplers_enhanced"]["fights"]
+                else:
+                    df.at[idx, f"{prefix}_performance_vs_grapplers_enhanced_corrected"] = 0.5  # Neutral default
+
+                # 31. Performance vs strikers (enhanced)
+                if stats["vs_strikers_enhanced"]["fights"] > 0:
+                    df.at[idx, f"{prefix}_performance_vs_strikers_enhanced_corrected"] = stats["vs_strikers_enhanced"]["wins"] / stats["vs_strikers_enhanced"]["fights"]
+                else:
+                    df.at[idx, f"{prefix}_performance_vs_strikers_enhanced_corrected"] = 0.5  # Neutral default
+
+                # === ADVANCED RATIOS ===
+                # 32. Ground control percentage
+                if len(stats["ground_control_pct"]) > 0:
+                    df.at[idx, f"{prefix}_ground_control_percentage_corrected"] = np.mean(stats["ground_control_pct"])
+                else:
+                    df.at[idx, f"{prefix}_ground_control_percentage_corrected"] = 0.0
+
+                # 33. Clinch strike volume
+                if len(stats["clinch_strike_volumes"]) > 0:
+                    df.at[idx, f"{prefix}_clinch_strike_volume_corrected"] = np.mean(stats["clinch_strike_volumes"])
+                else:
+                    df.at[idx, f"{prefix}_clinch_strike_volume_corrected"] = 0.0
+
+                # 34. Leg kick specialization
+                if len(stats["leg_kick_volumes"]) > 0:
+                    df.at[idx, f"{prefix}_leg_kick_specialization_corrected"] = np.mean(stats["leg_kick_volumes"])
+                else:
+                    df.at[idx, f"{prefix}_leg_kick_specialization_corrected"] = 0.0
+
+                # 35. Body shot specialization
+                if len(stats["body_shot_volumes"]) > 0:
+                    df.at[idx, f"{prefix}_body_shot_specialization_corrected"] = np.mean(stats["body_shot_volumes"])
+                else:
+                    df.at[idx, f"{prefix}_body_shot_specialization_corrected"] = 0.0
 
             # Calculate opponent quality differential
             r_opp_elo = df.at[idx, "r_avg_opponent_elo_corrected"]
@@ -2819,6 +3113,316 @@ class ImprovedUFCPredictor:
                     elif row["winner"] == "Blue":
                         fighter_stats[r_fighter]["ko_loss_dates"].append(event_date)
 
+                # ========== NEW STATS: Track Advanced Performance Metrics (35 features) ==========
+                for fighter, f_prefix, opp_fighter, opp_prefix in [(r_fighter, "r", b_fighter, "b"), (b_fighter, "b", r_fighter, "r")]:
+
+                    # === GRAPPLING EFFICIENCY ===
+                    td = row.get(f"{f_prefix}_td", 0)
+                    ctrl_sec = row.get(f"{f_prefix}_ctrl_sec", 0)
+                    sub_att = row.get(f"{f_prefix}_sub_att", 0)
+                    rev = row.get(f"{f_prefix}_rev", 0)
+                    ground_pct = row.get(f"{f_prefix}_ground", 0) if pd.notna(row.get(f"{f_prefix}_ground")) else 0
+                    sig_str = row.get(f"{f_prefix}_sig_str", 0)
+
+                    # 1. Control time per takedown
+                    if pd.notna(td) and td > 0:
+                        ctrl_per_td = ctrl_sec / td if pd.notna(ctrl_sec) else 0
+                        fighter_stats[fighter]["ctrl_sec_per_td"].append(ctrl_per_td)
+                        if len(fighter_stats[fighter]["ctrl_sec_per_td"]) > 10:
+                            fighter_stats[fighter]["ctrl_sec_per_td"] = fighter_stats[fighter]["ctrl_sec_per_td"][-10:]
+
+                    # 2. Ground strikes per takedown
+                    if pd.notna(td) and td > 0 and pd.notna(sig_str):
+                        ground_strikes = sig_str * ground_pct
+                        ground_str_per_td = ground_strikes / td
+                        fighter_stats[fighter]["ground_strikes_per_td"].append(ground_str_per_td)
+                        if len(fighter_stats[fighter]["ground_strikes_per_td"]) > 10:
+                            fighter_stats[fighter]["ground_strikes_per_td"] = fighter_stats[fighter]["ground_strikes_per_td"][-10:]
+
+                    # 3. Submission attempts per control minute
+                    if pd.notna(ctrl_sec) and ctrl_sec > 0 and pd.notna(sub_att):
+                        sub_per_ctrl_min = sub_att / (ctrl_sec / 60)
+                        fighter_stats[fighter]["sub_att_per_ctrl_minute"].append(sub_per_ctrl_min)
+                        if len(fighter_stats[fighter]["sub_att_per_ctrl_minute"]) > 10:
+                            fighter_stats[fighter]["sub_att_per_ctrl_minute"] = fighter_stats[fighter]["sub_att_per_ctrl_minute"][-10:]
+
+                    # 4. Reversals per minute bottom time (estimate bottom time from opponent's ctrl_sec)
+                    opp_ctrl_sec = row.get(f"{opp_prefix}_ctrl_sec", 0)
+                    if pd.notna(opp_ctrl_sec) and opp_ctrl_sec > 0 and pd.notna(rev):
+                        rev_per_min_bottom = rev / (opp_ctrl_sec / 60)
+                        fighter_stats[fighter]["reversals_bottom_time"].append(rev_per_min_bottom)
+                        if len(fighter_stats[fighter]["reversals_bottom_time"]) > 10:
+                            fighter_stats[fighter]["reversals_bottom_time"] = fighter_stats[fighter]["reversals_bottom_time"][-10:]
+
+                    # === STRIKING EFFICIENCY ===
+                    kd = row.get(f"{f_prefix}_kd", 0)
+                    sig_str_att = row.get(f"{f_prefix}_sig_str_att", 0)
+                    sig_str_acc = row.get(f"{f_prefix}_sig_str_acc", 0)
+                    opp_sig_str = row.get(f"{opp_prefix}_sig_str", 0)
+
+                    # 5. Knockdowns per 100 sig strikes
+                    if pd.notna(sig_str) and sig_str > 0 and pd.notna(kd):
+                        kd_per_100 = (kd / sig_str) * 100
+                        fighter_stats[fighter]["kd_per_100_sig_str"].append(kd_per_100)
+                        if len(fighter_stats[fighter]["kd_per_100_sig_str"]) > 10:
+                            fighter_stats[fighter]["kd_per_100_sig_str"] = fighter_stats[fighter]["kd_per_100_sig_str"][-10:]
+
+                    # 6. Knockdown to finish conversion
+                    if pd.notna(kd) and kd > 0:
+                        fighter_stats[fighter]["kd_to_ko_finish"]["kd_fights"] += 1
+                        # Check if won via KO/TKO
+                        was_winner = (fighter == r_fighter and row["winner"] == "Red") or (fighter == b_fighter and row["winner"] == "Blue")
+                        if was_winner and is_finish and method_cat == "ko":
+                            fighter_stats[fighter]["kd_to_ko_finish"]["ko_finishes"] += 1
+
+                    # 7. Significant strike differential per minute
+                    if fight_time > 0 and pd.notna(sig_str) and pd.notna(opp_sig_str):
+                        sig_str_diff_per_min = (sig_str - opp_sig_str) / fight_time
+                        fighter_stats[fighter]["sig_str_diff_per_minute"].append(sig_str_diff_per_min)
+                        if len(fighter_stats[fighter]["sig_str_diff_per_minute"]) > 10:
+                            fighter_stats[fighter]["sig_str_diff_per_minute"] = fighter_stats[fighter]["sig_str_diff_per_minute"][-10:]
+
+                    # 8. Strike accuracy under pressure (when opponent has high output >5 SLpM)
+                    opp_slpm = opp_sig_str / fight_time if fight_time > 0 and pd.notna(opp_sig_str) else 0
+                    if opp_slpm > 5 and pd.notna(sig_str_acc):
+                        fighter_stats[fighter]["acc_under_pressure"].append(sig_str_acc)
+                        if len(fighter_stats[fighter]["acc_under_pressure"]) > 10:
+                            fighter_stats[fighter]["acc_under_pressure"] = fighter_stats[fighter]["acc_under_pressure"][-10:]
+
+                    # === CARDIO & PACE ===
+                    finish_round = row.get("finish_round", row.get("total_rounds", 3))
+                    total_rounds_scheduled = row.get("total_rounds", 3)
+
+                    # 9. Championship round output maintenance (5-round fights only)
+                    if total_rounds_scheduled == 5 and pd.notna(finish_round) and finish_round >= 4:
+                        # Estimate per-round output (simplified)
+                        if pd.notna(sig_str) and finish_round > 0:
+                            avg_output_per_round = sig_str / finish_round
+                            # Assume rounds 4-5 had same average (rough estimate)
+                            # This is a rough metric - ideally we'd have round-by-round data
+                            champ_round_ratio = 1.0  # Placeholder - can be refined with round data
+                            fighter_stats[fighter]["champ_round_output"].append(champ_round_ratio)
+                            if len(fighter_stats[fighter]["champ_round_output"]) > 10:
+                                fighter_stats[fighter]["champ_round_output"] = fighter_stats[fighter]["champ_round_output"][-10:]
+
+                    # 10. Finish round average (for finished fights)
+                    if is_finish and pd.notna(finish_round):
+                        was_winner = (fighter == r_fighter and row["winner"] == "Red") or (fighter == b_fighter and row["winner"] == "Blue")
+                        if was_winner:
+                            fighter_stats[fighter]["finish_rounds"].append(finish_round)
+                            if len(fighter_stats[fighter]["finish_rounds"]) > 10:
+                                fighter_stats[fighter]["finish_rounds"] = fighter_stats[fighter]["finish_rounds"][-10:]
+
+                    # 11. Late fight finishes (round 3+)
+                    if pd.notna(finish_round) and finish_round >= 3:
+                        fighter_stats[fighter]["late_fight_finishes"]["total_round3plus"] += 1
+                        was_winner = (fighter == r_fighter and row["winner"] == "Red") or (fighter == b_fighter and row["winner"] == "Blue")
+                        if was_winner and is_finish:
+                            fighter_stats[fighter]["late_fight_finishes"]["round3plus"] += 1
+
+                    # 12. Pace differential sustainability (strikes per minute variance)
+                    if fight_time > 0 and pd.notna(sig_str):
+                        strikes_per_min = sig_str / fight_time
+                        fighter_stats[fighter]["strikes_per_minute_history"].append(strikes_per_min)
+                        if len(fighter_stats[fighter]["strikes_per_minute_history"]) > 10:
+                            fighter_stats[fighter]["strikes_per_minute_history"] = fighter_stats[fighter]["strikes_per_minute_history"][-10:]
+
+                    # === DAMAGE & DURABILITY ===
+                    opp_kd = row.get(f"{opp_prefix}_kd", 0)
+
+                    # 13. Career knockdowns absorbed total
+                    if pd.notna(opp_kd):
+                        fighter_stats[fighter]["total_kd_absorbed"] += opp_kd
+
+                    # 14. Recent knockdowns absorbed (last 5)
+                    if pd.notna(opp_kd):
+                        fighter_stats[fighter]["kd_absorbed_L5"].append(opp_kd)
+                        if len(fighter_stats[fighter]["kd_absorbed_L5"]) > 5:
+                            fighter_stats[fighter]["kd_absorbed_L5"] = fighter_stats[fighter]["kd_absorbed_L5"][-5:]
+
+                    # 15. Cumulative damage index (sig_str_absorbed * fight_time)
+                    if pd.notna(opp_sig_str) and fight_time > 0:
+                        damage_exposure = opp_sig_str * fight_time
+                        fighter_stats[fighter]["damage_exposure"].append(damage_exposure)
+                        if len(fighter_stats[fighter]["damage_exposure"]) > 20:
+                            fighter_stats[fighter]["damage_exposure"] = fighter_stats[fighter]["damage_exposure"][-20:]
+
+                    # 16-18. Performance after various loss types (tracked below in career patterns)
+                    # These require checking previous fight result, handled in next section
+
+                    # === CAREER PATTERNS ===
+                    was_winner = (fighter == r_fighter and row["winner"] == "Red") or (fighter == b_fighter and row["winner"] == "Blue")
+
+                    # 16-18. Track performance after loss types (using previous fight data)
+                    prev_result = fighter_stats[fighter]["previous_fight_result"]
+                    prev_method = fighter_stats[fighter]["previous_fight_method"]
+                    prev_kd_absorbed = fighter_stats[fighter]["previous_fight_kd_absorbed"]
+                    prev_sig_str_absorbed = fighter_stats[fighter]["previous_fight_sig_str_absorbed"]
+
+                    # After KO loss
+                    if prev_result == "loss" and prev_method and "ko" in prev_method.lower():
+                        fighter_stats[fighter]["after_ko_loss_record"]["fights"] += 1
+                        if was_winner:
+                            fighter_stats[fighter]["after_ko_loss_record"]["wins"] += 1
+
+                    # After submission loss
+                    if prev_result == "loss" and prev_method and "sub" in prev_method.lower():
+                        fighter_stats[fighter]["after_sub_loss_record"]["fights"] += 1
+                        if was_winner:
+                            fighter_stats[fighter]["after_sub_loss_record"]["wins"] += 1
+
+                    # After damage-heavy fight (>150 sig strikes absorbed or kd > 0)
+                    if prev_sig_str_absorbed > 150 or prev_kd_absorbed > 0:
+                        fighter_stats[fighter]["after_damage_record"]["fights"] += 1
+                        if was_winner:
+                            fighter_stats[fighter]["after_damage_record"]["wins"] += 1
+
+                    # 19. Quick turnaround (<90 days)
+                    if fighter_stats[fighter]["last_fight_date"]:
+                        from datetime import datetime
+                        if isinstance(row["event_date"], str):
+                            current_date = pd.to_datetime(row["event_date"])
+                        else:
+                            current_date = row["event_date"]
+                        if isinstance(fighter_stats[fighter]["last_fight_date"], str):
+                            last_date = pd.to_datetime(fighter_stats[fighter]["last_fight_date"])
+                        else:
+                            last_date = fighter_stats[fighter]["last_fight_date"]
+
+                        days_since = (current_date - last_date).days
+                        if days_since < 90:
+                            fighter_stats[fighter]["quick_turnaround_record"]["fights"] += 1
+                            if was_winner:
+                                fighter_stats[fighter]["quick_turnaround_record"]["wins"] += 1
+
+                        # 20. Long layoff (>365 days)
+                        if days_since > 365:
+                            fighter_stats[fighter]["long_layoff_record"]["fights"] += 1
+                            if was_winner:
+                                fighter_stats[fighter]["long_layoff_record"]["wins"] += 1
+
+                    # 21. Weight class tenure (consecutive fights in same class)
+                    current_wc = row.get("weight_class", "Unknown")
+                    if len(fighter_stats[fighter]["weight_class_history"]) > 0:
+                        last_wc = fighter_stats[fighter]["weight_class_history"][-1]
+                        if current_wc == last_wc:
+                            fighter_stats[fighter]["weight_class_streak"] += 1
+                        else:
+                            fighter_stats[fighter]["weight_class_streak"] = 1
+                    else:
+                        fighter_stats[fighter]["weight_class_streak"] = 1
+
+                    # 22. Weight class debut performance
+                    if len(fighter_stats[fighter]["weight_class_history"]) > 0:
+                        last_wc = fighter_stats[fighter]["weight_class_history"][-1]
+                        if current_wc != last_wc:  # Debut in new class
+                            fighter_stats[fighter]["weight_class_debuts"]["debuts"] += 1
+                            if was_winner:
+                                fighter_stats[fighter]["weight_class_debuts"]["wins"] += 1
+
+                    # 23. Rematch performance (fighting same opponent again)
+                    if opp_fighter in fighter_stats[fighter]["h2h_fight_history"]:
+                        fighter_stats[fighter]["rematches"]["rematches"] += 1
+                        if was_winner:
+                            fighter_stats[fighter]["rematches"]["wins"] += 1
+
+                    # 24. Decision win rate
+                    if not is_finish:  # Decision
+                        fighter_stats[fighter]["decisions"]["decisions"] += 1
+                        if was_winner:
+                            fighter_stats[fighter]["decisions"]["wins"] += 1
+
+                    # 25. Comeback fight performance (fight after loss)
+                    if prev_result == "loss":
+                        fighter_stats[fighter]["comeback_record"]["attempts"] += 1
+                        if was_winner:
+                            fighter_stats[fighter]["comeback_record"]["wins"] += 1
+
+                    # === OPPONENT QUALITY CONTEXT ===
+                    # Get opponent's corrected stats
+                    opp_win_loss_ratio = df.at[idx, f"{opp_prefix}_win_loss_ratio_corrected"] if f"{opp_prefix}_win_loss_ratio_corrected" in df.columns else 0
+                    opp_reach = row.get(f"{opp_prefix}_reach", 0)
+                    my_reach = row.get(f"{f_prefix}_reach", 0)
+                    opp_stance = row.get(f"{opp_prefix}_stance", "Unknown")
+                    opp_td_avg = df.at[idx, f"{opp_prefix}_pro_td_avg_corrected"] if f"{opp_prefix}_pro_td_avg_corrected" in df.columns else 0
+                    opp_slpm = df.at[idx, f"{opp_prefix}_pro_SLpM_corrected"] if f"{opp_prefix}_pro_SLpM_corrected" in df.columns else 0
+
+                    # 26. vs high win rate opponents (>2.0 ratio)
+                    if pd.notna(opp_win_loss_ratio) and opp_win_loss_ratio > 2.0:
+                        fighter_stats[fighter]["vs_high_win_rate"]["fights"] += 1
+                        if was_winner:
+                            fighter_stats[fighter]["vs_high_win_rate"]["wins"] += 1
+
+                    # 27. vs long reach opponents (+3" advantage)
+                    if pd.notna(opp_reach) and pd.notna(my_reach) and (opp_reach - my_reach) > 3:
+                        fighter_stats[fighter]["vs_long_reach"]["fights"] += 1
+                        if was_winner:
+                            fighter_stats[fighter]["vs_long_reach"]["wins"] += 1
+
+                    # 28-29. vs orthodox/southpaw
+                    if pd.notna(opp_stance):
+                        if str(opp_stance).lower() == "orthodox":
+                            fighter_stats[fighter]["vs_orthodox"]["fights"] += 1
+                            if was_winner:
+                                fighter_stats[fighter]["vs_orthodox"]["wins"] += 1
+                        elif str(opp_stance).lower() == "southpaw":
+                            fighter_stats[fighter]["vs_southpaw"]["fights"] += 1
+                            if was_winner:
+                                fighter_stats[fighter]["vs_southpaw"]["wins"] += 1
+
+                    # 30. vs grapplers (td_avg > 2.5)
+                    if pd.notna(opp_td_avg) and opp_td_avg > 2.5:
+                        fighter_stats[fighter]["vs_grapplers_enhanced"]["fights"] += 1
+                        if was_winner:
+                            fighter_stats[fighter]["vs_grapplers_enhanced"]["wins"] += 1
+
+                    # 31. vs strikers (SLpM > 4.5)
+                    if pd.notna(opp_slpm) and opp_slpm > 4.5:
+                        fighter_stats[fighter]["vs_strikers_enhanced"]["fights"] += 1
+                        if was_winner:
+                            fighter_stats[fighter]["vs_strikers_enhanced"]["wins"] += 1
+
+                    # === ADVANCED RATIOS ===
+                    total_fight_time_sec = row.get("total_fight_time_sec", 0)
+                    clinch_pct = row.get(f"{f_prefix}_clinch", 0) if pd.notna(row.get(f"{f_prefix}_clinch")) else 0
+                    leg_pct = row.get(f"{f_prefix}_leg", 0) if pd.notna(row.get(f"{f_prefix}_leg")) else 0
+                    body_pct = row.get(f"{f_prefix}_body", 0) if pd.notna(row.get(f"{f_prefix}_body")) else 0
+
+                    # 32. Ground control percentage
+                    if pd.notna(total_fight_time_sec) and total_fight_time_sec > 0 and pd.notna(ctrl_sec):
+                        ground_ctrl_pct = ctrl_sec / total_fight_time_sec
+                        fighter_stats[fighter]["ground_control_pct"].append(ground_ctrl_pct)
+                        if len(fighter_stats[fighter]["ground_control_pct"]) > 10:
+                            fighter_stats[fighter]["ground_control_pct"] = fighter_stats[fighter]["ground_control_pct"][-10:]
+
+                    # 33. Clinch strike volume
+                    if pd.notna(sig_str):
+                        clinch_volume = sig_str * clinch_pct
+                        fighter_stats[fighter]["clinch_strike_volumes"].append(clinch_volume)
+                        if len(fighter_stats[fighter]["clinch_strike_volumes"]) > 10:
+                            fighter_stats[fighter]["clinch_strike_volumes"] = fighter_stats[fighter]["clinch_strike_volumes"][-10:]
+
+                    # 34. Leg kick specialization
+                    if pd.notna(sig_str):
+                        leg_volume = sig_str * leg_pct
+                        fighter_stats[fighter]["leg_kick_volumes"].append(leg_volume)
+                        if len(fighter_stats[fighter]["leg_kick_volumes"]) > 10:
+                            fighter_stats[fighter]["leg_kick_volumes"] = fighter_stats[fighter]["leg_kick_volumes"][-10:]
+
+                    # 35. Body shot specialization
+                    if pd.notna(sig_str):
+                        body_volume = sig_str * body_pct
+                        fighter_stats[fighter]["body_shot_volumes"].append(body_volume)
+                        if len(fighter_stats[fighter]["body_shot_volumes"]) > 10:
+                            fighter_stats[fighter]["body_shot_volumes"] = fighter_stats[fighter]["body_shot_volumes"][-10:]
+
+                    # Update previous fight tracking for next iteration
+                    result = "win" if was_winner else ("draw" if row["winner"] == "Draw" else "loss")
+                    fighter_stats[fighter]["previous_fight_result"] = result
+                    fighter_stats[fighter]["previous_fight_method"] = fight_method
+                    fighter_stats[fighter]["previous_fight_kd_absorbed"] = opp_kd if pd.notna(opp_kd) else 0
+                    fighter_stats[fighter]["previous_fight_sig_str_absorbed"] = opp_sig_str if pd.notna(opp_sig_str) else 0
+
                 # ========== CRITICAL: NOW SYNC POST-FIGHT ELO FOR NEXT FIGHT ==========
                 # All opponent classification is complete - safe to update tracked ELO now
                 # This ensures next fight sees correct pre-fight ELO for these fighters
@@ -2882,7 +3486,25 @@ class ImprovedUFCPredictor:
                     "total_rounds_fought", "total_fights_fought", "title_fights", "five_round_fights",
                     "last_fight_was_finish", "last_fight_was_win", "last_fight_dominance",
                     "early_finish_rate", "late_finish_rate", "first_round_ko_rate",
-                    "fights_last_24_months", "avg_finish_time_last_3", "chin_deterioration"]:
+                    "fights_last_24_months", "avg_finish_time_last_3", "chin_deterioration",
+                    # NEW STATS: Advanced Performance Metrics (35 features)
+                    "control_time_per_takedown_ratio", "takedown_to_ground_strike_ratio",
+                    "submission_attempt_per_control_minute", "reversal_rate_per_minute_bottom",
+                    "knockdown_per_100_sig_strikes", "knockdown_to_finish_conversion_rate",
+                    "significant_strike_differential_per_minute", "strike_accuracy_under_pressure",
+                    "championship_round_output_maintenance", "finish_round_average",
+                    "late_fight_finish_rate", "pace_differential_sustainability",
+                    "career_knockdowns_absorbed_total", "recent_knockdowns_absorbed_L5",
+                    "cumulative_damage_index", "performance_after_knockout_loss",
+                    "performance_after_submission_loss", "performance_after_damage_heavy_fight",
+                    "quick_turnaround_performance", "long_layoff_performance",
+                    "weight_class_tenure", "weight_class_debut_performance",
+                    "rematch_performance", "decision_win_rate", "comeback_fight_performance",
+                    "performance_vs_high_win_rate_opponents", "performance_vs_long_reach_opponents",
+                    "performance_vs_orthodox", "performance_vs_southpaw",
+                    "performance_vs_grapplers_enhanced", "performance_vs_strikers_enhanced",
+                    "ground_control_percentage", "clinch_strike_volume",
+                    "leg_kick_specialization", "body_shot_specialization"]:
                     # NEW FEATURES: ALL REMOVED (decreased accuracy)
                     # "damage_per_strike", "td_chain_success_rate",
                     # "late_round_performance_ratio",
@@ -3587,6 +4209,23 @@ class ImprovedUFCPredictor:
         df["layoff_veteran_interaction_diff_squared"] = np.sign(df["layoff_veteran_interaction_diff"]) * (df["layoff_veteran_interaction_diff"] ** 2)
         df["performance_volatility_l10_diff_squared"] = np.sign(df["performance_volatility_l10_diff"]) * (df["performance_volatility_l10_diff"] ** 2)
         df["finish_rate_acceleration_diff_squared"] = np.sign(df["finish_rate_acceleration_diff"]) * (df["finish_rate_acceleration_diff"] ** 2)
+
+        # ========== POLYNOMIAL FEATURES FOR NEW ADVANCED PERFORMANCE METRICS ==========
+        # High-impact features that benefit from non-linear transformations
+
+        # Grappling efficiency (control and submissions compound)
+        df["control_time_per_takedown_ratio_diff_squared"] = np.sign(df["control_time_per_takedown_ratio_diff_corrected"]) * (df["control_time_per_takedown_ratio_diff_corrected"] ** 2)
+
+        # Striking efficiency (knockdown power compounds exponentially)
+        df["knockdown_per_100_sig_strikes_diff_squared"] = np.sign(df["knockdown_per_100_sig_strikes_diff_corrected"]) * (df["knockdown_per_100_sig_strikes_diff_corrected"] ** 2)
+        df["knockdown_to_finish_conversion_rate_diff_squared"] = np.sign(df["knockdown_to_finish_conversion_rate_diff_corrected"]) * (df["knockdown_to_finish_conversion_rate_diff_corrected"] ** 2)
+
+        # Damage accumulation (cumulative damage has compounding effects)
+        df["career_knockdowns_absorbed_total_diff_squared"] = np.sign(df["career_knockdowns_absorbed_total_diff_corrected"]) * (df["career_knockdowns_absorbed_total_diff_corrected"] ** 2)
+        df["cumulative_damage_index_diff_squared"] = np.sign(df["cumulative_damage_index_diff_corrected"]) * (df["cumulative_damage_index_diff_corrected"] ** 2)
+
+        # Career patterns (tenure and experience compound)
+        df["weight_class_tenure_diff_squared"] = np.sign(df["weight_class_tenure_diff_corrected"]) * (df["weight_class_tenure_diff_corrected"] ** 2)
 
         # ========== PHASE 4: ADVANCED MATCHUP-SPECIFIC FEATURES (28 features) ==========
 
