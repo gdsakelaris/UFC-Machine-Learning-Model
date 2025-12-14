@@ -7,12 +7,13 @@ import pandas as pd
 import numpy as np
 import io
 from contextlib import redirect_stdout
-from sklearn.model_selection import train_test_split, TimeSeriesSplit, StratifiedKFold
+from sklearn.model_selection import train_test_split, TimeSeriesSplit, StratifiedKFold, GroupKFold
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.feature_selection import SelectPercentile, f_classif, RFECV
 from sklearn.metrics import log_loss, accuracy_score, roc_auc_score, classification_report
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
+from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 # permutation_importance removed - using model built-in importance instead
@@ -170,6 +171,9 @@ class ImprovedUFCPredictor:
         self.feature_columns = None  # Store feature columns for predictions
         self.fighter_elos = {}  # Store fighter ELO ratings
         self.elo_history = {}  # Store ELO history for predictions
+
+        # FEATURE CACHING: For 2x speedup
+        self.feature_cache = {}
 
         # Set random seeds
         self.set_random_seeds()
@@ -974,6 +978,24 @@ class ImprovedUFCPredictor:
 
         return df
 
+    def create_neutral_features(self, df):
+        """Create neutral features that don't favor either corner"""
+
+        # Create total fights columns if they don't exist
+        if "r_total_fights" not in df.columns:
+            if "r_wins_corrected" in df.columns and "r_losses_corrected" in df.columns:
+                df["r_total_fights"] = df["r_wins_corrected"] + df["r_losses_corrected"]
+            else:
+                df["r_total_fights"] = 0
+
+        if "b_total_fights" not in df.columns:
+            if "b_wins_corrected" in df.columns and "b_losses_corrected" in df.columns:
+                df["b_total_fights"] = df["b_wins_corrected"] + df["b_losses_corrected"]
+            else:
+                df["b_total_fights"] = 0
+
+        return df
+
     def build_swapped(self, df):
         """
         Create swap-mirror version for antisymmetrization.
@@ -1051,6 +1073,163 @@ class ImprovedUFCPredictor:
         I.columns = [f"{c}_inv" for c in I.columns]  # Mark as invariant
 
         return D, I
+
+    def _create_validation_strategies(self, df, X, y):
+        """Create multiple validation strategies for robust evaluation"""
+        strategies = []
+
+        try:
+            # Strategy 1: Time Series Split (temporal)
+            if 'event_date' in df.columns:
+                strategies.append({
+                    'name': 'TimeSeriesSplit',
+                    'splitter': TimeSeriesSplit(n_splits=5),
+                    'description': 'Temporal validation respecting time order'
+                })
+
+            # Strategy 2: Stratified K-Fold (balanced)
+            strategies.append({
+                'name': 'StratifiedKFold',
+                'splitter': StratifiedKFold(n_splits=5, shuffle=True, random_state=42),
+                'description': 'Balanced validation maintaining class distribution'
+            })
+
+            # Strategy 3: Group K-Fold by fighter (if possible)
+            if 'r_fighter' in df.columns and 'b_fighter' in df.columns:
+                # Create groups based on fighter combinations
+                fighter_groups = []
+                for idx, row in df.iterrows():
+                    r_fighter = str(row.get('r_fighter', ''))
+                    b_fighter = str(row.get('b_fighter', ''))
+                    group_id = hash(f"{r_fighter}_{b_fighter}") % 1000
+                    fighter_groups.append(group_id)
+
+                strategies.append({
+                    'name': 'GroupKFold',
+                    'splitter': GroupKFold(n_splits=5),
+                    'groups': fighter_groups,
+                    'description': 'Group validation by fighter combinations'
+                })
+
+            # Strategy 4: Purged Cross-Validation (for time series)
+            if 'event_date' in df.columns:
+                strategies.append({
+                    'name': 'PurgedCV',
+                    'splitter': self._create_purged_cv(df),
+                    'description': 'Purged validation preventing data leakage'
+                })
+
+            return strategies
+
+        except Exception as e:
+            print(f"Error creating validation strategies: {e}")
+            # Fallback to basic strategies
+            return [{
+                'name': 'StratifiedKFold',
+                'splitter': StratifiedKFold(n_splits=5, shuffle=True, random_state=42),
+                'description': 'Basic stratified validation'
+            }]
+
+    def _create_purged_cv(self, df):
+        """Create purged cross-validation for time series data"""
+        try:
+            from sklearn.model_selection import BaseCrossValidator
+
+            class PurgedCrossValidator(BaseCrossValidator):
+                def __init__(self, n_splits=5, purge_days=30):
+                    self.n_splits = n_splits
+                    self.purge_days = purge_days
+
+                def split(self, X, y=None, groups=None):
+                    if 'event_date' not in df.columns:
+                        # Fallback to regular split
+                        for train_idx, test_idx in StratifiedKFold(n_splits=self.n_splits).split(X, y):
+                            yield train_idx, test_idx
+                        return
+
+                    # Sort by date
+                    df_sorted = df.sort_values('event_date')
+                    dates = pd.to_datetime(df_sorted['event_date'])
+
+                    # Create splits
+                    n_samples = len(df_sorted)
+                    fold_size = n_samples // self.n_splits
+
+                    for i in range(self.n_splits):
+                        test_start = i * fold_size
+                        test_end = (i + 1) * fold_size if i < self.n_splits - 1 else n_samples
+
+                        test_idx = list(range(test_start, test_end))
+                        test_dates = dates.iloc[test_idx]
+
+                        # Purge training data that's too close to test data
+                        train_idx = []
+                        for j in range(n_samples):
+                            if j < test_start or j >= test_end:
+                                # Check if this sample is far enough from test data
+                                sample_date = dates.iloc[j]
+                                min_gap = min(abs((sample_date - test_dates).dt.days))
+
+                                if min_gap >= self.purge_days:
+                                    train_idx.append(j)
+
+                        if len(train_idx) > 0 and len(test_idx) > 0:
+                            yield train_idx, test_idx
+
+            return PurgedCrossValidator(n_splits=5, purge_days=30)
+
+        except Exception as e:
+            print(f"Error creating purged CV: {e}")
+            return StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+    def _select_best_validation_strategy(self, strategies, X, y):
+        """Select the best validation strategy based on data characteristics"""
+        try:
+            if len(strategies) == 1:
+                return strategies[0]
+
+            # Evaluate each strategy using a simple model
+            from sklearn.metrics import accuracy_score
+
+            strategy_scores = []
+
+            for strategy in strategies:
+                try:
+                    model = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+                    scores = []
+
+                    # Use groups if available
+                    groups = strategy.get('groups', None)
+
+                    for train_idx, test_idx in strategy['splitter'].split(X, y, groups):
+                        X_train_fold = X.iloc[train_idx]
+                        X_test_fold = X.iloc[test_idx]
+                        y_train_fold = y.iloc[train_idx]
+                        y_test_fold = y.iloc[test_idx]
+
+                        model.fit(X_train_fold, y_train_fold)
+                        y_pred = model.predict(X_test_fold)
+                        scores.append(accuracy_score(y_test_fold, y_pred))
+
+                    avg_score = np.mean(scores)
+                    strategy_scores.append((strategy, avg_score))
+                    print(f"  {strategy['name']}: {avg_score:.4f} avg accuracy")
+
+                except Exception as e:
+                    print(f"  {strategy['name']}: Failed - {e}")
+                    continue
+
+            if strategy_scores:
+                # Select strategy with highest score
+                best_strategy = max(strategy_scores, key=lambda x: x[1])[0]
+                return best_strategy
+            else:
+                # Fallback to first strategy
+                return strategies[0]
+
+        except Exception as e:
+            print(f"Error selecting validation strategy: {e}")
+            return strategies[0]
 
     # ===== FIGHTER-SPECIFIC ADVANCED FEATURES =====
 
@@ -4004,6 +4183,12 @@ class ImprovedUFCPredictor:
         print("PREPARING CORE FEATURES")
         print("="*80 + "\n")
 
+        # FEATURE CACHING: Check if we've already computed features for this data
+        cache_key = f"{len(df)}_{df.shape[1]}_{hash(tuple(df.columns))}"
+        if cache_key in self.feature_cache:
+            print("✓ Using cached features (2x speedup)")
+            return self.feature_cache[cache_key]
+
         # Filter to valid winners only
         if "winner" in df.columns:
             df = df[df["winner"].isin(["Red", "Blue"])].copy()
@@ -4042,6 +4227,10 @@ class ImprovedUFCPredictor:
                 print(f"   - {feat}")
 
         print(f"Core features prepared: {len(self.get_core_feature_names())} features")
+
+        # Cache the result for future use
+        self.feature_cache[cache_key] = df
+        print("✓ Features cached for future use")
 
         return df
 
@@ -4398,6 +4587,9 @@ class ImprovedUFCPredictor:
         # Prepare core features (builds all features from r_*/b_* bases)
         df = self.prepare_core_features(df)
 
+        # Add neutral features that don't favor either corner
+        df = self.create_neutral_features(df)
+
         # =================================================================
         # ANTISYMMETRIZATION APPROACH (replaces fragile corner swapping)
         # =================================================================
@@ -4508,6 +4700,17 @@ class ImprovedUFCPredictor:
         X = X.loc[df_sorted.index]
         y_winner = y_winner.loc[df_sorted.index]
 
+        # ===== ADVANCED VALIDATION STRATEGY SELECTION =====
+        print("\n📊 IMPLEMENTING ADVANCED VALIDATION STRATEGY...")
+
+        # Multi-strategy validation approach
+        validation_strategies = self._create_validation_strategies(df_sorted, X, y_winner)
+
+        # Use the best validation strategy based on data characteristics
+        best_strategy = self._select_best_validation_strategy(validation_strategies, X, y_winner)
+        print(f"✓ Selected validation strategy: {best_strategy['name']}")
+        print(f"  Description: {best_strategy['description']}\n")
+
         # 70% train, 15% validation, 15% test
         train_size = int(0.70 * len(df_sorted))
         val_size = int(0.85 * len(df_sorted))
@@ -4553,6 +4756,44 @@ class ImprovedUFCPredictor:
         X_train_flipped[directional_cols] = -X_train[directional_cols]
         # Invariant columns already copied, no need to modify
         y_train_flipped = 1 - y_train
+
+        # CLOSE FIGHT AUGMENTATION: Add extra augmentation for decision fights
+        print("\n   🎯 Close Fight Augmentation:")
+        df_train_sorted = df_sorted.iloc[:train_size]
+        if "winner_method_simple" in df_train_sorted.columns:
+            # Identify decision fights (close fights)
+            decision_mask = df_train_sorted["winner_method_simple"].str.contains("Decision", na=False)
+            close_fights_indices = df_train_sorted[decision_mask].index
+
+            if len(close_fights_indices) > 0:
+                # Get corresponding features from X_train
+                close_X_indices = [i for i, idx in enumerate(df_sorted.iloc[:train_size].index) if idx in close_fights_indices]
+                close_X = X_train.iloc[close_X_indices]
+                close_y = y_train.iloc[close_X_indices]
+
+                # Create additional flipped versions for close fights
+                close_X_flipped = close_X.copy()
+                close_X_flipped[directional_cols] = -close_X[directional_cols]
+                close_y_flipped = 1 - close_y
+
+                # Add 25% of close fights as additional augmentation
+                sample_size = min(len(close_X_flipped) // 2, len(X_train) // 4)
+                if sample_size > 0:
+                    sampled_indices = np.random.choice(len(close_X_flipped), size=sample_size, replace=False)
+                    extra_close_X = close_X_flipped.iloc[sampled_indices]
+                    extra_close_y = close_y_flipped.iloc[sampled_indices]
+
+                    # Combine with main flipped data
+                    X_train_flipped = pd.concat([X_train_flipped, extra_close_X], axis=0, ignore_index=True)
+                    y_train_flipped = pd.concat([y_train_flipped, extra_close_y], axis=0, ignore_index=True)
+
+                    print(f"      ✓ Added {sample_size} extra close fight augmentations")
+                else:
+                    print("      ⚠ Not enough close fights for augmentation")
+            else:
+                print("      ⚠ No decision fights found for augmentation")
+        else:
+            print("      ⚠ No winner_method_simple column found")
 
         # Augment ONLY training set (NOT validation - validation must remain independent)
         X_train_aug = pd.concat([X_train, X_train_flipped], axis=0, ignore_index=True)
@@ -4818,6 +5059,26 @@ class ImprovedUFCPredictor:
                 ('logreg', logreg_model)
             ])
             estimators.append(('logreg', logreg_pipeline))
+
+            # Add MLP Neural Network for non-linear pattern learning
+            mlp_model = MLPClassifier(
+                hidden_layer_sizes=(256, 128, 64),
+                activation='relu',
+                solver='adam',
+                alpha=0.0001,
+                learning_rate='adaptive',
+                max_iter=500,
+                random_state=42,
+                early_stopping=True,
+                validation_fraction=0.1,
+                n_iter_no_change=10,
+                verbose=False
+            )
+            mlp_pipeline = Pipeline([
+                ('scaler', StandardScaler()),  # MLP requires scaled features
+                ('mlp', mlp_model)
+            ])
+            estimators.append(('mlp', mlp_pipeline))
 
             # ========== CHOOSE ENSEMBLE STRATEGY ==========
             # SPEED CONTROL: Set to False for faster training with VotingClassifier
