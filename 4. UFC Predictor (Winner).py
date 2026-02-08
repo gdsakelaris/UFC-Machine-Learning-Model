@@ -28,6 +28,9 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
 # Enable multiprocessing for faster training
+# Memory-safe parallelism: Use 50-75% of CPU cores to prevent Out of Resources errors
+# With large feature sets (400+ features), n_jobs=SAFE_N_JOBS can cause memory overflow
+SAFE_N_JOBS = max(1, mp.cpu_count() // 2)  # Use half of available CPU cores
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -156,6 +159,341 @@ if not any(GPU_AVAILABLE.values()):
     print("  LightGBM: pip install lightgbm --config-settings=cmake.define.USE_GPU=ON")
     print("  CatBoost: pip install catboost (GPU auto-detected)")
 print("="*80 + "\n")
+
+
+# =============================================================================
+# ADVANCED FEATURE ENGINEERING CLASS
+# =============================================================================
+class AdvancedFeatureEngineer:
+    """
+    Generates high-impact features including:
+    1. Extended Z-Scores (Age, SApM, Finish Rate, Sub Avg)
+    2. Glicko-2 Ratings (Time-decaying skill ratings)
+    3. Common Opponent Math
+    4. Unsupervised Style Clustering (K-Means Archetypes)
+    """
+
+    def __init__(self):
+        self.glicko_ratings = {}
+        self.common_opp_matrix = {}
+        # Tracks mean/std for: SLpM, SApM, TD, Sub, Height, Reach, Age, FinishRate
+        self.weight_class_stats = {}
+
+        # CLUSTERING ENGINE
+        self.kmeans_model = None
+        self.scaler = None
+        self.training_data_for_clusters = []  # Store stats to fit KMeans later
+        self.fighter_styles = {}  # {fighter_name: cluster_id}
+        self.style_win_rates = {}  # {fighter_name: {cluster_0_wins: x, cluster_0_losses: y...}}
+
+    # =========================================================================
+    # 1. EXPANDED WEIGHT CLASS Z-SCORES
+    # =========================================================================
+    def update_weight_class_stats(self, df_history):
+        """
+        Calculates rolling annual averages for contextual normalization.
+        EXPANDED to include defensive and durability metrics.
+        """
+        df_temp = df_history.copy()
+        df_temp['year'] = pd.to_datetime(df_temp['event_date']).dt.year
+
+        # EXPANDED list of stats to normalize (8 metrics instead of 4)
+        stats_to_norm = [
+            'r_pro_SLpM_corrected', 'r_pro_SApM_corrected',
+            'r_pro_td_avg_corrected', 'r_pro_sub_avg_corrected',
+            'r_height', 'r_reach', 'r_age_at_event',
+            'r_finish_rate'  # ko_rate + sub_rate calculated on the fly
+        ]
+
+        for wc in df_temp['weight_class'].unique():
+            if pd.isna(wc):
+                continue
+            for year in df_temp['year'].unique():
+                subset = df_temp[(df_temp['weight_class'] == wc) & (df_temp['year'] == year)]
+                if len(subset) > 5:  # Only calc if enough data
+                    stats_dict = {}
+                    for stat in stats_to_norm:
+                        # Calculate finish_rate on the fly if needed
+                        if stat == 'r_finish_rate':
+                            if 'r_ko_rate_corrected' in subset.columns and 'r_sub_rate_corrected' in subset.columns:
+                                finish_vals = subset['r_ko_rate_corrected'] + subset['r_sub_rate_corrected']
+                                stats_dict[stat] = {
+                                    'mean': finish_vals.mean(),
+                                    'std': finish_vals.std() if finish_vals.std() > 0 else 1.0
+                                }
+                        elif stat in subset.columns:
+                            stats_dict[stat] = {
+                                'mean': subset[stat].mean(),
+                                'std': subset[stat].std() if subset[stat].std() > 0 else 1.0
+                            }
+                    if stats_dict:
+                        self.weight_class_stats[(wc, year)] = stats_dict
+
+    def get_z_score_features(self, row, fighter_prefix):
+        """
+        Returns Z-scores comparing fighter to their weight class average.
+        EXPANDED: Now includes SApM, Sub Avg, Age, and Finish Rate.
+        """
+        year = pd.to_datetime(row['event_date']).year
+        wc = row.get('weight_class', None)
+
+        # Default 0 if missing (8 features instead of 4)
+        feats = {
+            f'{fighter_prefix}_slpm_zscore': 0,
+            f'{fighter_prefix}_sapm_zscore': 0,
+            f'{fighter_prefix}_td_avg_zscore': 0,
+            f'{fighter_prefix}_sub_avg_zscore': 0,
+            f'{fighter_prefix}_height_zscore': 0,
+            f'{fighter_prefix}_reach_zscore': 0,
+            f'{fighter_prefix}_age_zscore': 0,
+            f'{fighter_prefix}_finish_rate_zscore': 0
+        }
+
+        if pd.isna(wc):
+            return feats
+
+        # Map input columns to output feature names
+        metrics = {
+            f'{fighter_prefix}_pro_SLpM_corrected': f'{fighter_prefix}_slpm_zscore',
+            f'{fighter_prefix}_pro_SApM_corrected': f'{fighter_prefix}_sapm_zscore',
+            f'{fighter_prefix}_pro_td_avg_corrected': f'{fighter_prefix}_td_avg_zscore',
+            f'{fighter_prefix}_pro_sub_avg_corrected': f'{fighter_prefix}_sub_avg_zscore',
+            f'{fighter_prefix}_height': f'{fighter_prefix}_height_zscore',
+            f'{fighter_prefix}_reach': f'{fighter_prefix}_reach_zscore',
+            f'{fighter_prefix}_age_at_event': f'{fighter_prefix}_age_zscore',
+            f'{fighter_prefix}_finish_rate': f'{fighter_prefix}_finish_rate_zscore'
+        }
+
+        # Look for stats in current year, fallback to previous year, then 2 years ago
+        stats = None
+        for y_offset in [0, -1, -2]:
+            if (wc, year + y_offset) in self.weight_class_stats:
+                stats = self.weight_class_stats[(wc, year + y_offset)]
+                break
+
+        if stats:
+            for col, out_name in metrics.items():
+                # Calculate finish_rate on the fly if needed
+                if col.endswith('_finish_rate'):
+                    ko_rate = row.get(f'{fighter_prefix}_ko_rate_corrected', 0)
+                    sub_rate = row.get(f'{fighter_prefix}_sub_rate_corrected', 0)
+                    val = ko_rate + sub_rate
+                else:
+                    val = row.get(col, 0)
+
+                # Map column name to the key stored in weight_class_stats (always r_ prefix format)
+                stat_key = col.replace('b_', 'r_')
+
+                if stat_key in stats:
+                    mean = stats[stat_key]['mean']
+                    std = stats[stat_key]['std']
+                    feats[out_name] = (val - mean) / std
+
+        return feats
+
+    # =========================================================================
+    # 2. GLICKO-2 SYSTEM (Better than Elo)
+    # =========================================================================
+    def glicko2_get_ratings(self, r_fighter, b_fighter):
+        """
+        Returns current Glicko-2 ratings before update.
+        Glicko-2 is superior to Elo because it tracks 'Rating Deviation' (RD).
+        """
+        import math
+
+        def _g(phi):
+            return 1 / math.sqrt(1 + 3 * (phi ** 2) / (math.pi ** 2))
+
+        def _E(mu, mu_j, phi_j):
+            return 1 / (1 + math.exp(-_g(phi_j) * (mu - mu_j)))
+
+        # Initialize if new
+        for f in [r_fighter, b_fighter]:
+            if f not in self.glicko_ratings:
+                self.glicko_ratings[f] = {'rating': 1500, 'rd': 350, 'vol': 0.06}
+
+        r = self.glicko_ratings[r_fighter]
+        b = self.glicko_ratings[b_fighter]
+
+        # Convert to Glicko-2 scale
+        mu_r = (r['rating'] - 1500) / 173.7178
+        phi_r = r['rd'] / 173.7178
+        mu_b = (b['rating'] - 1500) / 173.7178
+        phi_b = b['rd'] / 173.7178
+
+        # Return features for the dataframe *before* update
+        return {
+            'r_glicko_rating': r['rating'],
+            'r_glicko_rd': r['rd'],
+            'b_glicko_rating': b['rating'],
+            'b_glicko_rd': b['rd'],
+            'glicko_prob': _E(mu_r, mu_b, phi_b),  # Win probability
+            'glicko_rating_diff': r['rating'] - b['rating']
+        }
+
+    def glicko2_update(self, r_fighter, b_fighter, winner):
+        """
+        Updates Glicko-2 ratings after a fight.
+        Simplified update for performance - full Glicko-2 is complex.
+        """
+        # For now, use simplified ELO-like update but track RD
+        # Full Glicko-2 implementation would require more computation
+        K = 32
+
+        r = self.glicko_ratings[r_fighter]
+        b = self.glicko_ratings[b_fighter]
+
+        # Expected scores
+        expected_r = 1 / (1 + 10 ** ((b['rating'] - r['rating']) / 400))
+        expected_b = 1 - expected_r
+
+        # Actual scores
+        if winner == 'Red':
+            actual_r, actual_b = 1, 0
+        elif winner == 'Blue':
+            actual_r, actual_b = 0, 1
+        else:  # Draw
+            actual_r, actual_b = 0.5, 0.5
+
+        # Update ratings
+        r['rating'] += K * (actual_r - expected_r)
+        b['rating'] += K * (actual_b - expected_b)
+
+        # Decrease RD with each fight (becomes more certain)
+        r['rd'] = max(50, r['rd'] * 0.95)
+        b['rd'] = max(50, b['rd'] * 0.95)
+
+    # =========================================================================
+    # 3. DIRECT COMMON OPPONENT TRIANGULATION
+    # =========================================================================
+    def get_common_opponent_features(self, r_fighter, b_fighter):
+        """
+        If Red beat C, and C beat Blue -> Red > Blue (indirectly).
+        This feature explicitly calculates the win differential against common foes.
+        """
+        if r_fighter not in self.common_opp_matrix or b_fighter not in self.common_opp_matrix:
+            return {'common_opp_score_diff': 0, 'common_opp_count': 0}
+
+        r_opps = set(self.common_opp_matrix[r_fighter].keys())
+        b_opps = set(self.common_opp_matrix[b_fighter].keys())
+        common = r_opps.intersection(b_opps)
+
+        if not common:
+            return {'common_opp_score_diff': 0, 'common_opp_count': 0}
+
+        score_diff = 0
+        for opp in common:
+            # 1 = Win, 0 = Loss, 0.5 = Draw
+            r_res = self.common_opp_matrix[r_fighter][opp]
+            b_res = self.common_opp_matrix[b_fighter][opp]
+            score_diff += (r_res - b_res)
+
+        return {
+            'common_opp_score_diff': score_diff,  # Positive means Red performed better vs common
+            'common_opp_count': len(common)
+        }
+
+    def update_common_opponents(self, r_fighter, b_fighter, winner):
+        """Update the common opponent matrix after a fight"""
+        if r_fighter not in self.common_opp_matrix:
+            self.common_opp_matrix[r_fighter] = {}
+        if b_fighter not in self.common_opp_matrix:
+            self.common_opp_matrix[b_fighter] = {}
+
+        r_win = 1 if winner == 'Red' else 0 if winner == 'Blue' else 0.5
+        b_win = 1 - r_win
+
+        # Only store most recent result to keep "form" relevant
+        self.common_opp_matrix[r_fighter][b_fighter] = r_win
+        self.common_opp_matrix[b_fighter][r_fighter] = b_win
+
+    # =========================================================================
+    # 4. UNSUPERVISED STYLE CLUSTERING (NEW!)
+    # =========================================================================
+    def fit_clusters(self):
+        """
+        Called ONCE after the first pass of data processing (or pre-training).
+        Fits K-Means to identify 5 fighter archetypes.
+        """
+        if not self.training_data_for_clusters:
+            return
+
+        # Features: SLpM, SApM, TD Avg, Sub Avg, Finish Rate
+        X = np.array(self.training_data_for_clusters)
+
+        # Scale and Fit
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.cluster import KMeans
+
+        self.scaler = StandardScaler()
+        X_scaled = self.scaler.fit_transform(X)
+
+        self.kmeans_model = KMeans(n_clusters=5, random_state=42)
+        self.kmeans_model.fit(X_scaled)
+        print("Style Clusters Fitted! Archetypes defined.")
+
+    def get_fighter_cluster(self, slpm, sapm, td, sub, finish):
+        """Returns cluster ID (0-4) for a fighter's current stats"""
+        if not self.kmeans_model:
+            return -1
+
+        # Predict stats
+        stats = np.array([[slpm, sapm, td, sub, finish]])
+        stats_scaled = self.scaler.transform(stats)
+        return self.kmeans_model.predict(stats_scaled)[0]
+
+    def update_style_performance(self, fighter, opponent_stats, is_win):
+        """
+        Updates a fighter's win rate against specific opponent clusters.
+        """
+        if not self.kmeans_model:
+            return
+
+        # Determine opponent's cluster
+        opp_cluster = self.get_fighter_cluster(*opponent_stats)
+        if opp_cluster == -1:
+            return
+
+        if fighter not in self.style_win_rates:
+            self.style_win_rates[fighter] = {i: {'wins': 0, 'losses': 0} for i in range(5)}
+
+        if is_win:
+            self.style_win_rates[fighter][opp_cluster]['wins'] += 1
+        else:
+            self.style_win_rates[fighter][opp_cluster]['losses'] += 1
+
+    def get_style_matchup_features(self, r_fighter, b_fighter, r_stats_tuple, b_stats_tuple):
+        """
+        Returns features: 'r_win_rate_vs_opp_cluster', 'b_win_rate_vs_opp_cluster'
+        """
+        if not self.kmeans_model:
+            return {'r_win_rate_vs_archetype': 0.5, 'b_win_rate_vs_archetype': 0.5, 'archetype_matchup_diff': 0.0}
+
+        # What cluster is Blue?
+        b_cluster = self.get_fighter_cluster(*b_stats_tuple)
+        # What is Red's win rate vs that cluster?
+        r_vs_cluster = 0.5
+        if r_fighter in self.style_win_rates and b_cluster != -1:
+            rec = self.style_win_rates[r_fighter][b_cluster]
+            total = rec['wins'] + rec['losses']
+            if total > 0:
+                r_vs_cluster = rec['wins'] / total
+
+        # What cluster is Red?
+        r_cluster = self.get_fighter_cluster(*r_stats_tuple)
+        # What is Blue's win rate vs that cluster?
+        b_vs_cluster = 0.5
+        if b_fighter in self.style_win_rates and r_cluster != -1:
+            rec = self.style_win_rates[b_fighter][r_cluster]
+            total = rec['wins'] + rec['losses']
+            if total > 0:
+                b_vs_cluster = rec['wins'] / total
+
+        return {
+            'r_win_rate_vs_archetype': r_vs_cluster,
+            'b_win_rate_vs_archetype': b_vs_cluster,
+            'archetype_matchup_diff': r_vs_cluster - b_vs_cluster
+        }
 
 
 class ImprovedUFCPredictor:
@@ -693,6 +1031,35 @@ class ImprovedUFCPredictor:
             "output_sustainability_index_diff_squared",
             "combined_defensive_hole_diff_squared",
 
+            # ========== ADVANCED FEATURES: Z-SCORES, GLICKO-2, COMMON OPPONENTS, ARCHETYPES ==========
+            # Extended weight class normalized features (8 features)
+            "slpm_zscore_diff_corrected",
+            "sapm_zscore_diff_corrected",
+            "td_avg_zscore_diff_corrected",
+            "sub_avg_zscore_diff_corrected",
+            "height_zscore_diff_corrected",
+            "reach_zscore_diff_corrected",
+            "age_zscore_diff_corrected",
+            "finish_rate_zscore_diff_corrected",
+
+            # Glicko-2 rating system features (7 features)
+            "glicko_rating_diff",
+            "r_glicko_rating_corrected",
+            "b_glicko_rating_corrected",
+            "r_glicko_rd_corrected",
+            "b_glicko_rd_corrected",
+            "glicko_prob",
+            "glicko_rd_diff_corrected",
+
+            # Common opponent features (2 features)
+            "common_opp_score_diff",
+            "common_opp_count",
+
+            # Unsupervised style archetype features (3 features)
+            "r_win_rate_vs_archetype_corrected",
+            "b_win_rate_vs_archetype_corrected",
+            "archetype_matchup_diff",
+
             # ========== NEW FEATURES: ALL REMOVED ==========
             # All proposed features removed - they decreased accuracy from 65.79% to 64.31%
             # Only modification kept: reach_efficiency_diff (SLpM per inch of reach)
@@ -1190,6 +1557,10 @@ class ImprovedUFCPredictor:
                     self.n_splits = n_splits
                     self.purge_days = purge_days
 
+                def get_n_splits(self, X=None, y=None, groups=None):
+                    """Returns the number of splitting iterations in the cross-validator"""
+                    return self.n_splits
+
                 def split(self, X, y=None, groups=None):
                     if 'event_date' not in df.columns:
                         # Fallback to regular split
@@ -1233,49 +1604,28 @@ class ImprovedUFCPredictor:
             return StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
     def _select_best_validation_strategy(self, strategies, X, y):
-        """Select the best validation strategy based on data characteristics"""
+        """
+        ALWAYS USE PURGEDCV for UFC fight predictions.
+
+        PurgedCV is the gold standard for temporal data because:
+        1. Respects chronological ordering (can't train on future data)
+        2. Purges overlapping time windows (prevents data leakage)
+        3. Accounts for fighter performance evolution over time
+
+        This is not negotiable for time-series predictions like UFC fights.
+        """
         try:
-            if len(strategies) == 1:
-                return strategies[0]
-
-            # Evaluate each strategy using a simple model
-            from sklearn.metrics import accuracy_score
-
-            strategy_scores = []
-
+            # Find PurgedCV strategy
             for strategy in strategies:
-                try:
-                    model = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
-                    scores = []
+                if strategy['name'] == 'PurgedCV':
+                    print("  ✓ Using PurgedCV (mandatory for temporal UFC data)")
+                    print(f"    Description: {strategy['description']}")
+                    return strategy
 
-                    # Use groups if available
-                    groups = strategy.get('groups', None)
-
-                    for train_idx, test_idx in strategy['splitter'].split(X, y, groups):
-                        X_train_fold = X.iloc[train_idx]
-                        X_test_fold = X.iloc[test_idx]
-                        y_train_fold = y.iloc[train_idx]
-                        y_test_fold = y.iloc[test_idx]
-
-                        model.fit(X_train_fold, y_train_fold)
-                        y_pred = model.predict(X_test_fold)
-                        scores.append(accuracy_score(y_test_fold, y_pred))
-
-                    avg_score = np.mean(scores)
-                    strategy_scores.append((strategy, avg_score))
-                    print(f"  {strategy['name']}: {avg_score:.4f} avg accuracy")
-
-                except Exception as e:
-                    print(f"  {strategy['name']}: Failed - {e}")
-                    continue
-
-            if strategy_scores:
-                # Select strategy with highest score
-                best_strategy = max(strategy_scores, key=lambda x: x[1])[0]
-                return best_strategy
-            else:
-                # Fallback to first strategy
-                return strategies[0]
+            # Fallback: If PurgedCV not found (shouldn't happen), warn and use first strategy
+            print("  ⚠️ WARNING: PurgedCV not found! Falling back to first available strategy.")
+            print("     This is NOT recommended for temporal data like UFC fights.")
+            return strategies[0]
 
         except Exception as e:
             print(f"Error selecting validation strategy: {e}")
@@ -1432,6 +1782,10 @@ class ImprovedUFCPredictor:
         # Initialize ELO tracking for PHASE 3 (must match calculate_elo_ratings logic)
         self.fighter_elos = {}
         self.elo_history = {}
+
+        # Initialize Advanced Feature Engineer
+        feature_engineer = AdvancedFeatureEngineer()
+        print("Advanced Feature Engineer initialized (Glicko-2, Z-scores, Common Opponents)")
 
         fighter_stats = {}
 
@@ -1680,16 +2034,32 @@ class ImprovedUFCPredictor:
                         "performance_vs_orthodox", "performance_vs_southpaw",
                         "performance_vs_grapplers_enhanced", "performance_vs_strikers_enhanced",
                         "ground_control_percentage", "clinch_strike_volume",
-                        "leg_kick_specialization", "body_shot_specialization"]:
+                        "leg_kick_specialization", "body_shot_specialization",
+                        # ADVANCED FEATURES: Extended Z-scores (8 instead of 4)
+                        "slpm_zscore", "sapm_zscore", "td_avg_zscore", "sub_avg_zscore",
+                        "height_zscore", "reach_zscore", "age_zscore", "finish_rate_zscore",
+                        # Glicko-2 ratings
+                        "glicko_rating", "glicko_rd",
+                        # Style archetype features
+                        "win_rate_vs_archetype"]:
                 df[f"{prefix}_{stat}_corrected"] = 0.0
 
+        # Initialize advanced feature columns
         df["h2h_advantage"] = 0.0
         df["opponent_quality_diff"] = 0.0
+        df["common_opp_score_diff"] = 0.0
+        df["common_opp_count"] = 0.0
+        df["glicko_prob"] = 0.5
+        df["glicko_rating_diff"] = 0.0
+        df["archetype_matchup_diff"] = 0.0
         fighter_h2h = {}
 
         for idx, row in df.iterrows():
             if idx % 500 == 0:
                 print(f"   Processing fight {idx}/{len(df)}...")
+                # Update weight class statistics every 500 fights for z-score calculation
+                if idx > 0:
+                    feature_engineer.update_weight_class_stats(df.iloc[:idx])
 
             r_fighter, b_fighter = row["r_fighter"], row["b_fighter"]
 
@@ -2449,6 +2819,68 @@ class ImprovedUFCPredictor:
                 else:
                     df.at[idx, f"{prefix}_body_shot_specialization_corrected"] = 0.0
 
+            # ========== ADVANCED FEATURES CALCULATION (BEFORE FIGHT UPDATE) ==========
+            # 0. Collect training data for clustering (first pass - before clusters are fitted)
+            r_stats = fighter_stats[r_fighter]
+            b_stats = fighter_stats[b_fighter]
+
+            # Get current stats for clustering (SLpM, SApM, TD, Sub, Finish Rate)
+            r_slpm = df.at[idx, "r_pro_SLpM_corrected"]
+            r_sapm = df.at[idx, "r_pro_SApM_corrected"]
+            r_td = df.at[idx, "r_pro_td_avg_corrected"]
+            r_sub = df.at[idx, "r_pro_sub_avg_corrected"]
+            r_finish = df.at[idx, "r_ko_rate_corrected"] + df.at[idx, "r_sub_rate_corrected"]
+
+            b_slpm = df.at[idx, "b_pro_SLpM_corrected"]
+            b_sapm = df.at[idx, "b_pro_SApM_corrected"]
+            b_td = df.at[idx, "b_pro_td_avg_corrected"]
+            b_sub = df.at[idx, "b_pro_sub_avg_corrected"]
+            b_finish = df.at[idx, "b_ko_rate_corrected"] + df.at[idx, "b_sub_rate_corrected"]
+
+            r_stats_tuple = (r_slpm, r_sapm, r_td, r_sub, r_finish)
+            b_stats_tuple = (b_slpm, b_sapm, b_td, b_sub, b_finish)
+
+            # Add to training data if fighter has at least 3 fights
+            if r_stats["fight_count"] >= 3 and r_stats_tuple not in feature_engineer.training_data_for_clusters:
+                feature_engineer.training_data_for_clusters.append(r_stats_tuple)
+            if b_stats["fight_count"] >= 3 and b_stats_tuple not in feature_engineer.training_data_for_clusters:
+                feature_engineer.training_data_for_clusters.append(b_stats_tuple)
+
+            # Fit clusters at idx 1000 if not yet fitted
+            if idx == 1000 and not feature_engineer.kmeans_model:
+                print(f"\nFitting style clusters from {len(feature_engineer.training_data_for_clusters)} fighter profiles...")
+                feature_engineer.fit_clusters()
+
+            # 1. Calculate Z-score features for both fighters
+            for fighter, prefix in [(r_fighter, "r"), (b_fighter, "b")]:
+                z_features = feature_engineer.get_z_score_features(row, prefix)
+                for feat_name, feat_value in z_features.items():
+                    df.at[idx, f"{feat_name}_corrected"] = feat_value
+
+            # 2. Calculate Glicko-2 ratings and win probability
+            glicko_features = feature_engineer.glicko2_get_ratings(r_fighter, b_fighter)
+            for feat_name, feat_value in glicko_features.items():
+                df.at[idx, feat_name] = feat_value
+
+            # Also store individual Glicko ratings in corrected columns
+            df.at[idx, "r_glicko_rating_corrected"] = glicko_features['r_glicko_rating']
+            df.at[idx, "r_glicko_rd_corrected"] = glicko_features['r_glicko_rd']
+            df.at[idx, "b_glicko_rating_corrected"] = glicko_features['b_glicko_rating']
+            df.at[idx, "b_glicko_rd_corrected"] = glicko_features['b_glicko_rd']
+
+            # 3. Calculate common opponent features
+            common_opp_features = feature_engineer.get_common_opponent_features(r_fighter, b_fighter)
+            df.at[idx, "common_opp_score_diff"] = common_opp_features['common_opp_score_diff']
+            df.at[idx, "common_opp_count"] = common_opp_features['common_opp_count']
+
+            # 4. Calculate style matchup features (archetype-based)
+            style_features = feature_engineer.get_style_matchup_features(
+                r_fighter, b_fighter, r_stats_tuple, b_stats_tuple
+            )
+            df.at[idx, "r_win_rate_vs_archetype_corrected"] = style_features['r_win_rate_vs_archetype']
+            df.at[idx, "b_win_rate_vs_archetype_corrected"] = style_features['b_win_rate_vs_archetype']
+            df.at[idx, "archetype_matchup_diff"] = style_features['archetype_matchup_diff']
+
             # Calculate opponent quality differential
             r_opp_elo = df.at[idx, "r_avg_opponent_elo_corrected"]
             b_opp_elo = df.at[idx, "b_avg_opponent_elo_corrected"]
@@ -2533,6 +2965,19 @@ class ImprovedUFCPredictor:
                     r_fighter, b_fighter, row["winner"], k_factor,
                     self.fighter_elos, self.elo_history, row["event_date"]
                 )
+
+                # ========== UPDATE ADVANCED FEATURES (AFTER FIGHT RESULT) ==========
+                # Update Glicko-2 ratings
+                feature_engineer.glicko2_update(r_fighter, b_fighter, row["winner"])
+
+                # Update common opponent matrix
+                feature_engineer.update_common_opponents(r_fighter, b_fighter, row["winner"])
+
+                # Update style performance tracking (archetype wins/losses)
+                r_is_win = (row["winner"] == "Red")
+                b_is_win = (row["winner"] == "Blue")
+                feature_engineer.update_style_performance(r_fighter, b_stats_tuple, r_is_win)
+                feature_engineer.update_style_performance(b_fighter, r_stats_tuple, b_is_win)
 
                 # NOTE: Do NOT update tracked ELO yet - opponent classification below needs PRE-FIGHT values
                 # Post-fight ELO will be synced after all opponent-based stats are calculated
@@ -3504,7 +3949,14 @@ class ImprovedUFCPredictor:
                     "performance_vs_orthodox", "performance_vs_southpaw",
                     "performance_vs_grapplers_enhanced", "performance_vs_strikers_enhanced",
                     "ground_control_percentage", "clinch_strike_volume",
-                    "leg_kick_specialization", "body_shot_specialization"]:
+                    "leg_kick_specialization", "body_shot_specialization",
+                    # ADVANCED FEATURES: Extended Z-scores (8 features)
+                    "slpm_zscore", "sapm_zscore", "td_avg_zscore", "sub_avg_zscore",
+                    "height_zscore", "reach_zscore", "age_zscore", "finish_rate_zscore",
+                    # Glicko-2 ratings
+                    "glicko_rating", "glicko_rd",
+                    # Style archetype performance
+                    "win_rate_vs_archetype"]:
                     # NEW FEATURES: ALL REMOVED (decreased accuracy)
                     # "damage_per_strike", "td_chain_success_rate",
                     # "late_round_performance_ratio",
@@ -4987,33 +5439,43 @@ class ImprovedUFCPredictor:
 
     def optimize_ensemble_weights(self, estimators, X_train, y_train, X_val, y_val):
         """
-        Optimize ensemble weights using grid search on validation set.
-        Finds the best combination of weights for each model in the ensemble.
+        Optimize ensemble weights using cross-validation on TRAINING SET ONLY.
+        IMPORTANT: Uses CV on training data to prevent validation leakage.
         """
         from itertools import product
+        from sklearn.model_selection import KFold
 
         # Convert to numpy arrays
         X_train_np = np.array(X_train)
         y_train_np = np.array(y_train)
-        X_val_np = np.array(X_val)
-        y_val_np = np.array(y_val)
 
-        # Train all models first
+        # Use 3-fold CV on TRAINING SET to find optimal weights (prevents validation leakage)
+        kf = KFold(n_splits=3, shuffle=False)  # No shuffle to preserve temporal order (deterministic)
+
+        # Train all models first on FULL TRAINING SET
         trained_models = []
-        print("Training individual models for weight optimization...")
+        print("Training individual models for weight optimization (on training set only)...")
         for name, model in estimators:
             print(f"  Training {name}...")
             model.fit(X_train_np, y_train_np)
             trained_models.append((name, model))
 
-        # Get predictions from each model on validation set
+        # Get CV predictions from each model on TRAINING SET
+        # This prevents validation leakage while still optimizing weights
+        from sklearn.base import clone
+
         model_predictions = []
-        for name, model in trained_models:
-            if hasattr(model, 'predict_proba'):
-                preds = model.predict_proba(X_val_np)[:, 1]
-            else:
-                preds = model.predict(X_val_np)
-            model_predictions.append(preds)
+        for name, model in estimators:
+            # Get out-of-fold predictions on training set
+            cv_preds = np.zeros(len(X_train_np))
+            for train_idx, val_idx in kf.split(X_train_np):
+                fold_model = clone(model)  # Use sklearn's clone() to properly copy models and pipelines
+                fold_model.fit(X_train_np[train_idx], y_train_np[train_idx])
+                if hasattr(fold_model, 'predict_proba'):
+                    cv_preds[val_idx] = fold_model.predict_proba(X_train_np[val_idx])[:, 1]
+                else:
+                    cv_preds[val_idx] = fold_model.predict(X_train_np[val_idx])
+            model_predictions.append(cv_preds)
 
         # Grid search for optimal weights
         # Test combinations of weights from 1-5 for each model
@@ -5026,24 +5488,25 @@ class ImprovedUFCPredictor:
         # Generate all weight combinations
         weight_combinations = list(product(weight_range, repeat=n_models))
 
-        print(f"Testing {len(weight_combinations)} weight combinations...")
+        print(f"Testing {len(weight_combinations)} weight combinations on training CV folds...")
 
         for weights in weight_combinations:
-            # Compute weighted average of predictions
-            weighted_preds = np.zeros(len(X_val_np))
+            # Compute weighted average of CV predictions on TRAINING SET
+            weighted_preds = np.zeros(len(X_train_np))
             for i, preds in enumerate(model_predictions):
                 weighted_preds += weights[i] * preds
             weighted_preds /= sum(weights)
 
             # Convert to binary predictions
             binary_preds = (weighted_preds >= 0.5).astype(int)
-            score = accuracy_score(y_val_np, binary_preds)
+            score = accuracy_score(y_train_np, binary_preds)
 
             if score > best_score:
                 best_score = score
                 best_weights = list(weights)
 
-        print(f"Best validation score with optimized weights: {best_score:.4f}")
+        print(f"Best CV score with optimized weights: {best_score:.4f}")
+        print("  ✓ Weights optimized on training set CV (no validation leakage)")
         return best_weights
 
     # ===== RFECV FEATURE SELECTION =====
@@ -5107,7 +5570,7 @@ class ImprovedUFCPredictor:
                 n_estimators=200,
                 max_depth=12,
                 random_state=42,
-                n_jobs=-1
+                n_jobs=SAFE_N_JOBS
             )
 
         # RFECV with TimeSeriesSplit
@@ -5135,7 +5598,7 @@ class ImprovedUFCPredictor:
             cv=TimeSeriesSplit(n_splits=n_splits),
             scoring='accuracy',
             min_features_to_select=min_features,
-            n_jobs=-1,
+            n_jobs=SAFE_N_JOBS,
             verbose=0
         )
 
@@ -5261,8 +5724,10 @@ class ImprovedUFCPredictor:
 
         D, I_inv = self.directional_and_invariant(X_orig, X_swap)
 
-        print(f"   ✓ Directional features: {len(D.columns)} (flip on swap)")
-        print(f"   ✓ Invariant features: {len(I_inv.columns)} (stay same on swap)")
+        print(f"   ✓ Testing {len(available_features)} features via antisymmetrization:")
+        print(f"      - Created {len(D.columns)} directional candidates (X_orig - X_swap)")
+        print(f"      - Created {len(I_inv.columns)} invariant candidates (X_orig + X_swap)")
+        print("      - Features that don't flip/stay will be flat (zeros) and dropped next")
 
         # Step 4: Drop flat/constant features from both directional and invariant sets
         print("\n4. Removing flat features...")
@@ -5677,7 +6142,7 @@ class ImprovedUFCPredictor:
                 max_features='sqrt',
                 class_weight={0: 1.0, 1: scale_weight},
                 random_state=42,
-                n_jobs=-1
+                n_jobs=SAFE_N_JOBS
             )
             estimators.append(('rf', rf_model))
 
@@ -5690,7 +6155,7 @@ class ImprovedUFCPredictor:
                 max_iter=1000,
                 class_weight={0: 1.0, 1: scale_weight},
                 random_state=42,
-                n_jobs=-1
+                n_jobs=SAFE_N_JOBS
             )
 
             logreg_pipeline = Pipeline([
@@ -5736,7 +6201,7 @@ class ImprovedUFCPredictor:
                     penalty='l2',       # Ridge regularization
                     max_iter=1000,
                     random_state=42,
-                    n_jobs=-1,
+                    n_jobs=SAFE_N_JOBS,
                     solver='lbfgs'
                 )
 
@@ -5744,7 +6209,7 @@ class ImprovedUFCPredictor:
                     estimators=estimators,
                     final_estimator=meta_learner,
                     cv=3,  # 3-fold CV for generating meta-features (faster than 5-fold)
-                    n_jobs=-1,
+                    n_jobs=SAFE_N_JOBS,
                     passthrough=False  # Don't pass original features to meta-learner
                 )
                 print(f"✓ Stacking ensemble created with {len(estimators)} base models + LogisticRegression meta-learner")
@@ -5765,7 +6230,7 @@ class ImprovedUFCPredictor:
                     estimators=estimators,
                     voting='soft',
                     weights=optimal_weights,
-                    n_jobs=-1
+                    n_jobs=SAFE_N_JOBS
                 )
                 print(f"\n✓ Voting ensemble created with {len(estimators)} models: {[name for name, _ in estimators]}")
         else:
@@ -5775,7 +6240,7 @@ class ImprovedUFCPredictor:
                 max_depth=10,
                 min_samples_split=10,
                 random_state=42,
-                n_jobs=-1
+                n_jobs=SAFE_N_JOBS
             )
 
         # Train final model on train+val
@@ -5927,7 +6392,7 @@ class ImprovedUFCPredictor:
                     fold_params['n_jobs'] = -1
                 fold_model = XGBClassifier(**fold_params)
             else:
-                fold_model = RandomForestClassifier(n_estimators=600, random_state=42, n_jobs=-1)
+                fold_model = RandomForestClassifier(n_estimators=600, random_state=42, n_jobs=SAFE_N_JOBS)
 
             fold_model.fit(X_fold_train, y_fold_train)
             score = fold_model.score(X_fold_val, y_fold_val)
