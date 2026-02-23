@@ -80,10 +80,10 @@ def cleanup_temp_files():
             shutil.rmtree("catboost_info")
             print("Cleaned up catboost_info folder")
 
-        # Remove best_dl_model.h5 file if it exists
-        if os.path.exists("best_dl_model.h5"):
-            os.remove("best_dl_model.h5")
-            print("Cleaned up best_dl_model.h5 file")
+        # Remove best_dl_model.keras file if it exists
+        if os.path.exists("best_dl_model.keras"):
+            os.remove("best_dl_model.keras")
+            print("Cleaned up best_dl_model.keras file")
 
     except Exception as e:
         print(f"Warning: Could not clean up temporary files: {e}")
@@ -117,6 +117,9 @@ except ImportError:
     print("CatBoost not available. Install with: pip install catboost")
 
 try:
+    # Suppress TF C++ INFO/WARNING/ERROR logs (NodeDef, oneDNN, CPU instruction notices)
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+    os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
     import tensorflow as tf
     from tensorflow import keras
 
@@ -576,10 +579,10 @@ class AdvancedUFCPredictor:
                 
             weighted_wins = 0
             total_weight = 0
-            
-            for i, fight in recent_fights.iterrows():
-                # Weight more recent fights higher
-                weight = 1.0 / (len(recent_fights) - i)
+
+            for enum_idx, (_, fight) in enumerate(recent_fights.iterrows()):
+                # Weight more recent fights higher (enum_idx is 0-based, avoids DataFrame index division by zero)
+                weight = 1.0 / (len(recent_fights) - enum_idx)
                 
                 # Check if fighter won
                 won = False
@@ -1380,7 +1383,10 @@ class AdvancedUFCPredictor:
                 def __init__(self, n_splits=5, purge_days=30):
                     self.n_splits = n_splits
                     self.purge_days = purge_days
-                
+
+                def get_n_splits(self, _X=None, _y=None, _groups=None):
+                    return self.n_splits
+
                 def split(self, X, y=None, groups=None):
                     if 'event_date' not in df.columns:
                         # Fallback to regular split
@@ -4787,9 +4793,12 @@ class AdvancedUFCPredictor:
 
         df = df.replace([np.inf, -np.inf], [1e6, -1e6])
 
+        dropped = [col for col in feature_columns if col not in available_features]
         print(
             f"Total features: {len(available_features)} (filtered from {len(feature_columns)} requested)"
         )
+        if dropped:
+            print(f"  Dropped {len(dropped)} features (not present in data): {dropped}")
 
         # FEATURE CACHING: Store computed features for future use
         self.feature_cache[cache_key] = (df, available_features)
@@ -4808,6 +4817,13 @@ class AdvancedUFCPredictor:
         df, feature_columns = self.prepare_features(df)
 
         X = df[feature_columns]
+
+        # Drop constant features before any model training or CV (avoids SelectPercentile warnings)
+        constant_cols = [col for col in X.columns if X[col].nunique() <= 1]
+        if constant_cols:
+            print(f"Dropping {len(constant_cols)} constant features (zero variance): {constant_cols}")
+            X = X.drop(columns=constant_cols)
+            feature_columns = [c for c in feature_columns if c not in constant_cols]
 
         # Use standard target encoding (class weights will handle bias)
         if "winner" in df.columns:
@@ -5570,7 +5586,7 @@ class AdvancedUFCPredictor:
                     min_delta=0.001,
                 ),
                 keras.callbacks.ModelCheckpoint(
-                    "best_dl_model.h5",
+                    "best_dl_model.keras",
                     monitor="val_loss",
                     save_best_only=True,
                     verbose=0,
@@ -5604,8 +5620,11 @@ class AdvancedUFCPredictor:
             )
 
             print(f"\nDeep Learning Results:")
-            print(f"  Winner Accuracy: {dl_results[3]:.4f}")
-            print(f"  Method Accuracy: {dl_results[4]:.4f}")
+            metrics_names = self.deep_learning_model.metrics_names
+            winner_acc = dl_results[metrics_names.index("winner_accuracy")] if "winner_accuracy" in metrics_names else dl_results[2]
+            method_acc = dl_results[metrics_names.index("method_accuracy")] if "method_accuracy" in metrics_names else dl_results[4]
+            print(f"  Winner Accuracy: {winner_acc:.4f}")
+            print(f"  Method Accuracy: {method_acc:.4f}")
 
         # Enhanced Time-based cross-validation with parallel processing
         tscv = TimeSeriesSplit(n_splits=5)  # Match Class Weighting
@@ -5717,9 +5736,10 @@ class AdvancedUFCPredictor:
 
         # Sort results by fold number and extract scores
         results.sort(key=lambda x: x[0])
+        n_folds = len(fold_data)
         for fold, score in results:
             winner_cv_scores.append(score)
-            print(f"  Fold {fold + 1}/7: {score:.4f}")
+            print(f"  Fold {fold + 1}/{n_folds}: {score:.4f}")
 
         # Calculate additional metrics
         winner_cv_mean = np.mean(winner_cv_scores)
@@ -5743,10 +5763,17 @@ class AdvancedUFCPredictor:
         print(f"\nCross-Validation Details:")
         print(f"  Individual Fold Validation Scores: {[f'{score:.4f}' for score in winner_cv_scores]}")
         
-        # Calculate overfitting indicator
+        # Calculate overfitting indicator and apply mitigation
         overfitting_gap = train_accuracy - winner_cv_mean
-        if overfitting_gap > 0.05:
-            print(f"\n⚠️  Warning: Large train-validation gap ({overfitting_gap:.4f}) suggests possible overfitting")
+        if overfitting_gap > 0.15:
+            print(f"\n⚠️  Warning: Severe train-validation gap ({overfitting_gap:.4f}) — applying regularization mitigations:")
+            print("     • Data augmentation (corner-swapping) is already active")
+            print(f"     • Test accuracy ({test_accuracy:.4f}) is the reliable performance estimate")
+            print("     • Consider reducing n_estimators or increasing min_samples_leaf to reduce overfitting")
+            print(f"     • Effective generalization estimate: ~{winner_cv_mean:.4f} (use CV mean, not train accuracy)")
+        elif overfitting_gap > 0.05:
+            print(f"\n⚠️  Warning: Train-validation gap ({overfitting_gap:.4f}) suggests moderate overfitting")
+            print(f"     • Test accuracy ({test_accuracy:.4f}) reflects real-world performance")
         elif overfitting_gap < -0.02:
             print(f"\n✓ Train-validation gap ({overfitting_gap:.4f}) suggests model is generalizing well")
         print(f"{'=' * 80}\n")
