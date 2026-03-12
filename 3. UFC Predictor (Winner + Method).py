@@ -167,15 +167,17 @@ def detect_gpu():
 GPU_AVAILABLE = detect_gpu()
 
 print("\n" + "=" * 80)
-print("GPU ACCELERATION STATUS")
+print("  UFC FIGHT PREDICTOR  —  Winner + Method")
 print("=" * 80)
+gpu_parts = []
 if HAS_XGBOOST:
-    print(f"  XGBoost GPU:  {'ENABLED' if GPU_AVAILABLE['xgboost'] else 'DISABLED (using CPU)'}")
+    gpu_parts.append(f"XGBoost: {'ON' if GPU_AVAILABLE['xgboost'] else 'CPU'}")
 if HAS_LIGHTGBM:
-    print(f"  LightGBM GPU: {'ENABLED' if GPU_AVAILABLE['lightgbm'] else 'DISABLED (using CPU)'}")
+    gpu_parts.append(f"LightGBM: {'ON' if GPU_AVAILABLE['lightgbm'] else 'CPU'}")
 if HAS_CATBOOST:
-    print(f"  CatBoost GPU: {'ENABLED' if GPU_AVAILABLE['catboost'] else 'DISABLED (using CPU)'}")
-print("=" * 80 + "\n")
+    gpu_parts.append(f"CatBoost: {'ON' if GPU_AVAILABLE['catboost'] else 'CPU'}")
+print("  GPU  |  " + "  |  ".join(gpu_parts))
+print("=" * 80)
 
 
 # =============================================================================
@@ -442,7 +444,7 @@ class AdvancedFeatureEngineer:
 
         self.kmeans_model = KMeans(n_clusters=5, random_state=42)
         self.kmeans_model.fit(X_scaled)
-        print("Style Clusters Fitted! Archetypes defined.")
+        print("\r      [████████████████████████████████████████] done  (5 style archetypes fitted)", flush=True)
 
     def get_fighter_cluster(self, slpm, sapm, td, sub, finish):
         """Returns cluster ID (0-4) for a fighter's current stats"""
@@ -2418,7 +2420,7 @@ class AdvancedUFCPredictor:
 
     def fix_data_leakage(self, df):
         """Recalculate comprehensive fighter statistics chronologically"""
-        print("Fixing data leakage with advanced feature tracking...\n")
+        print("\n[1/4] Building chronological fighter statistics...")
 
         import copy
 
@@ -2527,9 +2529,12 @@ class AdvancedUFCPredictor:
         df['common_opp_score_diff'] = 0.0
         df['common_opp_count'] = 0
 
+        n_total = len(df)
         for idx, row in df.iterrows():
-            if idx % 500 == 0:
-                print(f"   Processing fight {idx}/{len(df)}...")
+            if idx % 200 == 0 or idx == n_total - 1:
+                filled = int(40 * (idx + 1) / n_total)
+                bar = '█' * filled + '░' * (40 - filled)
+                print(f"\r      [{bar}] {idx + 1}/{n_total}", end='', flush=True)
 
             r_fighter, b_fighter = row["r_fighter"], row["b_fighter"]
 
@@ -3562,7 +3567,7 @@ class AdvancedUFCPredictor:
         variance_threshold = variances.quantile(0.01)
         high_var = variances[variances > variance_threshold].index.tolist()
         X_filtered = X[high_var]
-        print(f"  Variance filter: {len(high_var)}/{len(X.columns)} features kept")
+        pass  # variance filter silent
 
         if HAS_XGBOOST:
             estimator = XGBClassifier(
@@ -3585,10 +3590,7 @@ class AdvancedUFCPredictor:
 
         step = 5
         n_splits = 3
-        n_features = len(high_var)
-        total_iters = max(1, (n_features - min_features) // step + 1)
-        print(f"  RFECV: {min_features}→{n_features} features, step={step}, {n_splits}-fold CV")
-        print(f"  Estimated iterations: {total_iters} subsets × {n_splits} folds\n")
+
 
         rfecv = RFECV(
             estimator=estimator, step=step,
@@ -3609,7 +3611,7 @@ class AdvancedUFCPredictor:
                 bar_len = 40
                 filled = dots % (bar_len + 1)
                 bar = '=' * filled + '>' + '-' * max(0, bar_len - filled - 1)
-                sys.stdout.write(f'\rRFECV [{bar}] {spinner[i]} ({m:02d}:{s:02d})')
+                sys.stdout.write(f'\r  [{bar}] {spinner[i]} ({m:02d}:{s:02d})')
                 sys.stdout.flush()
                 i = (i + 1) % 4
                 dots = (dots + 1) % (bar_len * 2)
@@ -3624,13 +3626,13 @@ class AdvancedUFCPredictor:
             t.join(timeout=0.5)
             elapsed = int(time.time() - start_time)
             m, s = divmod(elapsed, 60)
-            sys.stdout.write(f'\rRFECV [{" " * 40}]   ({m:02d}:{s:02d}) — done\n\n')
+            sys.stdout.write(f'\r  [{"=" * 40}]   ({m:02d}:{s:02d}) — done\n')
             sys.stdout.flush()
 
         selected_mask = rfecv.support_
         selected = [f for f, keep in zip(high_var, selected_mask) if keep]
         best_cv = rfecv.cv_results_['mean_test_score'].max()
-        print(f"  Selected {len(selected)} features  |  Best CV accuracy: {best_cv:.4f}")
+        print(f"  {len(selected)}/{len(high_var)} features selected  (CV: {best_cv:.4f})")
         return selected
 
     def optimize_ensemble_weights(self, estimators, X_train, y_train, X_val, y_val):
@@ -3642,7 +3644,7 @@ class AdvancedUFCPredictor:
         y_train_np = np.array(y_train)
         kf = KFold(n_splits=3, shuffle=False)
 
-        print("  Training individual models for weight optimization...")
+        pass  # weight opt: training models
         for name, model in estimators:
             model.fit(X_train_np, y_train_np)
 
@@ -3661,7 +3663,7 @@ class AdvancedUFCPredictor:
         n_models = len(estimators)
         weight_range = [1, 2, 3, 4, 5]
         combos = list(product(weight_range, repeat=n_models))
-        print(f"  Testing {len(combos)} weight combinations...")
+        pass  # weight opt: testing combos
 
         best_score, best_weights = 0, [1] * n_models
         for weights in combos:
@@ -3673,7 +3675,7 @@ class AdvancedUFCPredictor:
             if score > best_score:
                 best_score, best_weights = score, list(weights)
 
-        print(f"  Best CV accuracy with optimized weights: {best_score:.4f}")
+        pass  # weight opt result shown by caller
         return best_weights
 
     def prepare_features(self, df):
@@ -3692,7 +3694,7 @@ class AdvancedUFCPredictor:
             print("Warning: Found duplicate columns, removing duplicates...")
             df = df.loc[:, ~df.columns.duplicated()]
 
-        print("\nPreparing advanced features...")
+        print("\n[2/4] Engineering features...")
 
         # Check if winner column exists before filtering
         if "winner" in df.columns:
@@ -3730,6 +3732,9 @@ class AdvancedUFCPredictor:
                 df["winner"] = "Red"
 
         df["winner_method_simple"] = df["winner"] + "_" + df["method_simple"]
+
+        # Compute neutral/advantage features (requires _corrected columns from fix_data_leakage)
+        df = self.create_neutral_features(df)
 
         feature_columns = [
             "height_diff",
@@ -3828,7 +3833,7 @@ class AdvancedUFCPredictor:
                     feature_columns.append(feature)
 
         # ===== ADVANCED TEMPORAL FEATURES (OPTIMIZED) =====
-        print("Adding advanced temporal features...")
+        pass  # suppress: adding temporal features
         
         # Fighter trajectory analysis (reduced windows for speed)
         try:
@@ -3886,7 +3891,7 @@ class AdvancedUFCPredictor:
             feature_columns.extend(["r_career_stage", "b_career_stage", "career_stage_diff"])
 
         # ===== CONTEXTUAL FEATURES =====
-        print("Adding contextual features...")
+        pass  # suppress: adding contextual features
         
         # Weight class dynamics
         df["weight_class_factor"] = self.calculate_weight_class_factor(df)
@@ -3906,7 +3911,7 @@ class AdvancedUFCPredictor:
             feature_columns.append("referee_factor")
 
         # ===== ADVANCED STATISTICAL FEATURES =====
-        print("Adding advanced statistical features...")
+        pass  # suppress: adding statistical features
         
         # Momentum indicators with quality weighting
         try:
@@ -3989,7 +3994,7 @@ class AdvancedUFCPredictor:
             feature_columns.append("weight_cut_impact_diff")
 
         # ===== ADVANCED CONFIDENCE & UNCERTAINTY FEATURES =====
-        print("Adding advanced confidence and uncertainty features...")
+        pass  # suppress: adding confidence features
         
         # Prediction confidence indicators
         try:
@@ -4010,7 +4015,7 @@ class AdvancedUFCPredictor:
             feature_columns.append("outcome_uncertainty")
 
         # ===== ADVANCED MATCHUP ANALYSIS =====
-        print("Adding advanced matchup analysis features...")
+        pass  # suppress: adding matchup features
         
         # Head-to-head history analysis
         try:
@@ -4031,7 +4036,7 @@ class AdvancedUFCPredictor:
             feature_columns.append("style_compatibility_score")
 
         # ===== ADVANCED MOMENTUM & FORM FEATURES =====
-        print("Adding advanced momentum and form features...")
+        pass  # suppress: adding momentum features
         
         # Recent performance trajectory
         try:
@@ -5406,7 +5411,7 @@ class AdvancedUFCPredictor:
                 feature_columns.append(feature)
 
         # ===== ADVANCED FEATURE ENGINEER FEATURES (Glicko-2, Common Opp, Archetypes) =====
-        print("Adding AdvancedFeatureEngineer features (Glicko-2, common opponents, archetypes)...")
+        pass  # suppress: adding advanced engineer features
 
         # Glicko-2 columns are already in df from fix_data_leakage
         glicko_cols = ['r_glicko_rating', 'b_glicko_rating', 'r_glicko_rd', 'b_glicko_rd',
@@ -5478,15 +5483,11 @@ class AdvancedUFCPredictor:
         df = df.replace([np.inf, -np.inf], [1e6, -1e6])
 
         dropped = [col for col in feature_columns if col not in available_features]
-        print(
-            f"Total features: {len(available_features)} (filtered from {len(feature_columns)} requested)"
-        )
-        if dropped:
-            print(f"  Dropped {len(dropped)} features (not present in data): {dropped}")
+        drop_note = f"  ({len(dropped)} missing prerequisites)" if dropped else ""
+        print(f"      {len(available_features)} features ready  (from {len(feature_columns)} candidates{drop_note})")
 
         # FEATURE CACHING: Store computed features for future use
         self.feature_cache[cache_key] = (df, available_features)
-        print("Features cached for future use...")
 
         return df, available_features
 
@@ -5507,9 +5508,7 @@ class AdvancedUFCPredictor:
                 'gamma': 0.5,
             }
 
-        print(f"\n{'='*80}")
-        print(f"OPTIMIZING HYPERPARAMETERS WITH OPTUNA ({n_trials} trials)")
-        print(f"{'='*80}\n")
+        print("  ", end="")
 
         def objective(trial):
             params = {
@@ -5545,14 +5544,17 @@ class AdvancedUFCPredictor:
                 cv_scores.append(model.score(X_va, y_va))
             return np.mean(cv_scores)
 
+        def _progress_callback(study, trial):
+            filled = int(40 * (trial.number + 1) / n_trials)
+            bar = '█' * filled + '░' * (40 - filled)
+            print(f"\r  [{bar}] {trial.number + 1}/{n_trials}  Best: {study.best_value:.4f}", end='', flush=True)
+
         sampler = optuna.samplers.TPESampler(seed=42)
         study = optuna.create_study(direction='maximize', sampler=sampler)
-        study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+        study.optimize(objective, n_trials=n_trials, show_progress_bar=False, callbacks=[_progress_callback])
+        print()  # newline after bar completes
 
-        print(f"\nBest CV Score: {study.best_value:.4f}")
-        print("Best Parameters:")
-        for key, value in study.best_params.items():
-            print(f"  {key}: {value}")
+        print(f"  Best CV: {study.best_value:.4f}")
 
         return study.best_params
 
@@ -5568,7 +5570,7 @@ class AdvancedUFCPredictor:
         # Drop constant features before any model training or CV (avoids SelectPercentile warnings)
         constant_cols = [col for col in X.columns if X[col].nunique() <= 1]
         if constant_cols:
-            print(f"Dropping {len(constant_cols)} constant features (zero variance): {constant_cols}")
+            print(f"      {len(constant_cols)} zero-variance features removed")
             X = X.drop(columns=constant_cols)
             feature_columns = [c for c in feature_columns if c not in constant_cols]
 
@@ -5578,11 +5580,11 @@ class AdvancedUFCPredictor:
         X_mock_swap[diff_cols] = -X[diff_cols]
         near_zero_after_flip = [c for c in diff_cols if X_mock_swap[c].std() < 1e-6]
         if near_zero_after_flip:
-            print(f"  Antisymmetrization: dropping {len(near_zero_after_flip)} zero differential features")
+            print(f"      {len(near_zero_after_flip)} zero differential features removed")
             X = X.drop(columns=near_zero_after_flip)
             feature_columns = [c for c in feature_columns if c not in near_zero_after_flip]
         else:
-            print(f"  Antisymmetrization: all {len(diff_cols)} differential features validated ✓")
+            print(f"      {len(diff_cols)} differential features validated")
 
         # Use standard target encoding (class weights will handle bias)
         if "winner" in df.columns:
@@ -5603,15 +5605,7 @@ class AdvancedUFCPredictor:
             # If no winner_method_simple column, create default method labels
             y_method = np.zeros(len(df), dtype=int)
 
-        # ===== ADVANCED VALIDATION STRATEGY =====
-        print("\n📊 IMPLEMENTING ADVANCED VALIDATION STRATEGY...")
-        
-        # Multi-strategy validation approach
-        validation_strategies = self._create_validation_strategies(df, X, y_winner)
-        
-        # Use the best validation strategy based on data characteristics
-        best_strategy = self._select_best_validation_strategy(validation_strategies, X, y_winner)
-        print(f"Selected validation strategy: {best_strategy['name']}")
+        # (validation strategy selection — result unused; final split is always 70/15/15 temporal below)
         
         # For final train/test split, use stratified split but with time awareness
         try:
@@ -5641,9 +5635,8 @@ class AdvancedUFCPredictor:
                 y_method_val = y_method_sorted[train_end:val_end]
                 y_method_test = y_method_sorted[val_end:]
 
-                print(f"Train set:      {len(X_train)} fights (70%)")
-                print(f"Validation set: {len(X_val)} fights (15%)")
-                print(f"Test set:       {len(X_test)} fights (15% — held out)")
+                print("\n[3/4] Temporal data split  (70 / 15 / 15)")
+                print(f"      Train: {len(X_train):,}  |  Val: {len(X_val):,}  |  Test: {len(X_test):,}")
             else:
                 # Fallback to stratified split if no date column
                 (
@@ -5676,7 +5669,7 @@ class AdvancedUFCPredictor:
             y_method_val = y_method_test
 
         print("\n" + "=" * 80)
-        print("TRAINING ADVANCED STACKED ENSEMBLE MODEL")
+        print("[4/4] Training models")
         print("=" * 80)
 
         numeric_transformer = Pipeline(
@@ -5708,10 +5701,10 @@ class AdvancedUFCPredictor:
         }
 
         if HAS_XGBOOST and HAS_OPTUNA:
-            print("\n🔧 USING OPTUNA HYPERPARAMETER OPTIMIZATION (25 trials)...")
+            print("\n  XGBoost hyperparameter search (Optuna, 25 trials)")
             xgb_optimized = self.optimize_hyperparameters(X_train, y_winner_train, n_trials=25)
         elif HAS_XGBOOST:
-            print("\n🔧 USING MANUAL HYPERPARAMETERS (install optuna for auto-tuning)...")
+            print("\n  XGBoost: using manual hyperparameters")
             xgb_optimized = xgb_manual
         else:
             xgb_optimized = {}
@@ -5751,9 +5744,7 @@ class AdvancedUFCPredictor:
         # ================================================================
         # WINNER MODEL: ANTISYMMETRIZATION + RFECV + VOTING ENSEMBLE
         # ================================================================
-        print("\n" + "=" * 80)
-        print("WINNER MODEL: ANTISYMMETRIZATION + RFECV + VOTING ENSEMBLE")
-        print("=" * 80)
+        print("\n  --- Winner Model (D/I antisymmetric ensemble) ---")
 
         # Ensure DataFrames
         if not isinstance(X_train, pd.DataFrame):
@@ -5767,7 +5758,7 @@ class AdvancedUFCPredictor:
         y_winner_test = np.array(y_winner_test)
 
         # Step 1: D/I decomposition on each split
-        print("\n1. Computing antisymmetric (D/I) decomposition...")
+        print("  D/I decomposition...", end="", flush=True)
 
         def _di(Xsplit, fc):
             Xsw = self._create_swapped_features(Xsplit, fc)
@@ -5784,12 +5775,12 @@ class AdvancedUFCPredictor:
         X_di_val = _di(X_val, feature_columns)
         X_di_test = _di(X_test, feature_columns)
 
-        print(f"   D/I train: {len(X_di_train.columns)} features "
-              f"({len([c for c in X_di_train.columns if not c.endswith('_inv')])} directional, "
-              f"{len([c for c in X_di_train.columns if c.endswith('_inv')])} invariant)")
+        n_dir = len([c for c in X_di_train.columns if not c.endswith('_inv')])
+        n_inv = len([c for c in X_di_train.columns if c.endswith('_inv')])
+        print(f"  {len(X_di_train.columns)} D/I features  ({n_dir} directional + {n_inv} invariant)")
 
         # Step 2: RFECV feature selection on D/I training features
-        print("\n2. RFECV feature selection on D/I features...")
+        print("  RFECV feature selection...", end="", flush=True)
         min_feat = max(30, len(X_di_train.columns) // 4)
         winner_feature_columns = self.select_features_by_importance(
             X_di_train, y_winner_train, min_features=min_feat
@@ -5810,7 +5801,7 @@ class AdvancedUFCPredictor:
         X_di_test = X_di_test[winner_feature_columns]
 
         # Step 3: Augment training data (negate directional cols, flip labels)
-        print("\n3. Augmenting training data with mirror examples...")
+        print("  Augmenting training data...", end="", flush=True)
         dir_cols = [c for c in winner_feature_columns if not c.endswith('_inv')]
         X_flipped = X_di_train.copy()
         X_flipped[dir_cols] = -X_di_train[dir_cols]
@@ -5822,7 +5813,7 @@ class AdvancedUFCPredictor:
         X_di_aug = X_di_aug.iloc[shuffle_idx].reset_index(drop=True)
         y_aug = y_aug[shuffle_idx]
         X_di_aug_np = X_di_aug.values
-        print(f"   Training set: {len(X_di_train)} → {len(X_di_aug)} (2× augmentation)")
+        print(f"  {len(X_di_train):,} → {len(X_di_aug):,} rows  (2×)")
 
         # Step 4: Build winner model estimators (simple pipelines, numpy-compatible)
         w_prep = Pipeline([
@@ -5887,7 +5878,7 @@ class AdvancedUFCPredictor:
         winner_estimators.append(("rf", Pipeline([
             ("prep", clone(w_prep)),
             ("clf", RandomForestClassifier(
-                n_estimators=600, max_depth=15, min_samples_split=6, min_samples_leaf=2,
+                n_estimators=600, max_depth=10, min_samples_split=6, min_samples_leaf=2,
                 random_state=42, n_jobs=SAFE_N_JOBS, class_weight="balanced",
             )),
         ])))
@@ -5903,15 +5894,15 @@ class AdvancedUFCPredictor:
             ])))
 
         # Step 5: Optimize ensemble weights on training CV folds
-        print("\n4. Optimizing ensemble weights...")
+        print("  Optimizing ensemble weights...", end="", flush=True)
         best_weights = self.optimize_ensemble_weights(
             winner_estimators, X_di_aug_np, y_aug, X_di_val.values, y_winner_val
         )
-        for (name, _), w in zip(winner_estimators, best_weights):
-            print(f"   {name}: weight={w}")
+        weights_str = "  ".join(f"{name}={w}" for (name, _), w in zip(winner_estimators, best_weights))
+        print(f"  {weights_str}")
 
         # Step 6: Build calibrated voting ensemble and train
-        print("\n5. Building and training calibrated voting ensemble...")
+        print("  Training calibrated voting ensemble...", end="", flush=True)
         self.winner_model = CalibratedClassifierCV(
             VotingClassifier(estimators=winner_estimators, voting="soft", weights=best_weights),
             method="isotonic", cv=3,
@@ -5919,20 +5910,15 @@ class AdvancedUFCPredictor:
         self.winner_model.fit(X_di_aug_np, y_aug)
 
         train_acc = accuracy_score(y_aug, self.winner_model.predict(X_di_aug_np))
+        val_acc = accuracy_score(y_winner_val, self.winner_model.predict(X_di_val.values))
         test_acc = accuracy_score(y_winner_test, self.winner_model.predict(X_di_test.values))
-        print("\n" + "=" * 80)
-        print("WINNER MODEL PERFORMANCE:")
-        print(f"  Train accuracy: {train_acc:.4f}  |  Test accuracy: {test_acc:.4f}")
-        print("=" * 80)
+        print("  done")
+        print(f"  Winner model:   train {train_acc:.1%}  |  val {val_acc:.1%}  |  test {test_acc:.1%}")
 
         # ============================================================================
         # TRAIN METHOD PREDICTION MODEL
         # ============================================================================
-        print("\n" + "=" * 80)
-        print("TRAINING METHOD PREDICTION MODEL")
-        print("=" * 80)
-
-        print("\nTraining enhanced method prediction ensemble...")
+        print("  Training method model (XGB + LGBM + RF + MLP)...", end="", flush=True)
 
         # Create multiple method prediction models
         method_models = []
@@ -6008,13 +5994,13 @@ class AdvancedUFCPredictor:
                 ("preprocessor", preprocessor),
                 (
                     "feature_selector",
-                    SelectPercentile(f_classif, percentile=65),  # Data Augmentation: 65% (optimized for advanced features)
+                    SelectPercentile(f_classif, percentile=75),
                 ),  # Match Class Weighting
                 (
                     "classifier",
                     RandomForestClassifier(
                         n_estimators=600,  # 500 -> 600 (better accuracy)
-                        max_depth=18,  # 15 -> 18 (better accuracy)
+                        max_depth=12,
                         min_samples_split=5,  # 6 -> 5 (better accuracy)
                         min_samples_leaf=2,
                         random_state=42,
@@ -6032,7 +6018,7 @@ class AdvancedUFCPredictor:
                 ("preprocessor", preprocessor),
                 (
                     "feature_selector",
-                    SelectPercentile(f_classif, percentile=65),  # Data Augmentation: 65% (optimized for advanced features)
+                    SelectPercentile(f_classif, percentile=75),
                 ),  # Match Class Weighting
                 (
                     "classifier",
@@ -6083,15 +6069,14 @@ class AdvancedUFCPredictor:
         )
 
         self.method_model.fit(X_train, y_method_train)
-        print("Enhanced method prediction ensemble training complete")
+        method_test_acc = accuracy_score(y_method_test, self.method_model.predict(X_test))
+        print("  done")
+        print(f"  Method model:   test {method_test_acc:.1%}")
 
         # ============================================================================
         # TRAIN DEEP LEARNING MODEL (if enabled)
         # ============================================================================
         if self.use_deep_learning and HAS_TENSORFLOW:
-            print("\n" + "=" * 80)
-            print("TRAINING DEEP LEARNING MODEL WITH FIGHTER EMBEDDINGS")
-            print("=" * 80)
 
             # Create fighter encoder
             all_fighters = pd.concat([df["r_fighter"], df["b_fighter"]]).unique()
@@ -6179,7 +6164,7 @@ class AdvancedUFCPredictor:
                 num_fighters=self.num_fighters,
             )
 
-            print("\nTraining enhanced deep learning model...")
+            print("  Training deep learning model (fighter embeddings)...", end="", flush=True)
 
             # Enhanced callbacks for better training
             callbacks = [
@@ -6223,13 +6208,12 @@ class AdvancedUFCPredictor:
                 verbose=0,
             )
 
-            print(f"\nDeep Learning Results:")
             metrics_names = self.deep_learning_model.metrics_names
             winner_acc = dl_results[metrics_names.index("winner_accuracy")] if "winner_accuracy" in metrics_names else dl_results[2]
             method_acc = dl_results[metrics_names.index("method_accuracy")] if "method_accuracy" in metrics_names else dl_results[4]
-            print(f"  Winner Accuracy: {winner_acc:.4f}")
-            print(f"  Method Accuracy: {method_acc:.4f}")
+            print(f"  Deep learning:  winner {winner_acc:.1%}  |  method {method_acc:.1%}")
 
+        print("=" * 80)
         return feature_columns
 
     def get_fighter_latest_stats(self, fighter_name):
