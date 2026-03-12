@@ -11,14 +11,14 @@ from sklearn.model_selection import train_test_split, TimeSeriesSplit, Stratifie
 from sklearn.ensemble import (
     RandomForestClassifier,
     VotingClassifier,
-    StackingClassifier,
 )
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
-from sklearn.feature_selection import SelectPercentile, f_classif
-from sklearn.metrics import log_loss
+from sklearn.feature_selection import SelectPercentile, f_classif, RFECV
+from sklearn.metrics import log_loss, accuracy_score
+from sklearn.base import clone
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
@@ -26,7 +26,6 @@ from scipy.stats import linregress
 import warnings
 import shutil
 import atexit
-from joblib import Parallel, delayed
 import multiprocessing as mp
 
 # Enable multiprocessing for faster training
@@ -37,6 +36,17 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_MAX_THREADS"] = "1"
 os.environ["XGBOOST_DISABLE_MULTIPROCESSING"] = "1"
+
+# Memory-safe parallelism: avoids OOM with large feature sets (400+ features)
+SAFE_N_JOBS = max(1, mp.cpu_count() // 2)
+
+try:
+    import optuna
+    HAS_OPTUNA = True
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+except ImportError:
+    HAS_OPTUNA = False
+    print("Optuna not available. Install with: pip install optuna")
 
 # Enable multiprocessing for our custom parallel operations
 os.environ["JOBLIB_MULTIPROCESSING"] = "1"
@@ -129,6 +139,361 @@ except ImportError:
     print("TensorFlow not available. Install with: pip install tensorflow")
 
 
+def detect_gpu():
+    """Detect if GPU is available for XGBoost, LightGBM, and CatBoost"""
+    gpu_available = {'xgboost': False, 'lightgbm': False, 'catboost': False}
+    if HAS_XGBOOST:
+        try:
+            t = XGBClassifier(n_estimators=1, device='cuda')
+            t.fit([[1, 2], [3, 4]], [0, 1])
+            gpu_available['xgboost'] = True
+        except Exception:
+            pass
+    if HAS_LIGHTGBM:
+        try:
+            t = LGBMClassifier(n_estimators=1, device='gpu', verbose=-1)
+            t.fit([[1, 2], [3, 4]], [0, 1])
+            gpu_available['lightgbm'] = True
+        except Exception:
+            pass
+    # CatBoost GPU: infer from XGBoost result (same CUDA stack).
+    # Do NOT run a training test — CatBoost holds the device globally, causing
+    # "device already requested 0" errors when train_models() later runs.
+    if HAS_CATBOOST:
+        gpu_available['catboost'] = gpu_available['xgboost']
+    return gpu_available
+
+
+GPU_AVAILABLE = detect_gpu()
+
+print("\n" + "=" * 80)
+print("GPU ACCELERATION STATUS")
+print("=" * 80)
+if HAS_XGBOOST:
+    print(f"  XGBoost GPU:  {'ENABLED' if GPU_AVAILABLE['xgboost'] else 'DISABLED (using CPU)'}")
+if HAS_LIGHTGBM:
+    print(f"  LightGBM GPU: {'ENABLED' if GPU_AVAILABLE['lightgbm'] else 'DISABLED (using CPU)'}")
+if HAS_CATBOOST:
+    print(f"  CatBoost GPU: {'ENABLED' if GPU_AVAILABLE['catboost'] else 'DISABLED (using CPU)'}")
+print("=" * 80 + "\n")
+
+
+# =============================================================================
+# ADVANCED FEATURE ENGINEERING CLASS
+# =============================================================================
+class AdvancedFeatureEngineer:
+    """
+    Generates high-impact features including:
+    1. Extended Z-Scores (Age, SApM, Finish Rate, Sub Avg)
+    2. Glicko-2 Ratings (Time-decaying skill ratings)
+    3. Common Opponent Math
+    4. Unsupervised Style Clustering (K-Means Archetypes)
+    """
+
+    def __init__(self):
+        self.glicko_ratings = {}
+        self.common_opp_matrix = {}
+        # Tracks mean/std for: SLpM, SApM, TD, Sub, Height, Reach, Age, FinishRate
+        self.weight_class_stats = {}
+
+        # CLUSTERING ENGINE
+        self.kmeans_model = None
+        self.scaler = None
+        self.training_data_for_clusters = []  # Store stats to fit KMeans later
+        self.fighter_styles = {}  # {fighter_name: cluster_id}
+        self.style_win_rates = {}  # {fighter_name: {cluster_0_wins: x, cluster_0_losses: y...}}
+
+    # =========================================================================
+    # 1. EXPANDED WEIGHT CLASS Z-SCORES
+    # =========================================================================
+    def update_weight_class_stats(self, df_history):
+        """
+        Calculates rolling annual averages for contextual normalization.
+        EXPANDED to include defensive and durability metrics.
+        """
+        df_temp = df_history.copy()
+        df_temp['year'] = pd.to_datetime(df_temp['event_date']).dt.year
+
+        # EXPANDED list of stats to normalize (8 metrics instead of 4)
+        stats_to_norm = [
+            'r_pro_SLpM_corrected', 'r_pro_SApM_corrected',
+            'r_pro_td_avg_corrected', 'r_pro_sub_avg_corrected',
+            'r_height', 'r_reach', 'r_age_at_event',
+            'r_finish_rate'  # ko_rate + sub_rate calculated on the fly
+        ]
+
+        for wc in df_temp['weight_class'].unique():
+            if pd.isna(wc):
+                continue
+            for year in df_temp['year'].unique():
+                subset = df_temp[(df_temp['weight_class'] == wc) & (df_temp['year'] == year)]
+                if len(subset) > 5:  # Only calc if enough data
+                    stats_dict = {}
+                    for stat in stats_to_norm:
+                        # Calculate finish_rate on the fly if needed
+                        if stat == 'r_finish_rate':
+                            if 'r_ko_rate_corrected' in subset.columns and 'r_sub_rate_corrected' in subset.columns:
+                                finish_vals = subset['r_ko_rate_corrected'] + subset['r_sub_rate_corrected']
+                                stats_dict[stat] = {
+                                    'mean': finish_vals.mean(),
+                                    'std': finish_vals.std() if finish_vals.std() > 0 else 1.0
+                                }
+                        elif stat in subset.columns:
+                            stats_dict[stat] = {
+                                'mean': subset[stat].mean(),
+                                'std': subset[stat].std() if subset[stat].std() > 0 else 1.0
+                            }
+                    if stats_dict:
+                        self.weight_class_stats[(wc, year)] = stats_dict
+
+    def get_z_score_features(self, row, fighter_prefix):
+        """
+        Returns Z-scores comparing fighter to their weight class average.
+        EXPANDED: Now includes SApM, Sub Avg, Age, and Finish Rate.
+        """
+        year = pd.to_datetime(row['event_date']).year
+        wc = row.get('weight_class', None)
+
+        # Default 0 if missing (8 features instead of 4)
+        feats = {
+            f'{fighter_prefix}_slpm_zscore': 0,
+            f'{fighter_prefix}_sapm_zscore': 0,
+            f'{fighter_prefix}_td_avg_zscore': 0,
+            f'{fighter_prefix}_sub_avg_zscore': 0,
+            f'{fighter_prefix}_height_zscore': 0,
+            f'{fighter_prefix}_reach_zscore': 0,
+            f'{fighter_prefix}_age_zscore': 0,
+            f'{fighter_prefix}_finish_rate_zscore': 0
+        }
+
+        if pd.isna(wc):
+            return feats
+
+        # Map input columns to output feature names
+        metrics = {
+            f'{fighter_prefix}_pro_SLpM_corrected': f'{fighter_prefix}_slpm_zscore',
+            f'{fighter_prefix}_pro_SApM_corrected': f'{fighter_prefix}_sapm_zscore',
+            f'{fighter_prefix}_pro_td_avg_corrected': f'{fighter_prefix}_td_avg_zscore',
+            f'{fighter_prefix}_pro_sub_avg_corrected': f'{fighter_prefix}_sub_avg_zscore',
+            f'{fighter_prefix}_height': f'{fighter_prefix}_height_zscore',
+            f'{fighter_prefix}_reach': f'{fighter_prefix}_reach_zscore',
+            f'{fighter_prefix}_age_at_event': f'{fighter_prefix}_age_zscore',
+            f'{fighter_prefix}_finish_rate': f'{fighter_prefix}_finish_rate_zscore'
+        }
+
+        # Look for stats in current year, fallback to previous year, then 2 years ago
+        stats = None
+        for y_offset in [0, -1, -2]:
+            if (wc, year + y_offset) in self.weight_class_stats:
+                stats = self.weight_class_stats[(wc, year + y_offset)]
+                break
+
+        if stats:
+            for col, out_name in metrics.items():
+                # Calculate finish_rate on the fly if needed
+                if col.endswith('_finish_rate'):
+                    ko_rate = row.get(f'{fighter_prefix}_ko_rate_corrected', 0)
+                    sub_rate = row.get(f'{fighter_prefix}_sub_rate_corrected', 0)
+                    val = ko_rate + sub_rate
+                else:
+                    val = row.get(col, 0)
+
+                # Map column name to the key stored in weight_class_stats (always r_ prefix format)
+                stat_key = col.replace('b_', 'r_')
+
+                if stat_key in stats:
+                    mean = stats[stat_key]['mean']
+                    std = stats[stat_key]['std']
+                    feats[out_name] = (val - mean) / std
+
+        return feats
+
+    # =========================================================================
+    # 2. GLICKO-2 SYSTEM (Better than Elo)
+    # =========================================================================
+    def glicko2_get_ratings(self, r_fighter, b_fighter):
+        """
+        Returns current Glicko-2 ratings before update.
+        Glicko-2 is superior to Elo because it tracks 'Rating Deviation' (RD).
+        """
+        import math
+
+        def _g(phi):
+            return 1 / math.sqrt(1 + 3 * (phi ** 2) / (math.pi ** 2))
+
+        def _E(mu, mu_j, phi_j):
+            return 1 / (1 + math.exp(-_g(phi_j) * (mu - mu_j)))
+
+        # Initialize if new
+        for f in [r_fighter, b_fighter]:
+            if f not in self.glicko_ratings:
+                self.glicko_ratings[f] = {'rating': 1500, 'rd': 350, 'vol': 0.06}
+
+        r = self.glicko_ratings[r_fighter]
+        b = self.glicko_ratings[b_fighter]
+
+        # Convert to Glicko-2 scale
+        mu_r = (r['rating'] - 1500) / 173.7178
+        mu_b = (b['rating'] - 1500) / 173.7178
+        phi_b = b['rd'] / 173.7178
+
+        # Return features for the dataframe *before* update
+        return {
+            'r_glicko_rating': r['rating'],
+            'r_glicko_rd': r['rd'],
+            'b_glicko_rating': b['rating'],
+            'b_glicko_rd': b['rd'],
+            'glicko_prob': _E(mu_r, mu_b, phi_b),  # Win probability
+            'glicko_rating_diff': r['rating'] - b['rating']
+        }
+
+    def glicko2_update(self, r_fighter, b_fighter, winner):
+        """
+        Updates Glicko-2 ratings after a fight.
+        Simplified update for performance - full Glicko-2 is complex.
+        """
+        K = 32
+
+        r = self.glicko_ratings[r_fighter]
+        b = self.glicko_ratings[b_fighter]
+
+        # Expected scores
+        expected_r = 1 / (1 + 10 ** ((b['rating'] - r['rating']) / 400))
+        expected_b = 1 - expected_r
+
+        # Actual scores
+        if winner == 'Red':
+            actual_r, actual_b = 1, 0
+        elif winner == 'Blue':
+            actual_r, actual_b = 0, 1
+        else:  # Draw
+            actual_r, actual_b = 0.5, 0.5
+
+        # Update ratings
+        r['rating'] += K * (actual_r - expected_r)
+        b['rating'] += K * (actual_b - expected_b)
+
+        # Decrease RD with each fight (becomes more certain)
+        r['rd'] = max(50, r['rd'] * 0.95)
+        b['rd'] = max(50, b['rd'] * 0.95)
+
+    # =========================================================================
+    # 3. DIRECT COMMON OPPONENT TRIANGULATION
+    # =========================================================================
+    def get_common_opponent_features(self, r_fighter, b_fighter):
+        """
+        If Red beat C, and C beat Blue -> Red > Blue (indirectly).
+        This feature explicitly calculates the win differential against common foes.
+        """
+        if r_fighter not in self.common_opp_matrix or b_fighter not in self.common_opp_matrix:
+            return {'common_opp_score_diff': 0, 'common_opp_count': 0}
+
+        r_opps = set(self.common_opp_matrix[r_fighter].keys())
+        b_opps = set(self.common_opp_matrix[b_fighter].keys())
+        common = r_opps.intersection(b_opps)
+
+        if not common:
+            return {'common_opp_score_diff': 0, 'common_opp_count': 0}
+
+        score_diff = 0
+        for opp in common:
+            # 1 = Win, 0 = Loss, 0.5 = Draw
+            r_res = self.common_opp_matrix[r_fighter][opp]
+            b_res = self.common_opp_matrix[b_fighter][opp]
+            score_diff += (r_res - b_res)
+
+        return {
+            'common_opp_score_diff': score_diff,
+            'common_opp_count': len(common)
+        }
+
+    def update_common_opponents(self, r_fighter, b_fighter, winner):
+        """Update the common opponent matrix after a fight"""
+        if r_fighter not in self.common_opp_matrix:
+            self.common_opp_matrix[r_fighter] = {}
+        if b_fighter not in self.common_opp_matrix:
+            self.common_opp_matrix[b_fighter] = {}
+
+        r_win = 1 if winner == 'Red' else 0 if winner == 'Blue' else 0.5
+        b_win = 1 - r_win
+
+        # Only store most recent result to keep "form" relevant
+        self.common_opp_matrix[r_fighter][b_fighter] = r_win
+        self.common_opp_matrix[b_fighter][r_fighter] = b_win
+
+    # =========================================================================
+    # 4. UNSUPERVISED STYLE CLUSTERING
+    # =========================================================================
+    def fit_clusters(self):
+        """
+        Called ONCE after the first pass of data processing (or pre-training).
+        Fits K-Means to identify 5 fighter archetypes.
+        """
+        if not self.training_data_for_clusters:
+            return
+
+        X = np.array(self.training_data_for_clusters)
+
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.cluster import KMeans
+
+        self.scaler = StandardScaler()
+        X_scaled = self.scaler.fit_transform(X)
+
+        self.kmeans_model = KMeans(n_clusters=5, random_state=42)
+        self.kmeans_model.fit(X_scaled)
+        print("Style Clusters Fitted! Archetypes defined.")
+
+    def get_fighter_cluster(self, slpm, sapm, td, sub, finish):
+        """Returns cluster ID (0-4) for a fighter's current stats"""
+        if not self.kmeans_model:
+            return -1
+        stats = np.array([[slpm, sapm, td, sub, finish]])
+        stats_scaled = self.scaler.transform(stats)
+        return self.kmeans_model.predict(stats_scaled)[0]
+
+    def update_style_performance(self, fighter, opponent_stats, is_win):
+        """Updates a fighter's win rate against specific opponent clusters."""
+        if not self.kmeans_model:
+            return
+        opp_cluster = self.get_fighter_cluster(*opponent_stats)
+        if opp_cluster == -1:
+            return
+        if fighter not in self.style_win_rates:
+            self.style_win_rates[fighter] = {i: {'wins': 0, 'losses': 0} for i in range(5)}
+        if is_win:
+            self.style_win_rates[fighter][opp_cluster]['wins'] += 1
+        else:
+            self.style_win_rates[fighter][opp_cluster]['losses'] += 1
+
+    def get_style_matchup_features(self, r_fighter, b_fighter, r_stats_tuple, b_stats_tuple):
+        """Returns features: r_win_rate_vs_archetype, b_win_rate_vs_archetype, archetype_matchup_diff"""
+        if not self.kmeans_model:
+            return {'r_win_rate_vs_archetype': 0.5, 'b_win_rate_vs_archetype': 0.5, 'archetype_matchup_diff': 0.0}
+
+        b_cluster = self.get_fighter_cluster(*b_stats_tuple)
+        r_vs_cluster = 0.5
+        if r_fighter in self.style_win_rates and b_cluster != -1:
+            rec = self.style_win_rates[r_fighter][b_cluster]
+            total = rec['wins'] + rec['losses']
+            if total > 0:
+                r_vs_cluster = rec['wins'] / total
+
+        r_cluster = self.get_fighter_cluster(*r_stats_tuple)
+        b_vs_cluster = 0.5
+        if b_fighter in self.style_win_rates and r_cluster != -1:
+            rec = self.style_win_rates[b_fighter][r_cluster]
+            total = rec['wins'] + rec['losses']
+            if total > 0:
+                b_vs_cluster = rec['wins'] / total
+
+        return {
+            'r_win_rate_vs_archetype': r_vs_cluster,
+            'b_win_rate_vs_archetype': b_vs_cluster,
+            'archetype_matchup_diff': r_vs_cluster - b_vs_cluster
+        }
+
+
 class AdvancedUFCPredictor:
     def __init__(
         self,
@@ -141,6 +506,7 @@ class AdvancedUFCPredictor:
         self.winner_model = None
         self.method_model = None  # Single method prediction model
         self.deep_learning_model = None  # TensorFlow model
+        self.winner_feature_columns = None  # D/I selected features for winner model
         self.label_encoders = {}
         self.use_ensemble = use_ensemble
         self.use_neural_net = use_neural_net
@@ -156,7 +522,9 @@ class AdvancedUFCPredictor:
         self.feature_cache = {}
         self.preprocessor_cache = None
         self.feature_columns_cache = None
-        
+
+        # ADVANCED FEATURE ENGINEER: Glicko-2, common opponents, K-Means archetypes
+        self.adv_fe = AdvancedFeatureEngineer()
 
         # EARLY STOPPING: Performance tracking
         self.early_stopping_patience = 10
@@ -1490,20 +1858,6 @@ class AdvancedUFCPredictor:
             return strategies[0]
 
     # ===== HYPERPARAMETER OPTIMIZATION METHODS =====
-    
-    def optimize_hyperparameters(self, X, y, model_type='xgb', n_trials=50):
-        """Optimize hyperparameters using Bayesian optimization"""
-        print(f"Optimizing {model_type} hyperparameters with {n_trials} trials...")
-        
-        if model_type == 'xgb' and HAS_XGBOOST:
-            return self._optimize_xgb_hyperparameters(X, y, n_trials)
-        elif model_type == 'lgbm' and HAS_LIGHTGBM:
-            return self._optimize_lgbm_hyperparameters(X, y, n_trials)
-        elif model_type == 'catboost' and HAS_CATBOOST:
-            return self._optimize_catboost_hyperparameters(X, y, n_trials)
-        else:
-            print(f"Model type {model_type} not available, using default parameters")
-            return {}
 
     def _optimize_xgb_hyperparameters(self, X, y, n_trials):
         """Optimize XGBoost hyperparameters using simple grid search"""
@@ -2161,6 +2515,18 @@ class AdvancedUFCPredictor:
         df["h2h_advantage"] = 0.0
         fighter_h2h = {}
 
+        # Reset AdvancedFeatureEngineer (fresh state for each training run)
+        self.adv_fe = AdvancedFeatureEngineer()
+        # Pre-allocate Glicko-2 and common opponent columns
+        df['r_glicko_rating'] = 1500.0
+        df['b_glicko_rating'] = 1500.0
+        df['r_glicko_rd'] = 350.0
+        df['b_glicko_rd'] = 350.0
+        df['glicko_prob'] = 0.5
+        df['glicko_rating_diff'] = 0.0
+        df['common_opp_score_diff'] = 0.0
+        df['common_opp_count'] = 0
+
         for idx, row in df.iterrows():
             if idx % 500 == 0:
                 print(f"   Processing fight {idx}/{len(df)}...")
@@ -2180,6 +2546,16 @@ class AdvancedUFCPredictor:
                 fighter_stats[r_fighter] = copy.deepcopy(stats_to_track)
             if b_fighter not in fighter_stats:
                 fighter_stats[b_fighter] = copy.deepcopy(stats_to_track)
+
+            # Glicko-2 features BEFORE update (no data leakage)
+            glicko_feats = self.adv_fe.glicko2_get_ratings(r_fighter, b_fighter)
+            for col, val in glicko_feats.items():
+                df.at[idx, col] = val
+
+            # Common opponent features BEFORE update (no data leakage)
+            copp_feats = self.adv_fe.get_common_opponent_features(r_fighter, b_fighter)
+            df.at[idx, 'common_opp_score_diff'] = copp_feats['common_opp_score_diff']
+            df.at[idx, 'common_opp_count'] = copp_feats['common_opp_count']
 
             for fighter, prefix in [(r_fighter, "r"), (b_fighter, "b")]:
                 stats = fighter_stats[fighter]
@@ -2442,6 +2818,22 @@ class AdvancedUFCPredictor:
                         fighter_h2h.get((r_fighter, b_fighter), 0) - 1
                     )
 
+                # Update Glicko-2 and common opponent matrix AFTER fight outcome (no leakage)
+                fight_winner = row['winner']
+                self.adv_fe.glicko2_update(r_fighter, b_fighter, fight_winner)
+                self.adv_fe.update_common_opponents(r_fighter, b_fighter, fight_winner)
+
+                # Accumulate clustering data for K-Means fitting after loop
+                slpm = df.at[idx, 'r_pro_SLpM_corrected'] or 0
+                sapm = df.at[idx, 'r_pro_SApM_corrected'] or 0
+                td = df.at[idx, 'r_pro_td_avg_corrected'] or 0
+                sub = df.at[idx, 'r_pro_sub_avg_corrected'] or 0
+                ko_r = df.at[idx, 'r_ko_rate_corrected'] if 'r_ko_rate_corrected' in df.columns else 0
+                sub_r = df.at[idx, 'r_sub_rate_corrected'] if 'r_sub_rate_corrected' in df.columns else 0
+                self.adv_fe.training_data_for_clusters.append(
+                    [slpm or 0, sapm or 0, td or 0, sub or 0, (ko_r or 0) + (sub_r or 0)]
+                )
+
                 for fighter in [r_fighter, b_fighter]:
                     if len(fighter_stats[fighter]["recent_wins"]) > 10:
                         fighter_stats[fighter]["recent_wins"] = fighter_stats[fighter][
@@ -2568,6 +2960,10 @@ class AdvancedUFCPredictor:
                         fighter_stats[fighter]["td_avg_history"] = fighter_stats[
                             fighter
                         ]["td_avg_history"][-10:]
+
+        # Fit weight class Z-score stats and K-Means archetypes after full chronological pass
+        self.adv_fe.update_weight_class_stats(df)
+        self.adv_fe.fit_clusters()
 
         diff_stats = [
             "wins",
@@ -3054,6 +3450,231 @@ class AdvancedUFCPredictor:
             df["striker_vs_grappler"] = 0
 
         return df
+
+    def _create_swapped_features(self, X, feature_columns):
+        """Create a corner-swapped version of the feature matrix for D/I decomposition.
+
+        Rules applied in order:
+        1. Features with '_diff' anywhere in name → negate (r-b becomes b-r)
+        2. Paired r_*/b_* features → swap with each other
+        3. Other known directional (r-advantage) features → negate
+        4. Everything else (symmetric/invariant) → unchanged
+        """
+        X_swap = X.copy()
+        fc_set = set(feature_columns)
+        processed = set()
+
+        # Rule 1: negate differential features
+        for col in feature_columns:
+            if '_diff' in col:
+                X_swap[col] = -X[col]
+                processed.add(col)
+
+        # Rule 2: swap paired r_*/b_* features
+        for col in feature_columns:
+            if col in processed:
+                continue
+            if col.startswith('r_'):
+                b_col = 'b_' + col[2:]
+                if b_col in fc_set and b_col not in processed:
+                    X_swap[col] = X[b_col].values
+                    X_swap[b_col] = X[col].values
+                    processed.add(col)
+                    processed.add(b_col)
+
+        # Rule 3: other known directional features (r-corner advantage; negate when swapped)
+        other_directional = {
+            'h2h_advantage', 'h2h_history_advantage',
+            'net_striking_advantage', 'striking_efficiency', 'defensive_striking',
+            'grappling_control', 'grappling_defense', 'offensive_output', 'defensive_composite',
+            'ko_specialist_gap', 'submission_specialist_gap',
+            'experience_gap', 'experience_ratio', 'quality_experience_gap',
+            'skill_momentum', 'finish_threat', 'momentum_advantage', 'inactivity_penalty',
+            'pace_differential', 'exp_gap_historical_win_rate',
+            'experience_skill_interaction', 'veteran_edge',
+            'striker_advantage', 'grappler_advantage', 'effective_reach_advantage',
+            'ko_specialist_matchup', 'sub_specialist_matchup',
+            'durability_advantage', 'kd_resistance_advantage', 'vulnerability_advantage',
+            'ko_susceptibility_advantage', 'sub_opportunity_advantage',
+            'distance_ground_preference', 'clinch_advantage', 'head_hunting_advantage',
+            'power_technique_advantage', 'grappling_threat_advantage',
+            'recent_ko_trend_advantage', 'technical_striker_advantage',
+            'clinch_effectiveness_advantage', 'championship_pressure_advantage',
+            'opponent_quality_advantage', 'cardio_advantage', 'ape_index_advantage',
+            'stance_matchup_advantage', 'stance_versatility_advantage',
+            'ring_rust_factor', 'championship_pressure', 'momentum_swing',
+            'power_vs_technique', 'finish_pressure', 'opponent_quality_gap',
+            'recent_opponent_strength', 'upset_potential',
+            'momentum_velocity', 'championship_impact', 'opponent_quality_momentum',
+            'finishing_pressure_stress', 'ring_rust_vs_momentum', 'weight_class_adaptation',
+            'stance_versatility_impact', 'location_advantage',
+            'style_matchup_advantage', 'physical_advantage_composite',
+            'striker_vs_grappler', 'volume_vs_accuracy',
+            # Neutral stats _better features (directional: flip sign when corners swap)
+            'pro_SLpM_better', 'pro_td_avg_better', 'wins_better', 'losses_better',
+            'pro_sig_str_acc_better', 'pro_str_def_better', 'ko_rate_better',
+            'sub_rate_better', 'recent_form_better',
+            # Additional compound advantage features
+            'clinch_control_advantage', 'ground_control_advantage',
+            'striking_volume_advantage', 'defensive_advantage',
+            'finish_avoidance_advantage', 'pace_control_advantage',
+            'experience_quality_advantage', 'momentum_consistency_advantage',
+            'striking_defense_advantage', 'grappling_offense_advantage',
+            'ko_power_advantage', 'submission_threat_advantage',
+            'decision_tendency_advantage', 'early_finish_advantage',
+            'fight_iq_composite_advantage', 'momentum_velocity_advantage',
+            'style_matchup_depth_score', 'durability_vs_power_ratio',
+            'pace_control_mastery', 'grappling_transition_mastery',
+            'upset_potential_vs_experience', 'physical_dominance_composite',
+            'technical_striking_mastery',
+        }
+        for col in feature_columns:
+            if col in processed:
+                continue
+            if col in other_directional:
+                X_swap[col] = -X[col]
+                processed.add(col)
+
+        return X_swap
+
+    def directional_and_invariant(self, X, Xs):
+        """Decompose original and swapped feature matrices into directional and invariant parts.
+
+        D = 0.5 * (X_orig - X_swap)  — flips sign when corners swap
+        I = 0.5 * (X_orig + X_swap)  — stays the same when corners swap (invariant suffix)
+        """
+        common = sorted(set(X.columns) & set(Xs.columns))
+        Xo = X[common].select_dtypes(include='number').fillna(0)
+        Xsw = Xs[common].select_dtypes(include='number').fillna(0)
+        D = 0.5 * (Xo - Xsw)
+        D.columns = list(D.columns)
+        I_inv = 0.5 * (Xo + Xsw)
+        I_inv.columns = [f"{c}_inv" for c in I_inv.columns]
+        return D, I_inv
+
+    def select_features_by_importance(self, X, y, min_features=50):
+        """RFECV feature selection on D/I feature matrix."""
+        import sys
+        import time
+        import threading
+
+        variances = X.var()
+        variance_threshold = variances.quantile(0.01)
+        high_var = variances[variances > variance_threshold].index.tolist()
+        X_filtered = X[high_var]
+        print(f"  Variance filter: {len(high_var)}/{len(X.columns)} features kept")
+
+        if HAS_XGBOOST:
+            estimator = XGBClassifier(
+                n_estimators=200, max_depth=7, learning_rate=0.05,
+                subsample=0.8, colsample_bytree=0.8,
+                reg_alpha=1.0, reg_lambda=1.0, random_state=42,
+                n_jobs=SAFE_N_JOBS, eval_metric='logloss', tree_method='hist',
+            )
+        elif HAS_LIGHTGBM:
+            estimator = LGBMClassifier(
+                n_estimators=200, max_depth=7, learning_rate=0.05,
+                subsample=0.8, colsample_bytree=0.8,
+                reg_alpha=1.0, reg_lambda=1.0, random_state=42,
+                n_jobs=SAFE_N_JOBS, verbose=-1,
+            )
+        else:
+            estimator = RandomForestClassifier(
+                n_estimators=200, max_depth=12, random_state=42, n_jobs=SAFE_N_JOBS,
+            )
+
+        step = 5
+        n_splits = 3
+        n_features = len(high_var)
+        total_iters = max(1, (n_features - min_features) // step + 1)
+        print(f"  RFECV: {min_features}→{n_features} features, step={step}, {n_splits}-fold CV")
+        print(f"  Estimated iterations: {total_iters} subsets × {n_splits} folds\n")
+
+        rfecv = RFECV(
+            estimator=estimator, step=step,
+            cv=TimeSeriesSplit(n_splits=n_splits),
+            scoring='accuracy', min_features_to_select=min_features,
+            n_jobs=SAFE_N_JOBS, verbose=0,
+        )
+
+        stop_progress = threading.Event()
+        start_time = time.time()
+
+        def _show_progress():
+            spinner = ['|', '/', '-', '\\']
+            i = dots = 0
+            while not stop_progress.is_set():
+                elapsed = time.time() - start_time
+                m, s = divmod(int(elapsed), 60)
+                bar_len = 40
+                filled = dots % (bar_len + 1)
+                bar = '=' * filled + '>' + '-' * max(0, bar_len - filled - 1)
+                sys.stdout.write(f'\rRFECV [{bar}] {spinner[i]} ({m:02d}:{s:02d})')
+                sys.stdout.flush()
+                i = (i + 1) % 4
+                dots = (dots + 1) % (bar_len * 2)
+                time.sleep(0.15)
+
+        t = threading.Thread(target=_show_progress, daemon=True)
+        t.start()
+        try:
+            rfecv.fit(X_filtered.values, np.array(y))
+        finally:
+            stop_progress.set()
+            t.join(timeout=0.5)
+            elapsed = int(time.time() - start_time)
+            m, s = divmod(elapsed, 60)
+            sys.stdout.write(f'\rRFECV [{" " * 40}]   ({m:02d}:{s:02d}) — done\n\n')
+            sys.stdout.flush()
+
+        selected_mask = rfecv.support_
+        selected = [f for f, keep in zip(high_var, selected_mask) if keep]
+        best_cv = rfecv.cv_results_['mean_test_score'].max()
+        print(f"  Selected {len(selected)} features  |  Best CV accuracy: {best_cv:.4f}")
+        return selected
+
+    def optimize_ensemble_weights(self, estimators, X_train, y_train, X_val, y_val):
+        """Optimize VotingClassifier weights via CV on training set (no validation leakage)."""
+        from itertools import product
+        from sklearn.model_selection import KFold
+
+        X_train_np = np.array(X_train)
+        y_train_np = np.array(y_train)
+        kf = KFold(n_splits=3, shuffle=False)
+
+        print("  Training individual models for weight optimization...")
+        for name, model in estimators:
+            model.fit(X_train_np, y_train_np)
+
+        model_predictions = []
+        for name, model in estimators:
+            cv_preds = np.zeros(len(X_train_np))
+            for train_idx, val_idx in kf.split(X_train_np):
+                m = clone(model)
+                m.fit(X_train_np[train_idx], y_train_np[train_idx])
+                if hasattr(m, 'predict_proba'):
+                    cv_preds[val_idx] = m.predict_proba(X_train_np[val_idx])[:, 1]
+                else:
+                    cv_preds[val_idx] = m.predict(X_train_np[val_idx])
+            model_predictions.append(cv_preds)
+
+        n_models = len(estimators)
+        weight_range = [1, 2, 3, 4, 5]
+        combos = list(product(weight_range, repeat=n_models))
+        print(f"  Testing {len(combos)} weight combinations...")
+
+        best_score, best_weights = 0, [1] * n_models
+        for weights in combos:
+            wp = np.zeros(len(X_train_np))
+            for i, preds in enumerate(model_predictions):
+                wp += weights[i] * preds
+            wp /= sum(weights)
+            score = accuracy_score(y_train_np, (wp >= 0.5).astype(int))
+            if score > best_score:
+                best_score, best_weights = score, list(weights)
+
+        print(f"  Best CV accuracy with optimized weights: {best_score:.4f}")
+        return best_weights
 
     def prepare_features(self, df):
         """Prepare enhanced features with all advanced metrics and caching"""
@@ -4784,6 +5405,69 @@ class AdvancedUFCPredictor:
             if feature not in feature_columns:
                 feature_columns.append(feature)
 
+        # ===== ADVANCED FEATURE ENGINEER FEATURES (Glicko-2, Common Opp, Archetypes) =====
+        print("Adding AdvancedFeatureEngineer features (Glicko-2, common opponents, archetypes)...")
+
+        # Glicko-2 columns are already in df from fix_data_leakage
+        glicko_cols = ['r_glicko_rating', 'b_glicko_rating', 'r_glicko_rd', 'b_glicko_rd',
+                       'glicko_prob', 'glicko_rating_diff']
+        for col in glicko_cols:
+            if col in df.columns:
+                feature_columns.append(col)
+
+        # Common opponent columns (also from fix_data_leakage)
+        for col in ['common_opp_score_diff', 'common_opp_count']:
+            if col in df.columns:
+                feature_columns.append(col)
+
+        # Z-score features (computed row-by-row using stored weight_class_stats)
+        zscore_cols_r = [f'r_{m}' for m in ['slpm_zscore', 'sapm_zscore', 'td_avg_zscore',
+                                              'sub_avg_zscore', 'height_zscore', 'reach_zscore',
+                                              'age_zscore', 'finish_rate_zscore']]
+        zscore_cols_b = [c.replace('r_', 'b_', 1) for c in zscore_cols_r]
+        all_zscore_cols = zscore_cols_r + zscore_cols_b
+
+        for col in all_zscore_cols:
+            df[col] = 0.0
+
+        if hasattr(self, 'adv_fe') and self.adv_fe.weight_class_stats:
+            for idx, row in df.iterrows():
+                r_feats = self.adv_fe.get_z_score_features(row, 'r')
+                b_feats = self.adv_fe.get_z_score_features(row, 'b')
+                for col, val in {**r_feats, **b_feats}.items():
+                    if col in df.columns:
+                        df.at[idx, col] = val
+
+        feature_columns.extend(all_zscore_cols)
+
+        # Style matchup features (requires K-Means to be fitted)
+        if hasattr(self, 'adv_fe') and self.adv_fe.kmeans_model is not None:
+            style_cols = ['r_win_rate_vs_archetype', 'b_win_rate_vs_archetype', 'archetype_matchup_diff']
+            for col in style_cols:
+                df[col] = 0.5 if 'archetype' in col else 0.0
+
+            for idx, row in df.iterrows():
+                r_fighter = row.get('r_fighter', '')
+                b_fighter = row.get('b_fighter', '')
+                r_slpm = row.get('r_pro_SLpM_corrected', 0)
+                r_sapm = row.get('r_pro_SApM_corrected', 0)
+                r_td = row.get('r_pro_td_avg_corrected', 0)
+                r_sub = row.get('r_pro_sub_avg_corrected', 0)
+                r_fin = (row.get('r_ko_rate_corrected', 0) or 0) + (row.get('r_sub_rate_corrected', 0) or 0)
+                b_slpm = row.get('b_pro_SLpM_corrected', 0)
+                b_sapm = row.get('b_pro_SApM_corrected', 0)
+                b_td = row.get('b_pro_td_avg_corrected', 0)
+                b_sub = row.get('b_pro_sub_avg_corrected', 0)
+                b_fin = (row.get('b_ko_rate_corrected', 0) or 0) + (row.get('b_sub_rate_corrected', 0) or 0)
+                style_feats = self.adv_fe.get_style_matchup_features(
+                    r_fighter, b_fighter,
+                    (r_slpm or 0, r_sapm or 0, r_td or 0, r_sub or 0, r_fin),
+                    (b_slpm or 0, b_sapm or 0, b_td or 0, b_sub or 0, b_fin))
+                for col, val in style_feats.items():
+                    df.at[idx, col] = val
+
+            feature_columns.extend(style_cols)
+
         # Filter feature columns to only include those that exist and are unique
         available_features = []
         for col in feature_columns:
@@ -4806,13 +5490,76 @@ class AdvancedUFCPredictor:
 
         return df, available_features
 
+    def optimize_hyperparameters(self, X, y, n_trials=25):
+        """Optimize XGBoost hyperparameters using Optuna Bayesian optimization"""
+        if not HAS_OPTUNA or not HAS_XGBOOST:
+            print("Optuna or XGBoost not available, using default parameters")
+            return {
+                'n_estimators': 800,
+                'max_depth': 7,
+                'learning_rate': 0.02,
+                'subsample': 0.8,
+                'colsample_bytree': 0.8,
+                'colsample_bynode': 0.8,
+                'reg_alpha': 1.0,
+                'reg_lambda': 1.0,
+                'min_child_weight': 5,
+                'gamma': 0.5,
+            }
+
+        print(f"\n{'='*80}")
+        print(f"OPTIMIZING HYPERPARAMETERS WITH OPTUNA ({n_trials} trials)")
+        print(f"{'='*80}\n")
+
+        def objective(trial):
+            params = {
+                'n_estimators': trial.suggest_int('n_estimators', 300, 2000),
+                'max_depth': trial.suggest_int('max_depth', 3, 12),
+                'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.1, log=True),
+                'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+                'colsample_bynode': trial.suggest_float('colsample_bynode', 0.5, 1.0),
+                'reg_alpha': trial.suggest_float('reg_alpha', 0.001, 50, log=True),
+                'reg_lambda': trial.suggest_float('reg_lambda', 0.001, 50, log=True),
+                'min_child_weight': trial.suggest_int('min_child_weight', 1, 20),
+                'gamma': trial.suggest_float('gamma', 0, 10),
+                'random_state': 42,
+            }
+            if GPU_AVAILABLE['xgboost']:
+                params['device'] = 'cuda'
+                params['tree_method'] = 'hist'
+                params['n_jobs'] = 1
+            else:
+                params['device'] = 'cpu'
+                params['n_jobs'] = SAFE_N_JOBS
+
+            model = XGBClassifier(**params)
+            cv_scores = []
+            tscv = TimeSeriesSplit(n_splits=5)
+            for train_idx, val_idx in tscv.split(X):
+                X_tr = np.array(X.iloc[train_idx] if hasattr(X, 'iloc') else X[train_idx])
+                X_va = np.array(X.iloc[val_idx] if hasattr(X, 'iloc') else X[val_idx])
+                y_tr = np.array(y.iloc[train_idx] if hasattr(y, 'iloc') else y[train_idx])
+                y_va = np.array(y.iloc[val_idx] if hasattr(y, 'iloc') else y[val_idx])
+                model.fit(X_tr, y_tr)
+                cv_scores.append(model.score(X_va, y_va))
+            return np.mean(cv_scores)
+
+        sampler = optuna.samplers.TPESampler(seed=42)
+        study = optuna.create_study(direction='maximize', sampler=sampler)
+        study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+
+        print(f"\nBest CV Score: {study.best_value:.4f}")
+        print("Best Parameters:")
+        for key, value in study.best_params.items():
+            print(f"  {key}: {value}")
+
+        return study.best_params
+
     def train_models(self, df):
         """Train stacked ensemble with specialized method models and deep learning"""
         # Ensure consistent random state before training
         self.set_random_seeds()
-
-        # Augment data with corner swapping to eliminate red corner bias
-        df = self.augment_data_with_corner_swapping(df)
 
         df, feature_columns = self.prepare_features(df)
 
@@ -4824,6 +5571,18 @@ class AdvancedUFCPredictor:
             print(f"Dropping {len(constant_cols)} constant features (zero variance): {constant_cols}")
             X = X.drop(columns=constant_cols)
             feature_columns = [c for c in feature_columns if c not in constant_cols]
+
+        # ANTISYMMETRIZATION VALIDATION: verify differential features flip correctly
+        diff_cols = [c for c in X.columns if c.endswith('_diff_corrected') or c.endswith('_diff')]
+        X_mock_swap = X.copy()
+        X_mock_swap[diff_cols] = -X[diff_cols]
+        near_zero_after_flip = [c for c in diff_cols if X_mock_swap[c].std() < 1e-6]
+        if near_zero_after_flip:
+            print(f"  Antisymmetrization: dropping {len(near_zero_after_flip)} zero differential features")
+            X = X.drop(columns=near_zero_after_flip)
+            feature_columns = [c for c in feature_columns if c not in near_zero_after_flip]
+        else:
+            print(f"  Antisymmetrization: all {len(diff_cols)} differential features validated ✓")
 
         # Use standard target encoding (class weights will handle bias)
         if "winner" in df.columns:
@@ -4854,28 +5613,37 @@ class AdvancedUFCPredictor:
         best_strategy = self._select_best_validation_strategy(validation_strategies, X, y_winner)
         print(f"Selected validation strategy: {best_strategy['name']}")
         
-        # Use TimeSeriesSplit for temporal validation as primary
-        tscv = TimeSeriesSplit(n_splits=5)
-        
         # For final train/test split, use stratified split but with time awareness
         try:
             if 'event_date' in df.columns:
                 # Sort by event date for temporal split
                 df_sorted = df.sort_values('event_date')
-                # Reset index to avoid index issues
+                # Save original sort order before resetting index
+                sort_order = df_sorted.index
                 df_sorted = df_sorted.reset_index(drop=True)
-                X_sorted = X.loc[df_sorted.index].reset_index(drop=True)
-                y_winner_sorted = y_winner[df_sorted.index]
-                y_method_sorted = y_method[df_sorted.index]
+                X_sorted = X.loc[sort_order].reset_index(drop=True)
+                y_winner_sorted = y_winner[sort_order]
+                y_method_sorted = y_method[sort_order]
                 
-                # Use 80% for training, 20% for testing (temporal split)
-                split_idx = int(0.8 * len(X_sorted))
-                X_train = X_sorted.iloc[:split_idx]
-                X_test = X_sorted.iloc[split_idx:]
-                y_winner_train = y_winner_sorted[:split_idx]
-                y_winner_test = y_winner_sorted[split_idx:]
-                y_method_train = y_method_sorted[:split_idx]
-                y_method_test = y_method_sorted[split_idx:]
+                # 70/15/15 temporal split: train / validation / test
+                train_end = int(0.70 * len(X_sorted))
+                val_end = int(0.85 * len(X_sorted))
+
+                X_train = X_sorted.iloc[:train_end]
+                X_val = X_sorted.iloc[train_end:val_end]
+                X_test = X_sorted.iloc[val_end:]
+
+                y_winner_train = y_winner_sorted[:train_end]
+                y_winner_val = y_winner_sorted[train_end:val_end]
+                y_winner_test = y_winner_sorted[val_end:]
+
+                y_method_train = y_method_sorted[:train_end]
+                y_method_val = y_method_sorted[train_end:val_end]
+                y_method_test = y_method_sorted[val_end:]
+
+                print(f"Train set:      {len(X_train)} fights (70%)")
+                print(f"Validation set: {len(X_val)} fights (15%)")
+                print(f"Test set:       {len(X_test)} fights (15% — held out)")
             else:
                 # Fallback to stratified split if no date column
                 (
@@ -4886,11 +5654,13 @@ class AdvancedUFCPredictor:
                     y_method_train,
                     y_method_test,
                 ) = train_test_split(
-                    X, y_winner, y_method, test_size=0.2, random_state=42, stratify=y_winner
+                    X, y_winner, y_method, test_size=0.15, random_state=42, stratify=y_winner
                 )
+                X_val = X_test
+                y_winner_val = y_winner_test
+                y_method_val = y_method_test
         except (KeyError, IndexError) as e:
             print(f"Warning: Error in temporal split, using standard split: {e}")
-            # Fallback to standard stratified split
             (
                 X_train,
                 X_test,
@@ -4899,8 +5669,11 @@ class AdvancedUFCPredictor:
                 y_method_train,
                 y_method_test,
             ) = train_test_split(
-                X, y_winner, y_method, test_size=0.2, random_state=42, stratify=y_winner
+                X, y_winner, y_method, test_size=0.15, random_state=42, stratify=y_winner
             )
+            X_val = X_test
+            y_winner_val = y_winner_test
+            y_method_val = y_method_test
 
         print("\n" + "=" * 80)
         print("TRAINING ADVANCED STACKED ENSEMBLE MODEL")
@@ -4917,34 +5690,34 @@ class AdvancedUFCPredictor:
             [("num", numeric_transformer, feature_columns)]
         )
 
-        # ===== MANUAL HYPERPARAMETER CONFIGURATION =====
-        print("\n🔧 USING MANUAL HYPERPARAMETERS...")
-        print("No trials - using pre-optimized parameters for maximum speed...")
-        
-        # XGBoost optimized parameters
-        if HAS_XGBOOST:
-            print("Using manual XGBoost parameters...")
-            xgb_optimized = {
-                'n_estimators': 1500,
-                'max_depth': 8,
-                'learning_rate': 0.05,
-                'subsample': 0.8,
-                'colsample_bytree': 0.8,
-                'colsample_bylevel': 0.8,
-                'reg_alpha': 0.1,
-                'reg_lambda': 1.0,
-                'min_child_weight': 3,
-                'gamma': 0.1,
-                'max_delta_step': 2,
-                'tree_method': 'hist',
-                'device': 'cpu'
-            }
+        # ===== HYPERPARAMETER CONFIGURATION =====
+        # XGBoost: Optuna when installed (always-on), LightGBM/CatBoost: manual with GPU support
+
+        xgb_manual = {
+            'n_estimators': 1500,
+            'max_depth': 8,
+            'learning_rate': 0.05,
+            'subsample': 0.8,
+            'colsample_bytree': 0.8,
+            'colsample_bylevel': 0.8,
+            'reg_alpha': 0.1,
+            'reg_lambda': 1.0,
+            'min_child_weight': 3,
+            'gamma': 0.1,
+            'max_delta_step': 2,
+        }
+
+        if HAS_XGBOOST and HAS_OPTUNA:
+            print("\n🔧 USING OPTUNA HYPERPARAMETER OPTIMIZATION (25 trials)...")
+            xgb_optimized = self.optimize_hyperparameters(X_train, y_winner_train, n_trials=25)
+        elif HAS_XGBOOST:
+            print("\n🔧 USING MANUAL HYPERPARAMETERS (install optuna for auto-tuning)...")
+            xgb_optimized = xgb_manual
         else:
             xgb_optimized = {}
-            
-        # LightGBM optimized parameters
+
+        # LightGBM: manual params with GPU support
         if HAS_LIGHTGBM:
-            print("Using manual LightGBM parameters...")
             lgbm_optimized = {
                 'n_estimators': 1200,
                 'max_depth': 10,
@@ -4955,14 +5728,13 @@ class AdvancedUFCPredictor:
                 'reg_alpha': 0.1,
                 'reg_lambda': 0.5,
                 'min_child_samples': 20,
-                'device': 'cpu'
+                'device': 'gpu' if GPU_AVAILABLE['lightgbm'] else 'cpu'
             }
         else:
             lgbm_optimized = {}
-            
-        # CatBoost optimized parameters
+
+        # CatBoost: manual params with GPU support
         if HAS_CATBOOST:
-            print("Using manual CatBoost parameters...")
             catboost_optimized = {
                 'iterations': 1000,
                 'depth': 8,
@@ -4971,355 +5743,187 @@ class AdvancedUFCPredictor:
                 'bootstrap_type': 'Bayesian',
                 'bagging_temperature': 0.2,
                 'random_strength': 1.0,
-                'task_type': 'CPU'
+                'task_type': 'GPU' if GPU_AVAILABLE['catboost'] else 'CPU'
             }
         else:
             catboost_optimized = {}
 
-        # Build base models for stacking with optimized parameters
-        base_models = []
+        # ================================================================
+        # WINNER MODEL: ANTISYMMETRIZATION + RFECV + VOTING ENSEMBLE
+        # ================================================================
+        print("\n" + "=" * 80)
+        print("WINNER MODEL: ANTISYMMETRIZATION + RFECV + VOTING ENSEMBLE")
+        print("=" * 80)
 
-        if HAS_XGBOOST:
-            # Use balanced weights since data augmentation eliminates bias
-            scale_pos = 1.0  # Balanced since we have equal red/blue representation after augmentation
-
-            # Create XGBoost classifier with optimized parameters
-            xgb_params = {
-                "n_estimators": xgb_optimized.get("n_estimators", 1000),
-                "max_depth": xgb_optimized.get("max_depth", 10),
-                "learning_rate": xgb_optimized.get("learning_rate", 0.01),
-                "subsample": xgb_optimized.get("subsample", 0.9),
-                "colsample_bytree": xgb_optimized.get("colsample_bytree", 0.9),
-                "colsample_bylevel": xgb_optimized.get("colsample_bylevel", 0.9),
-                "n_jobs": -1,
-                "reg_alpha": xgb_optimized.get("reg_alpha", 0.05),
-                "reg_lambda": xgb_optimized.get("reg_lambda", 0.5),
-                "min_child_weight": xgb_optimized.get("min_child_weight", 2),
-                "gamma": xgb_optimized.get("gamma", 0.05),
-                "max_delta_step": xgb_optimized.get("max_delta_step", 1),
-                "scale_pos_weight": scale_pos,
-                "random_state": 42,
-                "eval_metric": "logloss",
-                "tree_method": xgb_optimized.get("tree_method", "hist"),
-                "device": xgb_optimized.get("device", "cpu"),
-                "seed": 42,
-                "enable_categorical": True,
-            }
-
-            xgb_classifier = XGBClassifier(**xgb_params)
-
-            xgb_model = Pipeline(
-                [
-                    ("preprocessor", preprocessor),
-                    (
-                        "feature_selector",
-                        SelectPercentile(
-                            f_classif, percentile=65
-                        ),  # Data Augmentation: 65% (optimized for advanced features)
-                    ),  # Match Class Weighting
-                    ("classifier", xgb_classifier),
-                ]
-            )
-            base_models.append(("xgb", xgb_model))
-
-        if HAS_LIGHTGBM:
-            lgbm_model = Pipeline(
-                [
-                    ("preprocessor", preprocessor),
-                    (
-                        "feature_selector",
-                        SelectPercentile(
-                            f_classif, percentile=65
-                        ),  # Data Augmentation: 65% (optimized for advanced features)
-                    ),  # Match Class Weighting
-                    (
-                        "classifier",
-                        LGBMClassifier(
-                            n_estimators=lgbm_optimized.get("n_estimators", 400),
-                            max_depth=lgbm_optimized.get("max_depth", 7),
-                            learning_rate=lgbm_optimized.get("learning_rate", 0.03),
-                            num_leaves=lgbm_optimized.get("num_leaves", 40),
-                            subsample=lgbm_optimized.get("subsample", 0.8),
-                            colsample_bytree=lgbm_optimized.get("colsample_bytree", 0.8),
-                            reg_alpha=lgbm_optimized.get("reg_alpha", 0.1),
-                            reg_lambda=lgbm_optimized.get("reg_lambda", 0.8),
-                            min_child_samples=lgbm_optimized.get("min_child_samples", 20),
-                            device=lgbm_optimized.get("device", "cpu"),
-                            random_state=42,
-                            verbose=-1,
-                        ),
-                    ),
-                ]
-            )
-            base_models.append(("lgbm", lgbm_model))
-
-        if HAS_CATBOOST:
-            catboost_model = Pipeline(
-                [
-                    ("preprocessor", preprocessor),
-                    (
-                        "feature_selector",
-                        SelectPercentile(
-                            f_classif, percentile=65
-                        ),  # Data Augmentation: 65% (optimized for advanced features)
-                    ),  # Match Class Weighting
-                    (
-                        "classifier",
-                        CatBoostClassifier(
-                            iterations=catboost_optimized.get("iterations", 600 if not self.performance_mode else 400),
-                            depth=catboost_optimized.get("depth", 9),  # Mirror Two Runs: 7 -> 9 (better accuracy)
-                            learning_rate=catboost_optimized.get("learning_rate", 0.02),  # Mirror Two Runs: 0.03 -> 0.02 (better convergence)
-                            l2_leaf_reg=catboost_optimized.get("l2_leaf_reg", 0.8),
-                            bootstrap_type=catboost_optimized.get("bootstrap_type", "Bayesian"),
-                            bagging_temperature=catboost_optimized.get("bagging_temperature", 0.2),
-                            random_strength=catboost_optimized.get("random_strength", 1.0),
-                            task_type=catboost_optimized.get("task_type", "CPU"),
-                            random_state=42,
-                            verbose=0,
-                        ),
-                    ),
-                ]
-            )
-            base_models.append(("catboost", catboost_model))
-
-        # Random Forest (always available)
-        rf_model = Pipeline(
-            [
-                ("preprocessor", preprocessor),
-                (
-                    "feature_selector",
-                    SelectPercentile(f_classif, percentile=65),  # Data Augmentation: 65% (optimized for advanced features)
-                ),  # Match Class Weighting
-                (
-                    "classifier",
-                    RandomForestClassifier(
-                        n_estimators=600,  # More trees for better accuracy
-                        max_depth=15,  # Optimal depth for winner prediction
-                        min_samples_split=6,  # Balanced for accuracy
-                        min_samples_leaf=2,  # Balanced for accuracy
-                        random_state=42,
-                        n_jobs=-1,
-                        class_weight="balanced",
-                    ),
-                ),
-            ]
-        )
-        base_models.append(("rf", rf_model))
-
-        # Neural Network
-        if self.use_neural_net:
-            nn_model = Pipeline(
-                [
-                    ("preprocessor", preprocessor),
-                    (
-                        "feature_selector",
-                        SelectPercentile(
-                            f_classif, percentile=65
-                        ),  # Data Augmentation: 65% (optimized for advanced features)
-                    ),  # Match Class Weighting
-                    (
-                        "classifier",
-                        MLPClassifier(
-                            hidden_layer_sizes=(
-                                256,
-                                128,
-                                64,
-                            ),  # Deeper network for better accuracy
-                            activation="relu",
-                            solver="adam",
-                            alpha=0.0005,  # Lower regularization for better accuracy
-                            batch_size=32,  # Smaller batch size for better learning
-                            learning_rate="adaptive",
-                            max_iter=400,  # Balanced iterations
-                            early_stopping=True,
-                            random_state=42,
-                        ),
-                    ),
-                ]
-            )
-            base_models.append(("nn", nn_model))
-
-        # Enhanced meta-learner with multiple algorithms
-        meta_learners = []
-
-        # XGBoost meta-learner
-        if HAS_XGBOOST:
-            meta_learners.append(
-                (
-                    "xgb_meta",
-                    XGBClassifier(
-                        n_estimators=200,
-                        max_depth=4,
-                        learning_rate=0.05,
-                        subsample=0.9,
-                        colsample_bytree=0.9,
-                        n_jobs=-1,  # Use all CPU cores for faster training (causes multiple windows in .exe)
-                        reg_alpha=0.2,
-                        reg_lambda=1,
-                        random_state=42,
-                        eval_metric="logloss",
-                        tree_method="hist",  # Use histogram method for consistency
-                        seed=42,  # Additional XGBoost seed
-                    ),
-                )
-            )
-
-        # LightGBM meta-learner
-        if HAS_LIGHTGBM:
-            meta_learners.append(
-                (
-                    "lgbm_meta",
-                    LGBMClassifier(
-                        n_estimators=200,
-                        max_depth=4,
-                        learning_rate=0.05,
-                        num_leaves=20,
-                        subsample=0.9,
-                        colsample_bytree=0.9,
-                        reg_alpha=0.2,
-                        reg_lambda=1,
-                        random_state=42,
-                        verbose=-1,
-                    ),
-                )
-            )
-
-        # Neural Network meta-learner
-        meta_learners.append(
-            (
-                "nn_meta",
-                MLPClassifier(
-                    hidden_layer_sizes=(64, 32),
-                    activation="relu",
-                    solver="adam",
-                    alpha=0.001,
-                    batch_size=64,
-                    learning_rate="adaptive",
-                    max_iter=300,
-                    early_stopping=True,
-                    random_state=42,
-                ),
-            )
-        )
-
-        # Logistic Regression meta-learner
-        meta_learners.append(
-            ("lr_meta", LogisticRegression(C=0.5, max_iter=1000, random_state=42))
-        )
-
-        # Create optimized voting ensemble of meta-learners with weights
-        meta_weights = [1.2, 1.0, 0.9] if len(meta_learners) == 3 else None
-        voting_meta = VotingClassifier(
-            estimators=meta_learners, voting="soft", weights=meta_weights
-        )
-
-        # MULTI-LEVEL STACKING: Level 1 -> Level 2 -> Final Blender
-        if self.use_ensemble and len(base_models) > 1:
-            print("\n🔧 Building multi-level stacking ensemble...")
-
-            # Level 1: Base models
-            level1_models = base_models
-
-            # Level 2: Meta-learners (current approach)
-            level2_meta = voting_meta
-
-            # Level 3: Final blender with more sophisticated approach
-            final_blender = VotingClassifier(
-                estimators=[
-                    (
-                        "xgb_final",
-                        XGBClassifier(
-                            n_estimators=200,
-                            max_depth=6,
-                            learning_rate=0.1,
-                            subsample=0.8,
-                            colsample_bytree=0.8,
-                            reg_alpha=0.1,
-                            reg_lambda=1.0,
-                            random_state=42,
-                            eval_metric="logloss",
-                        ),
-                    ),
-                    (
-                        "lgbm_final",
-                        LGBMClassifier(
-                            n_estimators=200,
-                            max_depth=6,
-                            learning_rate=0.1,
-                            num_leaves=31,
-                            subsample=0.8,
-                            colsample_bytree=0.8,
-                            reg_alpha=0.1,
-                            reg_lambda=1.0,
-                            random_state=42,
-                            verbose=-1,
-                        ),
-                    ),
-                    (
-                        "rf_final",
-                        RandomForestClassifier(
-                            n_estimators=300,
-                            max_depth=10,
-                            min_samples_split=4,
-                            min_samples_leaf=2,
-                            random_state=42,
-                            n_jobs=-1,
-                        ),
-                    ),
-                    (
-                        "lr_final",
-                        LogisticRegression(C=1.0, max_iter=1000, random_state=42),
-                    ),
-                ],
-                voting="soft",
-                weights=[
-                    0.4,
-                    0.3,
-                    0.2,
-                    0.1,
-                ],  # XGBoost, LightGBM, RandomForest, LogisticRegression
-            )
-
-            # Create the multi-level stacking
-            self.winner_model = StackingClassifier(
-                estimators=level1_models,
-                final_estimator=StackingClassifier(
-                    estimators=[("level2", level2_meta)],
-                    final_estimator=final_blender,
-                    cv=3,  # Fewer folds for final level
-                    n_jobs=-1,
-                    stack_method="predict_proba",
-                    passthrough=False,
-                ),
-                cv=5,  # 10 -> 5 folds (faster training)
-                n_jobs=-1,
-                stack_method="predict_proba",
-                passthrough=True,  # Include original features in first level
-            )
-
-            # Enhanced calibration for the entire stack
-            self.winner_model = CalibratedClassifierCV(
-                self.winner_model,
-                method="isotonic",
-                cv=5,  # 10 -> 5 folds (faster training)
-            )
-        else:
-            # Fallback to single best model
-            self.winner_model = base_models[0][1]
-            self.winner_model = CalibratedClassifierCV(
-                self.winner_model,
-                method="isotonic",
-                cv=3,  # 5 -> 3 folds (1.7x faster)
-            )
-
-        # Ensure we have proper DataFrame format for scikit-learn
+        # Ensure DataFrames
         if not isinstance(X_train, pd.DataFrame):
             X_train = pd.DataFrame(X_train, columns=feature_columns)
-        if not isinstance(y_winner_train, (pd.Series, np.ndarray)):
-            y_winner_train = np.array(y_winner_train)
+        if not isinstance(X_val, pd.DataFrame):
+            X_val = pd.DataFrame(X_val, columns=feature_columns)
+        if not isinstance(X_test, pd.DataFrame):
+            X_test = pd.DataFrame(X_test, columns=feature_columns)
+        y_winner_train = np.array(y_winner_train)
+        y_winner_val = np.array(y_winner_val)
+        y_winner_test = np.array(y_winner_test)
 
-        print("\nTraining winner prediction model...")
-        self.winner_model.fit(X_train, y_winner_train)
+        # Step 1: D/I decomposition on each split
+        print("\n1. Computing antisymmetric (D/I) decomposition...")
+
+        def _di(Xsplit, fc):
+            Xsw = self._create_swapped_features(Xsplit, fc)
+            D, I_inv = self.directional_and_invariant(Xsplit, Xsw)
+            flat_D = [c for c in D.columns if D[c].nunique(dropna=False) <= 1]
+            flat_I = [c for c in I_inv.columns if I_inv[c].nunique(dropna=False) <= 1]
+            if flat_D:
+                D = D.drop(columns=flat_D)
+            if flat_I:
+                I_inv = I_inv.drop(columns=flat_I)
+            return pd.concat([D, I_inv], axis=1)
+
+        X_di_train = _di(X_train, feature_columns)
+        X_di_val = _di(X_val, feature_columns)
+        X_di_test = _di(X_test, feature_columns)
+
+        print(f"   D/I train: {len(X_di_train.columns)} features "
+              f"({len([c for c in X_di_train.columns if not c.endswith('_inv')])} directional, "
+              f"{len([c for c in X_di_train.columns if c.endswith('_inv')])} invariant)")
+
+        # Step 2: RFECV feature selection on D/I training features
+        print("\n2. RFECV feature selection on D/I features...")
+        min_feat = max(30, len(X_di_train.columns) // 4)
+        winner_feature_columns = self.select_features_by_importance(
+            X_di_train, y_winner_train, min_features=min_feat
+        )
+        self.winner_feature_columns = winner_feature_columns
+
+        X_di_train = X_di_train[winner_feature_columns]
+        X_di_val = X_di_val[[c for c in winner_feature_columns if c in X_di_val.columns]]
+        X_di_test = X_di_test[[c for c in winner_feature_columns if c in X_di_test.columns]]
+
+        # Fill any missing columns from val/test with zeros
+        for col in winner_feature_columns:
+            if col not in X_di_val.columns:
+                X_di_val[col] = 0.0
+            if col not in X_di_test.columns:
+                X_di_test[col] = 0.0
+        X_di_val = X_di_val[winner_feature_columns]
+        X_di_test = X_di_test[winner_feature_columns]
+
+        # Step 3: Augment training data (negate directional cols, flip labels)
+        print("\n3. Augmenting training data with mirror examples...")
+        dir_cols = [c for c in winner_feature_columns if not c.endswith('_inv')]
+        X_flipped = X_di_train.copy()
+        X_flipped[dir_cols] = -X_di_train[dir_cols]
+        y_flipped = 1 - y_winner_train
+
+        X_di_aug = pd.concat([X_di_train, X_flipped], ignore_index=True)
+        y_aug = np.concatenate([y_winner_train, y_flipped])
+        shuffle_idx = np.random.permutation(len(X_di_aug))
+        X_di_aug = X_di_aug.iloc[shuffle_idx].reset_index(drop=True)
+        y_aug = y_aug[shuffle_idx]
+        X_di_aug_np = X_di_aug.values
+        print(f"   Training set: {len(X_di_train)} → {len(X_di_aug)} (2× augmentation)")
+
+        # Step 4: Build winner model estimators (simple pipelines, numpy-compatible)
+        w_prep = Pipeline([
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+        ])
+        winner_estimators = []
+
+        # Step 4 (cont.): build winner estimator pipelines (numpy-compatible, no ColumnTransformer)
+        if HAS_XGBOOST:
+            winner_estimators.append(("xgb", Pipeline([
+                ("prep", clone(w_prep)),
+                ("clf", XGBClassifier(
+                    n_estimators=xgb_optimized.get("n_estimators", 1000),
+                    max_depth=xgb_optimized.get("max_depth", 8),
+                    learning_rate=xgb_optimized.get("learning_rate", 0.05),
+                    subsample=xgb_optimized.get("subsample", 0.8),
+                    colsample_bytree=xgb_optimized.get("colsample_bytree", 0.8),
+                    n_jobs=1 if GPU_AVAILABLE['xgboost'] else SAFE_N_JOBS,
+                    reg_alpha=xgb_optimized.get("reg_alpha", 0.1),
+                    reg_lambda=xgb_optimized.get("reg_lambda", 1.0),
+                    min_child_weight=xgb_optimized.get("min_child_weight", 3),
+                    gamma=xgb_optimized.get("gamma", 0.1),
+                    random_state=42, eval_metric="logloss",
+                    tree_method="hist",
+                    device='cuda' if GPU_AVAILABLE['xgboost'] else 'cpu',
+                    seed=42,
+                )),
+            ])))
+
+        if HAS_LIGHTGBM:
+            winner_estimators.append(("lgbm", Pipeline([
+                ("prep", clone(w_prep)),
+                ("clf", LGBMClassifier(
+                    n_estimators=lgbm_optimized.get("n_estimators", 1200),
+                    max_depth=lgbm_optimized.get("max_depth", 10),
+                    learning_rate=lgbm_optimized.get("learning_rate", 0.05),
+                    num_leaves=lgbm_optimized.get("num_leaves", 63),
+                    subsample=lgbm_optimized.get("subsample", 0.8),
+                    colsample_bytree=lgbm_optimized.get("colsample_bytree", 0.8),
+                    device=lgbm_optimized.get("device", "cpu"),
+                    random_state=42, verbose=-1,
+                )),
+            ])))
+
+        if HAS_CATBOOST:
+            winner_estimators.append(("catboost", Pipeline([
+                ("prep", clone(w_prep)),
+                ("clf", CatBoostClassifier(
+                    iterations=catboost_optimized.get("iterations", 800),
+                    depth=catboost_optimized.get("depth", 8),
+                    learning_rate=catboost_optimized.get("learning_rate", 0.05),
+                    l2_leaf_reg=catboost_optimized.get("l2_leaf_reg", 3.0),
+                    bootstrap_type=catboost_optimized.get("bootstrap_type", "Bayesian"),
+                    bagging_temperature=catboost_optimized.get("bagging_temperature", 0.2),
+                    random_strength=catboost_optimized.get("random_strength", 1.0),
+                    task_type=catboost_optimized.get("task_type", "CPU"),
+                    random_state=42, verbose=0,
+                )),
+            ])))
+
+        winner_estimators.append(("rf", Pipeline([
+            ("prep", clone(w_prep)),
+            ("clf", RandomForestClassifier(
+                n_estimators=600, max_depth=15, min_samples_split=6, min_samples_leaf=2,
+                random_state=42, n_jobs=SAFE_N_JOBS, class_weight="balanced",
+            )),
+        ])))
+
+        if self.use_neural_net:
+            winner_estimators.append(("nn", Pipeline([
+                ("prep", clone(w_prep)),
+                ("clf", MLPClassifier(
+                    hidden_layer_sizes=(256, 128, 64), activation="relu", solver="adam",
+                    alpha=0.0005, batch_size=32, learning_rate="adaptive",
+                    max_iter=400, early_stopping=True, random_state=42,
+                )),
+            ])))
+
+        # Step 5: Optimize ensemble weights on training CV folds
+        print("\n4. Optimizing ensemble weights...")
+        best_weights = self.optimize_ensemble_weights(
+            winner_estimators, X_di_aug_np, y_aug, X_di_val.values, y_winner_val
+        )
+        for (name, _), w in zip(winner_estimators, best_weights):
+            print(f"   {name}: weight={w}")
+
+        # Step 6: Build calibrated voting ensemble and train
+        print("\n5. Building and training calibrated voting ensemble...")
+        self.winner_model = CalibratedClassifierCV(
+            VotingClassifier(estimators=winner_estimators, voting="soft", weights=best_weights),
+            method="isotonic", cv=3,
+        )
+        self.winner_model.fit(X_di_aug_np, y_aug)
+
+        train_acc = accuracy_score(y_aug, self.winner_model.predict(X_di_aug_np))
+        test_acc = accuracy_score(y_winner_test, self.winner_model.predict(X_di_test.values))
+        print("\n" + "=" * 80)
+        print("WINNER MODEL PERFORMANCE:")
+        print(f"  Train accuracy: {train_acc:.4f}  |  Test accuracy: {test_acc:.4f}")
+        print("=" * 80)
 
         # ============================================================================
         # TRAIN METHOD PREDICTION MODEL
@@ -5352,7 +5956,7 @@ class AdvancedUFCPredictor:
                             learning_rate=0.02,  # 0.025 -> 0.02 (better convergence)
                             subsample=0.85,  # 0.8 -> 0.85 (better accuracy)
                             colsample_bytree=0.85,  # 0.8 -> 0.85 (better accuracy)
-                            n_jobs=-1,
+                            n_jobs=1 if GPU_AVAILABLE['xgboost'] else SAFE_N_JOBS,
                             reg_alpha=0.15,
                             reg_lambda=0.8,
                             random_state=42,
@@ -5414,7 +6018,7 @@ class AdvancedUFCPredictor:
                         min_samples_split=5,  # 6 -> 5 (better accuracy)
                         min_samples_leaf=2,
                         random_state=42,
-                        n_jobs=-1,
+                        n_jobs=SAFE_N_JOBS,
                         class_weight="balanced",
                     ),
                 ),
@@ -5625,158 +6229,6 @@ class AdvancedUFCPredictor:
             method_acc = dl_results[metrics_names.index("method_accuracy")] if "method_accuracy" in metrics_names else dl_results[4]
             print(f"  Winner Accuracy: {winner_acc:.4f}")
             print(f"  Method Accuracy: {method_acc:.4f}")
-
-        # Enhanced Time-based cross-validation with parallel processing
-        tscv = TimeSeriesSplit(n_splits=5)  # Match Class Weighting
-
-        def train_fold(fold_data):
-            """Train a single fold - designed for parallel execution"""
-            fold, train_idx, val_idx, X, y_winner, preprocessor, feature_columns = (
-                fold_data
-            )
-
-            # Safe indexing for both pandas and numpy arrays
-            if hasattr(X, "iloc"):
-                X_fold_train, X_fold_val = X.iloc[train_idx], X.iloc[val_idx]
-            else:
-                X_fold_train, X_fold_val = X[train_idx], X[val_idx]
-
-            if hasattr(y_winner, "iloc"):
-                y_fold_train, y_fold_val = (
-                    y_winner.iloc[train_idx],
-                    y_winner.iloc[val_idx],
-                )
-            else:
-                y_fold_train, y_fold_val = y_winner[train_idx], y_winner[val_idx]
-
-            # Ensure proper DataFrame format for cross-validation
-            if not isinstance(X_fold_train, pd.DataFrame):
-                X_fold_train = pd.DataFrame(X_fold_train, columns=feature_columns)
-            if not isinstance(y_fold_train, (pd.Series, np.ndarray)):
-                y_fold_train = np.array(y_fold_train)
-
-            # Use the same enhanced model as in training
-            if HAS_XGBOOST:
-                # Create XGBoost parameters for cross-validation
-                fold_xgb_params = {
-                    "n_estimators": 800,
-                    "max_depth": 10,
-                    "learning_rate": 0.015,
-                    "subsample": 0.85,
-                    "colsample_bytree": 0.85,
-                    "n_jobs": -1,
-                    "reg_alpha": 0.1,
-                    "reg_lambda": 0.8,
-                    "random_state": 42,
-                    "eval_metric": "logloss",
-                    "tree_method": "hist",
-                    "device": "cpu",  # CPU for deterministic results
-                    "seed": 42,
-                }
-
-                fold_classifier = XGBClassifier(**fold_xgb_params)
-
-                fold_model = Pipeline(
-                    [
-                        ("preprocessor", preprocessor),
-                        (
-                            "feature_selector",
-                            SelectPercentile(
-                                f_classif, percentile=65
-                            ),  # 70% -> 65% (best performance)
-                        ),  # Match Class Weighting
-                        ("classifier", fold_classifier),
-                    ]
-                )
-            else:
-                fold_model = Pipeline(
-                    [
-                        ("preprocessor", preprocessor),
-                        (
-                            "feature_selector",
-                            SelectPercentile(
-                                f_classif, percentile=65
-                            ),  # 70% -> 65% (best performance)
-                        ),  # Match Class Weighting
-                        (
-                            "classifier",
-                            RandomForestClassifier(
-                                n_estimators=600,
-                                max_depth=20,
-                                min_samples_split=8,  # Enhanced parameters
-                                min_samples_leaf=2,
-                                random_state=42,
-                                n_jobs=-1,
-                                class_weight="balanced",  # Balanced since data augmentation eliminates bias
-                            ),
-                        ),
-                    ]
-                )
-
-            fold_model.fit(X_fold_train, y_fold_train)
-            score = fold_model.score(X_fold_val, y_fold_val)
-            return fold, score
-
-        print(
-            "\nRunning enhanced time-based cross-validation with parallel processing..."
-        )
-
-        # Prepare fold data for parallel processing
-        fold_data = []
-        for fold, (train_idx, val_idx) in enumerate(tscv.split(X)):
-            fold_data.append(
-                (fold, train_idx, val_idx, X, y_winner, preprocessor, feature_columns)
-            )
-
-        # Run folds in parallel with optimized backend (5-8x faster)
-        winner_cv_scores = []
-        results = Parallel(n_jobs=min(12, mp.cpu_count()), backend="loky")(
-            delayed(train_fold)(data) for data in fold_data
-        )
-
-        # Sort results by fold number and extract scores
-        results.sort(key=lambda x: x[0])
-        n_folds = len(fold_data)
-        for fold, score in results:
-            winner_cv_scores.append(score)
-            print(f"  Fold {fold + 1}/{n_folds}: {score:.4f}")
-
-        # Calculate additional metrics
-        winner_cv_mean = np.mean(winner_cv_scores)
-        winner_cv_std = np.std(winner_cv_scores)
-
-        print(f"\nWinner Model Cross-Validation Results:")
-        print(f"  Mean Validation Accuracy: {winner_cv_mean:.4f} (+/- {winner_cv_std:.4f})")
-        print(f"  Individual Validation Scores: {[f'{score:.4f}' for score in winner_cv_scores]}")
-
-        # Calculate train accuracy on final model
-        train_accuracy = self.winner_model.score(X_train, y_winner_train)
-        test_accuracy = self.winner_model.score(X_test, y_winner_test)
-
-        print(f"\n{'=' * 80}")
-        print("FINAL MODEL PERFORMANCE METRICS:")
-        print(f"{'=' * 80}")
-        print(f"Train Accuracy:        {train_accuracy:.4f}")
-        print(f"Validation Accuracy:  {winner_cv_mean:.4f} ± {winner_cv_std:.4f} (Cross-Validation)")
-        print(f"Test Accuracy:        {test_accuracy:.4f}")
-        print(f"{'=' * 80}")
-        print(f"\nCross-Validation Details:")
-        print(f"  Individual Fold Validation Scores: {[f'{score:.4f}' for score in winner_cv_scores]}")
-        
-        # Calculate overfitting indicator and apply mitigation
-        overfitting_gap = train_accuracy - winner_cv_mean
-        if overfitting_gap > 0.15:
-            print(f"\n⚠️  Warning: Severe train-validation gap ({overfitting_gap:.4f}) — applying regularization mitigations:")
-            print("     • Data augmentation (corner-swapping) is already active")
-            print(f"     • Test accuracy ({test_accuracy:.4f}) is the reliable performance estimate")
-            print("     • Consider reducing n_estimators or increasing min_samples_leaf to reduce overfitting")
-            print(f"     • Effective generalization estimate: ~{winner_cv_mean:.4f} (use CV mean, not train accuracy)")
-        elif overfitting_gap > 0.05:
-            print(f"\n⚠️  Warning: Train-validation gap ({overfitting_gap:.4f}) suggests moderate overfitting")
-            print(f"     • Test accuracy ({test_accuracy:.4f}) reflects real-world performance")
-        elif overfitting_gap < -0.02:
-            print(f"\n✓ Train-validation gap ({overfitting_gap:.4f}) suggests model is generalizing well")
-        print(f"{'=' * 80}\n")
 
         return feature_columns
 
@@ -6665,9 +7117,22 @@ class AdvancedUFCPredictor:
         # Safety check: Fill any remaining NaN values with 0
         X = X.fillna(0)
 
-        # Get winner prediction
-        winner_proba = self.winner_model.predict_proba(X)[0]
-        winner_pred = self.winner_model.predict(X)[0]
+        # Get winner prediction via D/I antisymmetric inference
+        X_raw = fight_data[feature_columns].fillna(0)
+        X_swap = self._create_swapped_features(X_raw, feature_columns)
+        D, I_inv = self.directional_and_invariant(X_raw, X_swap)
+        X_di = pd.concat([D, I_inv], axis=1)
+        X_winner = X_di[self.winner_feature_columns].fillna(0)
+        X_winner_np = X_winner.values
+        directional_mask = [not col.endswith("_inv") for col in self.winner_feature_columns]
+        p_orig = self.winner_model.predict_proba(X_winner_np)[0][1]
+        X_flipped_np = X_winner_np.copy()
+        X_flipped_np[:, directional_mask] = -X_flipped_np[:, directional_mask]
+        p_flipped = self.winner_model.predict_proba(X_flipped_np)[0][1]
+        red_proba = (p_orig + (1 - p_flipped)) / 2
+        blue_proba = 1 - red_proba
+        winner_proba = np.array([blue_proba, red_proba])
+        winner_pred = 1 if red_proba > 0.5 else 0
         winner_name = "Red" if winner_pred == 1 else "Blue"
 
         # If deep learning is available, ensemble it with traditional model
